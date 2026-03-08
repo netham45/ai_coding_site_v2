@@ -8,7 +8,7 @@ Track the highest-value unresolved questions exposed by the current pseudocode p
 
 ## High-priority questions
 
-### OQ-002: Is `COMPILE_FAILED` a first-class lifecycle state?
+### OQ-001: Is `COMPILE_FAILED` a first-class lifecycle state?
 
 Why it matters:
 
@@ -26,7 +26,7 @@ Recommended direction:
 
 ---
 
-### OQ-003: What is the first canonical branch naming rule?
+### OQ-002: What is the first canonical branch naming rule?
 
 Why it matters:
 
@@ -43,7 +43,7 @@ Recommended direction:
 
 ---
 
-### OQ-004: Should cutover support any bounded local scope in v1?
+### OQ-003: Should cutover support any bounded local scope in v1?
 
 Why it matters:
 
@@ -61,7 +61,7 @@ Recommended direction:
 
 ---
 
-### OQ-005: Should `code_entity_observations` exist in the first provenance implementation?
+### OQ-004: Should `code_entity_observations` exist in the first provenance implementation?
 
 Why it matters:
 
@@ -78,7 +78,7 @@ Recommended direction:
 
 ---
 
-### OQ-006: How should low-confidence provenance matches be handled?
+### OQ-005: How should low-confidence provenance matches be handled?
 
 Why it matters:
 
@@ -95,7 +95,7 @@ Recommended direction:
 
 ---
 
-### OQ-007: Can unchanged children ever be structurally reused automatically after a layout change?
+### OQ-006: Can unchanged children ever be structurally reused automatically after a layout change?
 
 Why it matters:
 
@@ -113,7 +113,7 @@ Recommended direction:
 
 ---
 
-### OQ-008: Are merge conflict resolutions normal compiled subtasks or special rectification substates?
+### OQ-007: Are merge conflict resolutions normal compiled subtasks or special rectification substates?
 
 Why it matters:
 
