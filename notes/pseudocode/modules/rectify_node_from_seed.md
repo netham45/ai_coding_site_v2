@@ -10,14 +10,14 @@ Rebuild one node version from its seed commit by replaying child merges in deter
 
 Primary:
 
-- `notes/git_rectification_spec_v2.md`
-- `notes/cutover_policy_note.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
 
 Supporting:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/provenance_identity_strategy.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/provenance/provenance_identity_strategy.md`
 
 ---
 

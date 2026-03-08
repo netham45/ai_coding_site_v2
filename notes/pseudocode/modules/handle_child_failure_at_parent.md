@@ -17,14 +17,14 @@ This module is the parent-side analogue of `handle_subtask_failure(...)`.
 
 Primary:
 
-- `notes/parent_failure_decision_spec.md`
-- `notes/runtime_command_loop_spec_v2.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/child_materialization_and_scheduling.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

@@ -8,11 +8,11 @@ Create the initial Python daemon process and mutation boundary.
 
 - Database: wire transaction boundaries and durable-write helpers.
 - CLI: establish client-to-daemon request path for future mutating commands.
-- Daemon: create server lifecycle, request validation skeleton, health/status surface, and background-task scaffolding.
+- Daemon: create the FastAPI application, Uvicorn server entrypoint, server lifecycle, bearer-token auth dependencies/middleware, request validation skeleton, health/status surface, and background-task scaffolding.
 - YAML: no compile logic yet beyond resource bootstrap hooks.
 - Prompts: no prompt execution yet beyond resource bootstrap hooks.
-- Tests: exhaustively test daemon startup, shutdown, request validation scaffolding, and DB-unavailable behavior.
-- Performance: benchmark daemon boot and baseline request overhead.
+- Tests: exhaustively test daemon startup, shutdown, request validation scaffolding, bearer-token auth behavior, and DB-unavailable behavior.
+- Performance: benchmark daemon boot, baseline request overhead, and synchronous DB access behavior under async request handling.
 - Notes: update daemon/authority notes if actual process topology changes.
 
 ## Exit Criteria

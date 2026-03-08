@@ -10,13 +10,13 @@ Refresh provenance and rationale mappings for one node version by extracting cur
 
 Primary:
 
-- `notes/provenance_identity_strategy.md`
+- `notes/specs/provenance/provenance_identity_strategy.md`
 
 Supporting:
 
-- `notes/git_rectification_spec_v2.md`
-- `notes/auditability_checklist.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
+- `notes/catalogs/audit/auditability_checklist.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

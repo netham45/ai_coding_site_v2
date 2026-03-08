@@ -10,14 +10,14 @@ Normalize how the parent child-set authority mode changes over time so structura
 
 Primary:
 
-- `notes/manual_vs_auto_tree_interaction.md`
-- `notes/child_materialization_and_scheduling.md`
-- `notes/state_value_catalog.md`
+- `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 Supporting:
 
-- `notes/git_rectification_spec_v2.md`
-- `notes/node_lifecycle_spec_v2.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
 
 ---
 
@@ -27,7 +27,7 @@ Supporting:
 - `layout_authoritative`
 - `hybrid`
 
-These modes align with [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/state_value_catalog.md).
+These modes align with [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/catalogs/vocabulary/state_value_catalog.md).
 
 ---
 

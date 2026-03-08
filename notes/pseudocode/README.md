@@ -90,11 +90,11 @@ The current notes already group naturally into the following compilation batches
 
 Primary sources:
 
-- `notes/runtime_pseudocode_plan.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/session_recovery_appendix.md`
-- `notes/compile_failure_persistence.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/contracts/persistence/compile_failure_persistence.md`
 
 Outputs:
 
@@ -108,11 +108,11 @@ Outputs:
 
 Primary sources:
 
-- `notes/yaml_schemas_spec_v2.md`
-- `notes/default_yaml_library_plan.md`
-- `notes/hook_expansion_algorithm.md`
-- `notes/override_conflict_semantics.md`
-- `notes/code_vs_yaml_delineation.md`
+- `notes/specs/yaml/yaml_schemas_spec_v2.md`
+- `notes/catalogs/inventory/default_yaml_library_plan.md`
+- `notes/contracts/yaml/hook_expansion_algorithm.md`
+- `notes/contracts/yaml/override_conflict_semantics.md`
+- `notes/specs/architecture/code_vs_yaml_delineation.md`
 
 Outputs:
 
@@ -126,11 +126,11 @@ Outputs:
 
 Primary sources:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/invalid_dependency_graph_handling.md`
-- `notes/manual_vs_auto_tree_interaction.md`
-- `notes/parent_failure_decision_spec.md`
-- `notes/common_user_journeys_analysis.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/runtime/invalid_dependency_graph_handling.md`
+- `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
+- `notes/scenarios/journeys/common_user_journeys_analysis.md`
 
 Outputs:
 
@@ -144,11 +144,11 @@ Outputs:
 
 Primary sources:
 
-- `notes/git_rectification_spec_v2.md`
-- `notes/provenance_identity_strategy.md`
-- `notes/cli_surface_spec_v2.md`
-- `notes/action_automation_matrix.md`
-- `notes/auditability_checklist.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
+- `notes/specs/provenance/provenance_identity_strategy.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/catalogs/traceability/action_automation_matrix.md`
+- `notes/catalogs/audit/auditability_checklist.md`
 
 Outputs:
 

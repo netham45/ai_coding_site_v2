@@ -10,15 +10,15 @@ Represent the parent-side waiting behavior after child materialization and sched
 
 Primary:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/invalid_dependency_graph_handling.md`
-- `notes/parent_failure_decision_spec.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/runtime/invalid_dependency_graph_handling.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
 Supporting:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

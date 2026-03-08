@@ -12,15 +12,15 @@ This module is read-heavy and decision-oriented. It does not itself merge childr
 
 Primary:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/git_rectification_spec_v2.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
 
 Supporting:
 
-- `notes/parent_failure_decision_spec.md`
-- `notes/cutover_policy_note.md`
-- `notes/state_value_catalog.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

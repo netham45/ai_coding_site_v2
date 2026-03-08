@@ -12,14 +12,14 @@ This is intentionally narrow. It is not a full event-sourcing model.
 
 Primary:
 
-- `notes/pause_workflow_event_persistence.md`
-- `notes/cli_surface_spec_v2.md`
+- `notes/contracts/persistence/pause_workflow_event_persistence.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
 
 Supporting:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/auditability_checklist.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/catalogs/audit/auditability_checklist.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

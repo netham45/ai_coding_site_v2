@@ -10,15 +10,15 @@ Determine whether a node version is eligible to start execution and, if eligible
 
 Primary:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/runtime_pseudocode_plan.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
 
 Supporting:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/cli_surface_spec_v2.md`
-- `notes/state_value_catalog.md`
-- `notes/pause_workflow_event_persistence.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
+- `notes/contracts/persistence/pause_workflow_event_persistence.md`
 
 ---
 

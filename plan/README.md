@@ -7,6 +7,21 @@ This directory contains implementation planning artifacts for this repository.
 These plans are derived from the full `notes/` corpus, not from one note in isolation.
 At the time this plan set was started, the repository contained 82 Markdown files under `notes/`.
 
+Implementation assumptions for the current planning pass:
+
+- PostgreSQL is the production database
+- Python is the implementation language for the daemon and CLI
+- FastAPI + Uvicorn is the default daemon/API stack
+- SQLAlchemy + Alembic is the default DB/migration stack
+- Pydantic is the default model/config stack
+- pytest is the default testing framework
+- bearer-token daemon auth is backed by a local magic-cookie file
+
+Default execution posture for the current planning pass:
+
+- FastAPI remains async at the request layer
+- synchronous PostgreSQL access is acceptable if it is used deliberately and tested for concurrency and latency impact
+
 The primary synthesis anchors for the first planning pass are:
 
 - `notes/major_feature_inventory.md`
@@ -68,9 +83,12 @@ Short version:
 - `features/`
   - one implementation phase per tracked feature
   - every feature phase follows the five-system rule
+  - additional support phases may exist when a tracked feature is too large to implement safely in one pass
+  - command-family phases and schema-family phases should be split out whenever "CLI" or "YAML" is too coarse to drive implementation safely
+  - database schema families and built-in YAML library families should also be split out whenever a single phase would hide test obligations or ownership boundaries
 - `checklists/`
   - verification phases
-  - closes inventory, workflow, CLI, database, and test-coverage gaps
+  - closes inventory, workflow, CLI, database, YAML-library, and test-coverage gaps
 
 ## Order
 

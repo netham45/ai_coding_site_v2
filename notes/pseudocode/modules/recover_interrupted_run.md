@@ -10,15 +10,15 @@ Recover an interrupted node run by reusing a valid existing session when safe, o
 
 Primary:
 
-- `notes/session_recovery_appendix.md`
-- `notes/runtime_command_loop_spec_v2.md`
+- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/cli_surface_spec_v2.md`
-- `notes/cutover_policy_note.md`
-- `notes/authority_and_api_model.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
+- `notes/specs/architecture/authority_and_api_model.md`
 
 ---
 

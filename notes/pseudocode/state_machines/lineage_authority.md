@@ -10,14 +10,14 @@ Normalize the authority relationship between old lineage, candidate lineage, and
 
 Primary:
 
-- `notes/cutover_policy_note.md`
-- `notes/git_rectification_spec_v2.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/state_value_catalog.md`
-- `notes/parent_failure_decision_spec.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
 ---
 
@@ -30,7 +30,7 @@ Use these conceptual scope values for first-pass pseudocode:
 - `superseded`
 - `failed_candidate`
 
-This extends the current lineage-scope concept in [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/state_value_catalog.md) so candidate rebuild outcomes are explicit.
+This extends the current lineage-scope concept in [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/catalogs/vocabulary/state_value_catalog.md) so candidate rebuild outcomes are explicit.
 
 ---
 

@@ -12,14 +12,14 @@ This module answers readiness only. It does not create a run.
 
 Primary:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/invalid_dependency_graph_handling.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/contracts/runtime/invalid_dependency_graph_handling.md`
 
 Supporting:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/cutover_policy_note.md`
-- `notes/state_value_catalog.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

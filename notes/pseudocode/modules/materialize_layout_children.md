@@ -12,15 +12,15 @@ This module owns structural creation. It does not decide which children start ru
 
 Primary:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/invalid_dependency_graph_handling.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/runtime/invalid_dependency_graph_handling.md`
 
 Supporting:
 
-- `notes/manual_vs_auto_tree_interaction.md`
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/yaml_schemas_spec_v2.md`
-- `notes/state_value_catalog.md`
+- `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/yaml/yaml_schemas_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

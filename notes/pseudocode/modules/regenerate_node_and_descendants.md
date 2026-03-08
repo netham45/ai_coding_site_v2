@@ -10,14 +10,14 @@ Create a superseding candidate lineage for a changed node, regenerate the requir
 
 Primary:
 
-- `notes/git_rectification_spec_v2.md`
-- `notes/cutover_policy_note.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/manual_vs_auto_tree_interaction.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`
 
 ---
 

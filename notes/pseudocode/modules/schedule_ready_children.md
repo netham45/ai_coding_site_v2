@@ -12,14 +12,14 @@ This module owns readiness and scheduling. It does not create child structure.
 
 Primary:
 
-- `notes/child_materialization_and_scheduling.md`
-- `notes/invalid_dependency_graph_handling.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/runtime/invalid_dependency_graph_handling.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

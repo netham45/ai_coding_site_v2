@@ -10,14 +10,14 @@ Transfer authority from an old authoritative lineage to a stable candidate linea
 
 Primary:
 
-- `notes/cutover_policy_note.md`
-- `notes/git_rectification_spec_v2.md`
+- `notes/contracts/runtime/cutover_policy_note.md`
+- `notes/specs/git/git_rectification_spec_v2.md`
 
 Supporting:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 ---
 

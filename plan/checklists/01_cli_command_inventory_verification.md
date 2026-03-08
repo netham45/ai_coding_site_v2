@@ -11,6 +11,7 @@ Verify that all required CLI surfaces exist and behave as designed.
 - operator inspection commands exist
 - session/recovery/pause/merge/docs/provenance/yaml/prompt commands exist
 - every user-visible action is automatable through the CLI
+- CLI auth uses the intended bearer-token magic-cookie model
 
 ## Tests
 

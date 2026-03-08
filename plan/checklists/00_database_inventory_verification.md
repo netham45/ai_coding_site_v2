@@ -10,11 +10,12 @@ Verify that the implemented PostgreSQL schema covers the full orchestration mode
 - lifecycle, runs, attempts, sessions, prompts, summaries, docs, provenance, merges, rebuilds, reviews, tests, validations, and conflicts are all represented
 - migrations are reversible or safely forward-only by design
 - hot read paths are indexed
+- the implementation still aligns with the SQLAlchemy + Alembic assumption unless the notes are updated deliberately
 
 ## Tests
 
 - exhaustive schema and migration tests
-- performance checks for critical queries
+- performance checks for critical queries and synchronous DB access under expected concurrency
 
 ## Notes
 

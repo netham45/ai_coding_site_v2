@@ -7,11 +7,15 @@ They are not optional.
 They must establish:
 
 - PostgreSQL foundations
+- SQLAlchemy and Alembic foundations
 - Python project structure
+- Pydantic settings/model foundations
 - CLI skeleton
-- daemon skeleton
+- FastAPI/Uvicorn daemon skeleton
+- daemon auth and dependency foundations
 - YAML and prompt resource layout
-- exhaustive test scaffolding
+- exhaustive pytest scaffolding
 - performance-test scaffolding
+- tmux/session test scaffolding
 
 Run these phases in numeric order.

@@ -10,15 +10,15 @@ Normalize the core node lifecycle vocabulary and the allowed high-level transiti
 
 Primary:
 
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/state_value_catalog.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
 
 Supporting:
 
-- `notes/compile_failure_persistence.md`
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/child_materialization_and_scheduling.md`
-- `notes/parent_failure_decision_spec.md`
+- `notes/contracts/persistence/compile_failure_persistence.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
 ---
 
@@ -44,7 +44,7 @@ Use this state set for first-pass pseudocode:
 - `SUPERSEDED`
 - `CANCELLED`
 
-This list is intentionally aligned with [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/state_value_catalog.md).
+This list is intentionally aligned with [state_value_catalog.md](/mnt/c/Users/Nathan/Documents/GitHub/ai_coding_site_v2/notes/catalogs/vocabulary/state_value_catalog.md).
 
 ---
 

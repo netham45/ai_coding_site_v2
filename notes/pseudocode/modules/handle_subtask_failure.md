@@ -17,15 +17,15 @@ This module makes retry and escalation behavior deterministic rather than sessio
 
 Primary:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/parent_failure_decision_spec.md`
-- `notes/node_lifecycle_spec_v2.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
 
 Supporting:
 
-- `notes/runtime_pseudocode_plan.md`
-- `notes/state_value_catalog.md`
-- `notes/cli_surface_spec_v2.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
 
 ---
 

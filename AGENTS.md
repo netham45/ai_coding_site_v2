@@ -232,8 +232,33 @@ The required implementation stack for this repository is:
 - PostgreSQL for the database
 - Python for the daemon
 - Python for the CLI
+- FastAPI + Uvicorn for the daemon/API server by default
+- SQLAlchemy + Alembic for ORM and migrations by default
+- Pydantic for request/response/config models by default
+- pytest as the default testing framework
 
 Do not introduce an alternative primary database or alternative primary daemon/CLI language without first updating the notes and explicitly revisiting the architectural decision.
+Do not swap out the default daemon/API framework stack without first updating the notes and explicitly revisiting the architectural decision.
+Do not swap out the default ORM, migration, model, or testing stack without first updating the notes and explicitly revisiting the architectural decision.
+
+### Default runtime posture
+
+- FastAPI may remain async at the request layer
+- synchronous PostgreSQL access is acceptable if used deliberately behind the request layer
+- if synchronous DB access is used behind async FastAPI handlers, concurrency and latency behavior must be tested explicitly
+
+### Default daemon auth posture
+
+The daemon API should use bearer-token authentication backed by a local magic-cookie file.
+
+Default expectation:
+
+- daemon startup creates or loads a local auth token
+- the token is written to a user-accessible local path
+- CLI reads the token and sends it as a bearer token
+- daemon APIs require that token unless explicitly documented otherwise
+
+If this auth model changes, the notes and plans must be updated.
 
 ---
 

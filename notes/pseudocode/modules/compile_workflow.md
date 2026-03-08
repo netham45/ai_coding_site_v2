@@ -12,17 +12,17 @@ This module is the boundary between mutable design-time definitions and runnable
 
 Primary:
 
-- `notes/yaml_schemas_spec_v2.md`
-- `notes/runtime_pseudocode_plan.md`
-- `notes/compile_failure_persistence.md`
+- `notes/specs/yaml/yaml_schemas_spec_v2.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
+- `notes/contracts/persistence/compile_failure_persistence.md`
 
 Supporting:
 
-- `notes/override_conflict_semantics.md`
-- `notes/hook_expansion_algorithm.md`
-- `notes/code_vs_yaml_delineation.md`
-- `notes/database_schema_spec_v2.md`
-- `notes/cli_surface_spec_v2.md`
+- `notes/contracts/yaml/override_conflict_semantics.md`
+- `notes/contracts/yaml/hook_expansion_algorithm.md`
+- `notes/specs/architecture/code_vs_yaml_delineation.md`
+- `notes/specs/database/database_schema_spec_v2.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
 
 ---
 

@@ -12,16 +12,16 @@ This module owns cursor progression through compiled subtasks, runtime-visible s
 
 Primary:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/node_lifecycle_spec_v2.md`
-- `notes/runtime_pseudocode_plan.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/runtime/node_lifecycle_spec_v2.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
 
 Supporting:
 
-- `notes/cli_surface_spec_v2.md`
-- `notes/state_value_catalog.md`
-- `notes/pause_workflow_event_persistence.md`
-- `notes/parent_failure_decision_spec.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/catalogs/vocabulary/state_value_catalog.md`
+- `notes/contracts/persistence/pause_workflow_event_persistence.md`
+- `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
 ---
 

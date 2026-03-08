@@ -16,15 +16,15 @@ This module is the execution boundary between the generic node loop and subtask-
 
 Primary:
 
-- `notes/runtime_command_loop_spec_v2.md`
-- `notes/runtime_pseudocode_plan.md`
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/planning/expansion/runtime_pseudocode_plan.md`
 
 Supporting:
 
-- `notes/cli_surface_spec_v2.md`
-- `notes/runtime_environment_policy_note.md`
-- `notes/child_session_mergeback_contract.md`
-- `notes/child_materialization_and_scheduling.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/contracts/runtime/runtime_environment_policy_note.md`
+- `notes/contracts/parent_child/child_session_mergeback_contract.md`
+- `notes/contracts/parent_child/child_materialization_and_scheduling.md`
 
 ---
 
