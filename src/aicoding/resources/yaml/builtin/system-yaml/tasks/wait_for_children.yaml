@@ -1,0 +1,33 @@
+kind: task_definition
+id: wait_for_children
+name: Wait For Children
+description: Wait for spawned child nodes to finish and collect their summaries.
+applies_to_kinds:
+  - epic
+  - phase
+  - plan
+policy:
+  max_subtask_retries: 0
+  on_failure: pause_for_user
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: wait_for_child_completion
+    type: wait_for_children
+    title: Wait For Child Completion
+    description: Wait until all required child nodes finish.
+    prompt: "prompts/runtime/missed_step.md"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}
+  - kind: subtask_definition
+    id: collect_child_summaries
+    type: build_context
+    title: Collect Child Summaries
+    description: Gather summaries and outputs from completed child nodes.
+    requires: [{subtask_complete: wait_for_child_completion}]
+    prompt: "prompts/runtime/resume_existing_session.md"
+    outputs: [{type: summary_written, path: summaries/child_rollup.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

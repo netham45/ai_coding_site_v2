@@ -82,6 +82,10 @@ Short version:
   - establishes PostgreSQL, Python project layout, daemon/CLI skeletons, YAML/prompt/test scaffolding
 - `features/`
   - one implementation phase per tracked feature
+  - each feature phase must include a `Goal`, a feature-specific `Rationale`, and a `Scope`
+  - the `Rationale` section must explain both why the feature exists architecturally and why the phase is a distinct implementation slice
+  - each feature phase must also include `Related Features` so adjacent feature plans and dependency boundaries are explicit
+  - each feature phase must also include `Required Notes` so the implementation plan names the spec and contract notes that need to be read first
   - every feature phase follows the five-system rule
   - additional support phases may exist when a tracked feature is too large to implement safely in one pass
   - command-family phases and schema-family phases should be split out whenever "CLI" or "YAML" is too coarse to drive implementation safely

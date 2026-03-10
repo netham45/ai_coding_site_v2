@@ -157,6 +157,7 @@ Safer default:
 
 - block admission
 - do not create duplicate authoritative runs
+- when a run is already active, prefer reporting `active_run_conflict` over the more generic `incompatible_lifecycle_state` so operators see the conflicting run identity
 
 ---
 

@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: merge_current_children
+name: Merge Current Children
+description: Re-run child merge for the current parent.
+trigger: child_merge_retry_requested
+entry_task: reconcile_children
+subtasks: [merge_children, record_merge_metadata]

@@ -1,0 +1,13 @@
+kind: runtime_policy_definition
+id: default_node_policy
+name: Default Node Policy
+description: Node-level defaults for the built-in hierarchy.
+defaults:
+  require_review_before_finalize: true
+  require_testing_before_finalize: true
+  require_docs_before_finalize: true
+runtime_policy_refs: []
+hook_refs: []
+review_refs: [reviews/node_against_requirements.yaml]
+testing_refs: [testing/default_unit_test_gate.yaml]
+docs_refs: [docs/build_local_node_docs.yaml]

@@ -1,0 +1,25 @@
+kind: review_definition
+id: layout_against_prompt
+name: Layout Against Prompt
+applies_to:
+  node_kinds: [epic, phase, plan]
+  task_ids: [generate_child_layout, review_child_layout]
+  lifecycle_points: [before_node_compile]
+scope: layout
+description: Review a generated layout against the current request and acceptance criteria.
+inputs:
+  include_parent_requirements: true
+  include_child_summaries: false
+  include_acceptance_criteria: true
+  include_changed_files: true
+  include_validation_results: false
+  include_test_results: false
+prompt: "prompts/review/review_layout_against_request.md"
+criteria:
+  - Every child has a distinct goal.
+  - Dependencies are minimal and valid.
+  - Acceptance criteria are concrete.
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

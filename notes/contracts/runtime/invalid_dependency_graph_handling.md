@@ -287,11 +287,12 @@ This should integrate with the parent failure classification model.
 
 ## DB Implications
 
-The current DB model already supports dependency storage with:
+The current DB model now supports dependency storage and the latest persisted blocker surface with:
 
 - `node_dependencies`
+- `node_dependency_blockers`
 
-Likely useful additions are not necessarily new tables, but stronger validation and perhaps clearer current-state views.
+The current implementation uses `node_dependency_blockers` as a replace-on-write current snapshot for the authoritative node version being checked.
 
 Useful views:
 
@@ -300,11 +301,7 @@ Useful views:
 
 Potential future artifact:
 
-- a dependency validation result surface if dependency failures become common enough operationally
-
-Recommended first stance:
-
-- use validation results plus CLI inspection before adding more tables
+- historical dependency validation result rows if blocker history becomes operationally important beyond the latest snapshot
 
 ---
 

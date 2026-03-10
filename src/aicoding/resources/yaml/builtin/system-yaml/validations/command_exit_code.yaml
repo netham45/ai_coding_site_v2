@@ -1,0 +1,5 @@
+kind: validation_definition
+id: command_exit_code
+name: Command Exit Code
+description: Require a command to exit with a specific status.
+check: {type: command_exit_code, command: "<command>", exit_code: 0}

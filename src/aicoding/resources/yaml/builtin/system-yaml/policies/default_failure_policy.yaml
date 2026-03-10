@@ -1,0 +1,13 @@
+kind: runtime_policy_definition
+id: default_failure_policy
+name: Default Failure Policy
+description: Failure handling defaults for the built-in system.
+defaults:
+  child_failure_threshold_total: 3
+  child_failure_threshold_consecutive: 2
+  child_failure_threshold_per_child: 2
+runtime_policy_refs: [runtime/recovery_policy.yaml]
+hook_refs: [hooks/after_subtask_default_summary.yaml]
+review_refs: []
+testing_refs: []
+docs_refs: []

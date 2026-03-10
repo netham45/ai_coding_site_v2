@@ -184,8 +184,9 @@ Examples:
 ### Pause event payload
 
 - pause flag
-- summary ID
-- triggering subtask ID
+- pause summary or approval summary
+- triggering subtask ID when the pause comes from a compiled gate
+- approval-required / approved flags where relevant
 
 ### Recovery event payload
 
@@ -236,6 +237,14 @@ Recommended bounded first implementation:
 3. do not mirror every subtask event into it
 
 This gives meaningful orchestration history without turning the system into an event-sourcing project.
+
+Implementation note:
+
+- the current runtime now uses `workflow_events` for pause history
+- `pause_entered` payload carries the durable pause context mirrored in `node_run_state.execution_cursor_json.pause_context`
+- `pause_cleared` records explicit approval without changing run status
+- `pause_resumed` records the actual return to `RUNNING`
+- `node events --node <id>` now combines authority mutations and workflow events, using `event_scope` to distinguish them
 
 ---
 

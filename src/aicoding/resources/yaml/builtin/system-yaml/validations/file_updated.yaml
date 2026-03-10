@@ -1,0 +1,5 @@
+kind: validation_definition
+id: file_updated
+name: File Updated
+description: Require a file to have been updated.
+check: {type: file_updated, path: "<path>"}

@@ -1,0 +1,6 @@
+kind: hook_definition
+id: on_node_created_default
+when: on_node_created
+applies_to: {tiers: [], node_kinds: [task, plan, phase, epic], task_ids: [], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: run_prompt, prompt: "prompts/runtime/session_bootstrap.md"}]

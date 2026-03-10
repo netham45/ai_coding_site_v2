@@ -1,0 +1,25 @@
+kind: task_definition
+id: test_node
+name: Test Node
+description: Run the default automated testing gate for the current node.
+applies_to_kinds:
+  - task
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: fail_to_parent
+uses_reviews: []
+uses_testing:
+  - testing/default_unit_test_gate.yaml
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: run_default_tests
+    type: run_tests
+    title: Run Default Tests
+    description: Run the default local test gate.
+    command: "python3 -m pytest -q"
+    environment_policy_ref: environments/local_default.yaml
+    outputs: [{type: test_results_written, path: test-results/default.json}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

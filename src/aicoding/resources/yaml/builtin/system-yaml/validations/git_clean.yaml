@@ -1,0 +1,5 @@
+kind: validation_definition
+id: git_clean
+name: Git Clean
+description: Require a clean git working tree.
+check: {type: git_clean}

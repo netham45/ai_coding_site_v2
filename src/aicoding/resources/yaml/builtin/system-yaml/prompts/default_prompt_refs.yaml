@@ -1,0 +1,35 @@
+kind: prompt_reference_definition
+id: default_prompt_refs
+name: Default Prompt References
+description: Canonical prompt identifiers used by the built-in YAML library.
+references:
+  layout.generate_phase: layouts/generate_phase_layout.md
+  layout.generate_plan: layouts/generate_plan_layout.md
+  layout.generate_task: layouts/generate_task_layout.md
+  execution.implement_leaf_task: execution/implement_leaf_task.md
+  execution.reconcile_parent_after_merge: execution/reconcile_parent_after_merge.md
+  docs.build_node_docs: docs/build_node_docs.md
+  pause.pause_for_user: pause/pause_for_user.md
+  quality.review_node_against_requirements: quality/review_node_against_requirements.md
+  recovery.idle_nudge: recovery/idle_nudge.md
+  recovery.merge_conflict_pause: recovery/merge_conflict_pause.md
+  recovery.recover_interrupted_session: recovery/recover_interrupted_session.md
+  recovery.repeated_missed_step: recovery/repeated_missed_step.md
+  recovery.replacement_session_bootstrap: recovery/replacement_session_bootstrap.md
+  recovery.resume_existing_session: recovery/resume_existing_session.md
+  recovery.validation_failed: recovery/validation_failed.md
+  review.layout_against_request: review/review_layout_against_request.md
+  review.node_output: review/review_node_output.md
+  testing.interpret_results: testing/interpret_test_results.md
+  runtime.cli_bootstrap: runtime/cli_bootstrap.md
+  runtime.session_bootstrap: runtime/session_bootstrap.md
+  runtime.missed_step: runtime/missed_step.md
+  runtime.command_failed: runtime/command_failed.md
+  runtime.missing_required_output: runtime/missing_required_output.md
+  runtime.idle_nudge: runtime/idle_nudge.md
+  runtime.pause_for_user: runtime/pause_for_user.md
+  runtime.resume_existing_session: runtime/resume_existing_session.md
+  runtime.replacement_session_bootstrap: runtime/replacement_session_bootstrap.md
+  runtime.delegated_child_session: runtime/delegated_child_session.md
+  runtime.parent_pause_for_user: runtime/parent_pause_for_user.md
+  runtime.parent_local_replan: runtime/parent_local_replan.md

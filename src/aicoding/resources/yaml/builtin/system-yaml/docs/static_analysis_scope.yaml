@@ -1,0 +1,19 @@
+kind: docs_definition
+id: static_analysis_scope
+name: Static Analysis Scope
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [build_node_docs]
+  lifecycle_points: [after_task]
+scope: custom
+description: Define the static-analysis-backed documentation view.
+inputs:
+  include_static_analysis: true
+  include_entity_relations: true
+  include_node_summaries: false
+  include_prompt_history: false
+  include_review_results: false
+  include_test_results: false
+outputs:
+  - path: docs/generated/static-analysis.md
+    view: static_analysis

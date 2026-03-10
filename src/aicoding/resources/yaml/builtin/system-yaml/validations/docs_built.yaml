@@ -1,0 +1,5 @@
+kind: validation_definition
+id: docs_built
+name: Docs Built
+description: Require a documentation artifact to be built.
+check: {type: docs_built, path: "<docs-path>"}

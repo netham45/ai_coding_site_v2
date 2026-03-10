@@ -1,0 +1,6 @@
+schema_family:
+  family: prompt_reference_definition
+  source_group: yaml_builtin_system
+  relative_glob: prompts/*.yaml
+  validator_model: PromptReferenceDefinitionDocument
+  status: active

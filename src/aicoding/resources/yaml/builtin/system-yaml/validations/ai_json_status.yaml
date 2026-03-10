@@ -1,0 +1,5 @@
+kind: validation_definition
+id: ai_json_status
+name: AI JSON Status
+description: Validate a bounded AI JSON status payload.
+check: {type: ai_json_status, value: OK}

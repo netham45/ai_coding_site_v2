@@ -1,0 +1,20 @@
+kind: task_definition
+id: pause_for_user
+name: Pause For User
+description: Produce a pause summary and yield to the user for explicit guidance.
+applies_to_kinds: [task, plan, phase, epic]
+policy: {max_subtask_retries: 0, on_failure: pause_for_user}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: pause_and_summarize
+    type: write_summary
+    title: Pause For User
+    description: Write a pause summary and request guidance.
+    prompt: "prompts/runtime/pause_for_user.md"
+    block_on_user_flag: user_guidance_required
+    outputs: [{type: summary_written, path: summaries/pause.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

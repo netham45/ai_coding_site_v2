@@ -1,0 +1,25 @@
+kind: task_definition
+id: generate_child_layout
+name: Generate Child Layout
+description: Produce the candidate layout YAML for the next child tier.
+applies_to_kinds:
+  - epic
+  - phase
+  - plan
+policy:
+  max_subtask_retries: 2
+  on_failure: pause_for_user
+uses_reviews:
+  - reviews/layout_against_prompt.yaml
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: render_layout_prompt
+    type: run_prompt
+    title: Render Layout Candidate
+    description: Produce the child layout draft from the current node context.
+    prompt: "prompts/layouts/generate_phase_layout.md"
+    outputs: [{type: file_updated, path: layouts/generated_layout.yaml}]
+    retry_policy: {max_attempts: 2, backoff_seconds: 5}
+    on_failure: {action: pause_for_user}

@@ -1,0 +1,6 @@
+kind: hook_definition
+id: on_merge_conflict_default
+when: on_merge_conflict
+applies_to: {tiers: [], node_kinds: [phase, plan], task_ids: [reconcile_children], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: run_prompt, prompt: "prompts/execution/reconcile_parent_after_merge.md"}]

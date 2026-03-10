@@ -1,0 +1,10 @@
+kind: runtime_definition
+id: recovery_policy
+name: Recovery Policy
+description: Default recovery flow after interruption or operator replacement.
+commands:
+  - ai-tool session resume --node <node_id>
+  - ai-tool workflow current --node <node_id>
+thresholds:
+  preserve_cursor: true
+actions: [rebind_session, recover_cursor]

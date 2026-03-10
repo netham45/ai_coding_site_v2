@@ -130,6 +130,12 @@ The compiled workflow lineage should preserve enough information to answer:
 
 If warning/failure diagnostics are generated during compile, those should be durable enough for later inspection.
 
+Implementation staging note:
+
+- the current implementation now stores override compatibility warnings inside the compiled workflow `resolved_yaml.override_resolution.warnings` payload
+- applied override metadata and resolved per-document YAML are now inspectable through daemon and CLI read surfaces after a successful compile
+- incompatible `min_schema_version` metadata currently fails compile, while missing or mismatched `built_in_version` metadata currently emits warnings rather than blocking compilation
+
 ---
 
 ## CLI Expectations
@@ -142,6 +148,11 @@ Useful future CLI surfaces likely include:
 - `ai-tool workflow sources --node <id>`
 
 These do not need to be final command names. The important part is the capability.
+
+Implementation staging note:
+
+- the current CLI surfaces are `yaml override-chain --node|--workflow ...` and `yaml resolved --node|--workflow ...`
+- standalone path-based diff tooling remains deferred, but the current surfaces already expose applied override files, compatibility warnings, and resolved merged documents for audits
 
 ---
 

@@ -98,6 +98,10 @@ Action:
 - reattach to the existing session
 - do not create a replacement session
 
+Implementation staging note:
+
+- the current implementation records this as an `attached` session event on the durable primary session row
+
 ## Case 3: Session stale but tmux session still exists
 
 Condition:
@@ -125,6 +129,11 @@ Action:
 - treat the original session as lost
 - create replacement session if run is resumable
 - preserve old session history
+
+Implementation staging note:
+
+- the current implementation now marks the old durable session row `LOST`, records an invalidation event, and creates a replacement primary session row bound to the same active run
+- replacement and fresh primary sessions now use concrete tmux launch plans derived from durable run/session identity and persist the launch metadata into session events for auditability
 
 ## Case 5: Provider session exists but tmux is lost
 
@@ -244,6 +253,7 @@ If a replacement session is created:
 
 - the old primary session should be marked invalidated in canonical session state
 - recovery history should be visible through workflow and session event records
+- the new primary session should expose enough tmux metadata to attach deterministically without guessing the session name out of band
 
 ## Step 4: Prefer reuse if safe
 
@@ -468,6 +478,11 @@ Likely good-enough first implementation:
 - represent recovery decisions through `session_events`
 - keep current-state authority in `node_run_state`
 
+Implementation staging note:
+
+- the current implementation now follows that staged model directly: recovery attempts, resumptions, replacements, pauses, and rejections are written to `session_events`
+- no separate recovery-event table has been introduced yet because the current session and run-state schema is sufficient for provider-agnostic recovery classification
+
 ---
 
 ## CLI Implications
@@ -477,14 +492,11 @@ The following CLI capabilities are especially important for recovery:
 - `ai-tool session show --node <id>`
 - `ai-tool session events --session <id>`
 - `ai-tool session resume --node <id>`
+- `ai-tool session recover --node <id>`
 - `ai-tool session attach --node <id>`
 - `ai-tool session nudge --node <id>`
 - `ai-tool node pause-state --node <id>`
 - `ai-tool subtask current --node <id>`
-
-Likely useful additions:
-
-- `ai-tool session recover --node <id>`
 - `ai-tool node recovery-status --node <id>`
 
 If names differ, these capabilities should still exist.

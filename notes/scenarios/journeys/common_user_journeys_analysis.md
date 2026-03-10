@@ -56,6 +56,7 @@ Very high. This is the primary product entrypoint.
 ### Programmatic requirements
 
 - CLI mutation surface for node creation
+- CLI mutation surface for one-shot top-level workflow start
 - prompt capture and storage
 - node-kind and tier resolution
 - source YAML selection
@@ -82,6 +83,11 @@ Very high. This is the primary product entrypoint.
 - the created node is durable and inspectable
 - the user can see what workflow was compiled
 - the node can be started or resumed later without hidden state
+
+Implementation staging note:
+
+- the current runtime now satisfies the one-shot entrypoint with `workflow start`, which creates a top-level node, compiles it, and optionally starts the first run in one daemon-owned flow
+- the equivalent `node create --compile [--start-run]` path is also now available for top-level kinds
 
 ---
 
@@ -197,6 +203,7 @@ Very high. This is the runtime core.
 - tmux-backed session creation/attachment
 - current cursor retrieval
 - compiled subtask prompt/context retrieval
+- deterministic stage-start context assembly from durable state
 - subtask attempt creation
 - heartbeat handling
 - summary registration
@@ -218,8 +225,16 @@ Very high. This is the runtime core.
 ### Critical completion conditions
 
 - no subtask progression depends on hidden in-memory state
+- a restarted or replacement session can retrieve the same startup context for the current stage without relying on terminal history
 - the current subtask and attempt are always queryable
 - validation/review/testing outcomes gate advancement deterministically
+
+Implementation staging note:
+
+- the current runtime now satisfies this startup-context requirement with a daemon-assembled `stage_context_json` returned by both `subtask prompt` and `subtask context`
+- that bundle is built from durable node/run/workflow state, dependency blockers, recent prompt/summary history, and cursor-carried child/reconcile overlays rather than session-local memory
+- primary-session binding now also creates a concrete long-lived tmux-backed shell with durable identity and attach metadata instead of a placeholder short-lived harness command
+- `session show-current` now exposes the bound logical node id, node kind/title, run status, and recovery classification, so the first bootstrap read can confirm whether the active shell is healthy or stale before any node-specific retrieval command runs
 
 ---
 

@@ -1,0 +1,24 @@
+kind: task_definition
+id: build_node_docs
+name: Build Node Docs
+description: Build or refresh the default documentation artifacts for the node.
+applies_to_kinds:
+  - task
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: pause_for_user
+uses_reviews: []
+uses_testing: []
+uses_docs:
+  - docs/build_local_node_docs.yaml
+subtasks:
+  - kind: subtask_definition
+    id: build_node_docs_output
+    type: build_docs
+    title: Build Node Docs
+    description: Build local node documentation from the current outputs.
+    command: "printf 'docs built'"
+    outputs: [{type: docs_built, path: docs/generated/node.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

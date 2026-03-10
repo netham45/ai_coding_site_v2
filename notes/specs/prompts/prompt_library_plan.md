@@ -19,6 +19,22 @@ This note is the missing prompt-layer counterpart to:
 - `notes/contracts/runtime/session_recovery_appendix.md`
 - `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
+Implementation staging note:
+
+- the current implementation now ships authored default prompt assets for layout generation, execution, review, testing interpretation, docs generation, pause, and runtime bootstrap/recovery/nudge surfaces
+- those prompts now carry explicit stage and recovery contracts instead of placeholder prose, and the packaged default system validates that built-in YAML prompt bindings resolve to real renderable assets
+- the current implementation now also validates the packaged runtime/hook/policy layer as one operational-library contract, so required built-in prompt assets and prompt-reference keys fail compile-time integrity checks before workflow compilation if they drift
+- the packaged `testing/interpret_test_results.md` prompt is now a daemon-exposed inspection surface for explicit testing stages, while the broader default node ladder still stages testing behind explicit task/policy/override selection instead of silently enabling `test_node` everywhere
+- project policy now also controls prompt-pack selection at compile time, with the current implementation supporting safe selection between the packaged `default` and `project` prompt roots
+- child-node spawning currently reuses those existing layout-generation prompts and the authored built-in layout YAMLs; no separate prompt family was required just to materialize default children durably
+- manual tree construction currently does not introduce a new prompt family; explicit reconciliation guidance prompts remain deferred until the later remove/replace/reconcile phases
+- conflict detection now adds a dedicated packaged recovery prompt for merge-conflict pause handling so operator-facing conflict summaries do not rely on ad hoc runtime strings
+- parent-child merge/reconcile now uses the packaged `execution/reconcile_parent_after_merge.md` prompt as a first-class daemon-exposed inspection surface; the daemon pairs it with durable child-result and merge-event context rather than ad hoc runtime prose
+- stage-start prompt retrieval now also carries a daemon-assembled context bundle so prompt consumers can reference durable startup metadata, dependency state, recent summaries, and child/reconcile context without scraping prior terminal output
+- compile-time prompt rendering now uses a shared daemon renderer with deterministic scope precedence; rendered prompt text is frozen into compiled subtasks and durable prompt history, while prompt-template source lineage remains separate for auditability
+- the frozen render stage is now inspectable directly through `workflow rendering`, so prompt-pack debugging does not require opening the full compiled workflow payload
+- prompt-reference YAML is now schema-validated as its own rigid family: keys must use dotted identifiers, values must be prompt-pack-relative markdown paths, and referenced prompt assets must exist in the packaged prompt roots
+
 ---
 
 ## Prompt Authoring Rules
@@ -52,14 +68,20 @@ The prompt may restate important checks, but compiled validations remain authori
 
 ### 5. Be reusable with placeholders
 
-Default prompts should use placeholders such as:
+Default prompts should prefer canonical placeholders such as:
 
-- `<node_id>`
-- `<compiled_subtask_id>`
-- `<layout_path>`
-- `<summary_path>`
-- `<user_request>`
-- `<acceptance_criteria>`
+- `{{node_id}}`
+- `{{compiled_subtask_id}}`
+- `{{layout_path}}`
+- `{{summary_path}}`
+- `{{user_request}}`
+- `{{acceptance_criteria}}`
+
+Compatibility note:
+
+- legacy angle-bracket placeholders such as `<node_id>` are still supported by the renderer for compatibility
+- new authored packaged prompts should prefer `{{variable}}`, and the default prompt pack now follows that rule
+- only daemon-owned compile-time render contexts are authoritative; prompt files do not define their own rendering algorithm
 
 ---
 
@@ -300,6 +322,11 @@ or
 {"status":"FAIL","message":"<reason>"}
 ```
 
+Implementation staging note:
+
+- the current implementation now exposes this prompt directly through `node reconcile --node <id>`
+- the daemon pairs it with durable `child_results`, `merge_events`, and `blocking_reasons` context so both operators and active sessions can inspect the same reconcile handoff state
+
 ---
 
 ## 3. Review, Testing, And Docs Prompts
@@ -338,6 +365,10 @@ Used by:
 - `review_node`
 - pre-finalization review
 
+Implementation staging note:
+
+- the current review runtime now expects structured `PASS|REVISE|FAIL` output semantics from this prompt family and persists the resulting status/findings into the durable review framework
+
 Prompt:
 
 ```text
@@ -349,6 +380,8 @@ Requirements:
 Inputs available:
 - changed files
 - validation results
+
+Implementation note: the prompt pack now includes a dedicated validation-failure recovery payload at `recovery/validation_failed.md` so runtime correction text matches durable validation evidence.
 - test results
 - summaries
 
@@ -425,6 +458,11 @@ or
 {"status":"FAIL","message":"<reason>"}
 ```
 
+Implementation note:
+
+- the current documentation-generation slice renders markdown deterministically inside the daemon from durable operator, prompt-history, summary-history, review, testing, and rationale/provenance state
+- no prompt-driven docs generation step is executed yet; this prompt remains reserved for a later richer authored-doc pass once the system needs narrative output beyond the deterministic audit views
+
 ---
 
 ## 4. Runtime CLI Bootstrap And Correction Prompts
@@ -445,6 +483,7 @@ You are the active session for node <node_id> and compiled subtask
 Use the CLI, not memory, as the source of truth for current work.
 
 Retrieve work with:
+- `ai-tool session show-current`
 - `ai-tool subtask current --node <node_id>`
 - `ai-tool subtask prompt --node <node_id>`
 - `ai-tool subtask context --node <node_id>`
@@ -453,13 +492,39 @@ While working:
 - mark start with `ai-tool subtask start --compiled-subtask <compiled_subtask_id>`
 - send heartbeats with `ai-tool subtask heartbeat --compiled-subtask <compiled_subtask_id>`
 
+Implementation staging note:
+
+- the current runtime slice persists `subtask start`
+- heartbeat persistence now exists as durable active-attempt metadata, but dedicated heartbeat history is still deferred
+- `ai-tool session show-current` now returns the durable node binding (`logical_node_id`, `node_kind`, `node_title`, `run_status`) plus `recovery_classification`, so bootstrap prompts can tell whether the session is healthy or stale before fetching stage work
+- `ai-tool subtask prompt --node <node_id>` and `ai-tool subtask context --node <node_id>` now both expose `stage_context_json`, which carries durable startup metadata, current compiled-stage metadata, dependency summaries/blockers, recent prompt/summary history, and cursor-carried child/reconcile context for prompt consumers
+- `ai-tool subtask context --node <node_id>` also mirrors that same bundle under `input_context_json.stage_context_json` so prompts or helper layers that already read context payloads do not need a separate bootstrap fetch path
+
 When finished successfully:
 - register any required summary with `ai-tool summary register ...` if needed
 - then complete with `ai-tool subtask complete --compiled-subtask <compiled_subtask_id>`
 
+Implementation staging note:
+
+- `summary register` is now a real durable command and now writes a dedicated `summaries` history row
+- the active attempt still mirrors registered summary metadata for compatibility with existing runtime and validation flows
+- in the current implementation, completion records the attempt result but does not itself move the cursor
+- the next stage becomes active only after `ai-tool workflow advance --node <node_id>`
+
+Prompt-delivery note:
+
+- `ai-tool subtask prompt --node <node_id>` now records a durable prompt-history row containing the rendered prompt content, the originating `source_subtask_key`, and the frozen template identity (`template_path`, `template_hash`) taken from the compiled subtask source metadata
+- the returned prompt payload now also includes `stage_context_json` so runtime prompts can explicitly reference durable startup facts such as the original node prompt, the active trigger reason, dependency blockers, and the most recent run-local summaries without relying on conversational memory
+
 If blocked or unable to satisfy the stage:
 - write a concise failure summary
 - fail safely with `ai-tool subtask fail --compiled-subtask <compiled_subtask_id> --summary-file <summary_path>`
+
+Implementation staging note:
+
+- the documented file-backed failure path is now implemented directly: the CLI reads `--summary-file` content locally and sends that content as the daemon-owned durable failure summary
+
+- the current implementation marks the attempt `FAILED`, marks the run `FAILED`, and mirrors lifecycle visibility to a parent-facing failure state
 
 Do not invent completion. Use the compiled prompt, context, and checks as the
 authoritative stage contract.
@@ -587,6 +652,12 @@ Used by:
 
 - runtime transition into `PAUSED_FOR_USER`
 
+Implementation staging note:
+
+- compiled subtasks may now carry `block_on_user_flag` and an optional `pause_summary_prompt`
+- the shipped built-in pause gate currently pauses with the standard pause-for-user prompt and no separate summary-template override
+- explicit approval currently uses CLI/API fields rather than a dedicated approval prompt template
+
 Prompt:
 
 ```text
@@ -634,6 +705,12 @@ Continue from the durable cursor. Do not skip or replay accepted subtasks.
 Used by:
 
 - replacement primary sessions created after recovery
+
+Implementation staging note:
+
+- the packaged prompt pack now includes explicit recovery assets for interrupted-session recovery, reuse of an existing session, replacement-session bootstrap, and idle nudge guidance under `prompts/packs/default/recovery/`
+- the current implementation also ships a repeated missed-step recovery prompt so the final bounded idle nudge can be stronger than the first reminder without changing workflow semantics
+- the idle classifier now distinguishes `active`, `quiet`, and `idle` screen states; only `idle` sessions receive the PL15 nudge payload, while `quiet` sessions remain observable without being interrupted
 
 Prompt:
 
@@ -691,6 +768,10 @@ Return a concise structured summary with:
 - recommended next action
 - referenced files or artifacts
 ```
+
+Implementation staging note:
+
+- the current implementation now uses the packaged delegated child-session prompt when launching bounded child sessions through `session push`
 
 ## PL20. Parent pause-for-user summary prompt
 
@@ -752,6 +833,11 @@ Return JSON only:
 or
 {"status":"FAIL","message":"<reason>"}
 ```
+
+Implementation staging note:
+
+- the current daemon slice now binds `runtime/parent_pause_for_user.md` when parent decision logic pauses for user after child failure
+- `runtime/parent_local_replan.md` is now bound when the daemon classifies the child failure as requiring parent-local replanning
 
 ---
 

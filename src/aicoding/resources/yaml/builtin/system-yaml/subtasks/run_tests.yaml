@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: run_tests
+type: run_tests
+title: Run Tests
+description: Execute the current automated test gate.
+command: "python3 -m aicoding.cli.main node test --node {{node_id}}"
+outputs: [{type: test_results_written, path: test-results/default.json}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

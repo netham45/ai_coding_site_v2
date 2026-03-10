@@ -1,0 +1,6 @@
+kind: hook_definition
+id: before_node_complete_default
+when: before_node_complete
+applies_to: {tiers: [], node_kinds: [task, plan, phase, epic], task_ids: [finalize_node], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: review, prompt: "prompts/review/review_node_output.md"}]

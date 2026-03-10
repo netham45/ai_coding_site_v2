@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: write_summary
+type: write_summary
+title: Write Summary
+description: Write a durable summary artifact.
+prompt: "prompts/runtime/missing_required_output.md"
+outputs: [{type: summary_written, path: summaries/output.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

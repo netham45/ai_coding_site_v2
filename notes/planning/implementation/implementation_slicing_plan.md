@@ -42,6 +42,18 @@ Reason:
 - correctness depends more on durable orchestration than on UI polish or optional features
 - hidden-state bugs will become expensive if the runtime loop is built before the data model and introspection surfaces are stable
 
+## Phase Authoring Rule
+
+Every implementation phase derived from this slicing plan should capture three things explicitly:
+
+- the goal of the phase
+- the rationale for the phase
+- the reason the phase exists as its own slice instead of being folded into adjacent work
+- the related feature phases that must be read for context and dependency boundaries
+- the note files that must be read before implementation starts
+
+This is required because the project is spec-driven and the plan set needs to preserve not just ordering, but also the architectural justification for each slice.
+
 ---
 
 ## Slice 0: Spec Closure And Freeze

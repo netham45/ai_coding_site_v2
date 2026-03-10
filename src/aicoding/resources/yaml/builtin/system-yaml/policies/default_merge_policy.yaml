@@ -1,0 +1,12 @@
+kind: runtime_policy_definition
+id: default_merge_policy
+name: Default Merge Policy
+description: Merge defaults for parent-child reconciliation.
+defaults:
+  auto_merge_to_parent: true
+  auto_merge_to_base: false
+runtime_policy_refs: []
+hook_refs: [hooks/before_merge_children_default.yaml, hooks/after_merge_children_default.yaml]
+review_refs: [reviews/merge_result_review.yaml]
+testing_refs: []
+docs_refs: []

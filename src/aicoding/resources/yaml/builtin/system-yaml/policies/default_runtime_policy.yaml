@@ -1,0 +1,34 @@
+kind: runtime_policy_definition
+id: default_runtime_policy
+name: Default Runtime Policy
+description: Default cross-cutting runtime and quality-gate policy for the built-in system.
+defaults:
+  auto_run_children: true
+  auto_merge_to_parent: false
+  auto_merge_to_base: false
+  require_review_before_finalize: true
+  require_testing_before_finalize: true
+  require_docs_before_finalize: true
+  max_subtask_retries: 2
+  idle_nudge_after_seconds: 300
+  session_heartbeat_seconds: 30
+runtime_policy_refs:
+  - runtime/session_defaults.yaml
+  - runtime/heartbeat_policy.yaml
+  - runtime/idle_nudge_policy.yaml
+  - runtime/child_session_policy.yaml
+  - runtime/recovery_policy.yaml
+hook_refs:
+  - hooks/before_validation_default.yaml
+  - hooks/before_review_default.yaml
+  - hooks/before_testing_default.yaml
+  - hooks/after_node_complete_build_docs.yaml
+  - hooks/after_node_complete_update_provenance.yaml
+review_refs:
+  - reviews/layout_against_prompt.yaml
+  - reviews/node_against_requirements.yaml
+testing_refs:
+  - testing/default_unit_test_gate.yaml
+  - testing/default_integration_test_gate.yaml
+docs_refs:
+  - docs/build_local_node_docs.yaml

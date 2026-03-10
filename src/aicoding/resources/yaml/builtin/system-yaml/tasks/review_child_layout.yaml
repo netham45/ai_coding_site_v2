@@ -1,0 +1,25 @@
+kind: task_definition
+id: review_child_layout
+name: Review Child Layout
+description: Review the generated child layout before child creation.
+applies_to_kinds:
+  - epic
+  - phase
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: pause_for_user
+uses_reviews:
+  - reviews/layout_against_prompt.yaml
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: review_layout
+    type: review
+    title: Review Generated Layout
+    description: Review the generated layout against the current request and acceptance criteria.
+    prompt: "prompts/review/review_layout_against_request.md"
+    outputs: [{type: review_results_written, path: reviews/layout_review.json}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

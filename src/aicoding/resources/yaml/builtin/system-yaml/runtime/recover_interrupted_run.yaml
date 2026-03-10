@@ -1,0 +1,12 @@
+kind: runtime_definition
+id: recover_interrupted_run
+name: Recover Interrupted Run
+description: Default runtime recovery behavior after an interrupted session.
+commands:
+  - ai-tool session resume --node <node_id>
+  - ai-tool workflow current --node <node_id>
+thresholds:
+  requires_existing_cursor: true
+actions:
+  - rebind_session
+  - recover_cursor

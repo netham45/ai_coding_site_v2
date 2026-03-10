@@ -1,0 +1,10 @@
+kind: subtask_definition
+id: run_command
+type: run_command
+title: Run Command
+description: Execute a deterministic shell command.
+command: "python3 -m aicoding.cli.main admin doctor"
+checks: [{type: command_exit_code, exit_code: 0}]
+outputs: [{type: ai_json_status, value: OK}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

@@ -1,0 +1,5 @@
+kind: validation_definition
+id: json_schema
+name: JSON Schema
+description: Validate a JSON payload against a named schema.
+check: {type: json_schema, schema: "<schema-name>"}

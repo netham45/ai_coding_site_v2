@@ -1,0 +1,10 @@
+kind: rectification_definition
+id: reconcile_merge_conflict
+name: Reconcile Merge Conflict
+description: Rectification path for merge-conflict recovery.
+trigger: merge_conflict
+entry_task: reconcile_merge_conflict
+subtasks:
+  - reset_to_seed
+  - merge_children
+  - finalize_git_state

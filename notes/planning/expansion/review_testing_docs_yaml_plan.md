@@ -23,6 +23,12 @@ Related documents:
 - `notes/planning/expansion/runtime_pseudocode_plan.md`
 - `notes/catalogs/traceability/cross_spec_gap_matrix.md`
 
+Implementation note:
+
+- the current packaged default system now includes authored prompt assets for review, testing interpretation, and docs generation, so these families no longer rely on placeholder prompt text to be inspectable or runnable
+- the current schema layer now also validates these higher-order families with explicit field requirements and rejects broken prompt refs in review or hook documents before compile/runtime use
+- the current implementation now also exposes a built-in quality-library integrity report over the packaged validation/review/testing/docs families and fails workflow compilation early when required quality assets, task bindings, prompt refs, or canonical gate ordering are broken
+
 ---
 
 ## Core Problem
@@ -225,6 +231,12 @@ documentation_definition:
     on_rectify: boolean
     on_docs_request: boolean
 ```
+
+Implementation note:
+
+- the current implementation uses the packaged YAML family name `docs_definition` for this document type
+- the current materialized schema is bounded to `inputs` plus `outputs[].path` and `outputs[].view`; output-format and rebuild-policy fields remain deferred
+- daemon-backed `docs build-node-view` and `docs build-tree` now backfill the canonical built-in views for the requested scope set even when project policy only references a narrower custom docs view, so `local` and `merged` generation does not silently disappear behind policy configuration
 
 ---
 

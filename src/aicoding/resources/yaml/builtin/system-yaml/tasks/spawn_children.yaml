@@ -1,0 +1,24 @@
+kind: task_definition
+id: spawn_children
+name: Spawn Children
+description: Materialize child nodes from the accepted layout.
+applies_to_kinds:
+  - epic
+  - phase
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: fail_to_parent
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: spawn_child_nodes
+    type: spawn_child_node
+    title: Spawn Child Nodes
+    description: Create child nodes from the accepted compiled layout.
+    command: "ai-tool node create --from-layout layouts/generated_layout.yaml"
+    outputs: [{type: entity_index_updated}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

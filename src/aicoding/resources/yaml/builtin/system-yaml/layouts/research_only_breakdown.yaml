@@ -1,0 +1,28 @@
+kind: layout_definition
+id: research_only_breakdown
+name: Research Only Breakdown
+description: Optional decomposition for work that should stay in analysis mode before implementation begins.
+children:
+  - id: research_scope
+    kind: task
+    tier: 3
+    name: Research Scope
+    goal: Gather the relevant repo, requirement, and risk context.
+    rationale: Research-heavy work still needs one bounded discovery task before synthesis.
+    dependencies: []
+    acceptance:
+      - The key unknowns are captured.
+      - Relevant code and note surfaces are identified.
+    ordinal: 1
+  - id: synthesize_findings
+    kind: task
+    tier: 3
+    name: Synthesize Findings
+    goal: Turn the collected research into an actionable recommendation or plan.
+    rationale: Research work is only useful once the findings are consolidated into a reviewable output.
+    dependencies:
+      - research_scope
+    acceptance:
+      - Findings are summarized durably.
+      - Next steps or recommendations are explicit.
+    ordinal: 2

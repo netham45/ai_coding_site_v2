@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: wait_for_children
+type: wait_for_children
+title: Wait For Children
+description: Wait for child nodes to finish.
+prompt: "prompts/runtime/idle_nudge.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

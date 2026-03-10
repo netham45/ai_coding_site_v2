@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: regenerate_subtree
+name: Regenerate Subtree
+description: Regenerate a subtree after structural drift or bad decomposition.
+trigger: subtree_regeneration_requested
+entry_task: generate_child_layout
+subtasks: [build_context, run_prompt]

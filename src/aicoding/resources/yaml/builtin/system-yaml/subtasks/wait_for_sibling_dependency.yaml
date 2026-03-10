@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: wait_for_sibling_dependency
+type: wait_for_sibling_dependency
+title: Wait For Sibling Dependency
+description: Wait for sibling dependency readiness.
+prompt: "prompts/recovery/repeated_missed_step.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

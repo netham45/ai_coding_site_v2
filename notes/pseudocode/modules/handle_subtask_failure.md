@@ -130,6 +130,10 @@ If the node has a parent and failure escalates:
 - the parent becomes the next decision-maker
 - the escalation payload must preserve child failure summary, failing stage, retry history, and dependency impact
 
+Implementation staging note:
+
+- the current parent-ingest path classifies failures from the latest failed child attempt summary plus any persisted validation, review, or testing payload on that attempt
+
 ---
 
 ## Pause/recovery behavior

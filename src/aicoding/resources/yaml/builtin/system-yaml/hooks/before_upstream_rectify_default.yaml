@@ -1,0 +1,6 @@
+kind: hook_definition
+id: before_upstream_rectify_default
+when: before_upstream_rectify
+applies_to: {tiers: [], node_kinds: [phase, plan], task_ids: [rectify_upstream], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: run_prompt, prompt: "prompts/runtime/parent_local_replan.md"}]

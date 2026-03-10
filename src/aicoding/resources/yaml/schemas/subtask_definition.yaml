@@ -1,0 +1,6 @@
+schema_family:
+  family: subtask_definition
+  source_group: yaml_builtin_system
+  relative_glob: subtasks/*.yaml
+  validator_model: SubtaskDefinitionDocument
+  status: active

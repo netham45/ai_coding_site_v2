@@ -1,0 +1,6 @@
+schema_family:
+  family: docs_definition
+  source_group: yaml_builtin_system
+  relative_glob: docs/*.yaml
+  validator_model: DocsDefinitionDocument
+  status: active

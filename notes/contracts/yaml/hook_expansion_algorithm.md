@@ -34,6 +34,12 @@ That means:
 - hook expansion is part of workflow compilation
 - the result of hook expansion must be inspectable in the compiled workflow
 
+Implementation staging note:
+
+- the current implementation performs compile-time expansion for policy and node hook refs and persists the result in `compiled_workflows.resolved_yaml.hook_expansion`
+- hook-backed compiled subtasks are marked with `inserted_by_hook = true` plus a deterministic `inserted_by_hook_id`
+- this first slice intentionally skips conditional `if` matching and runtime-only triggers such as `on_node_created` and `on_merge_conflict`; those hooks are reported as skipped rather than executed implicitly
+
 ---
 
 ## Hook Expansion Inputs
@@ -135,6 +141,10 @@ Because explicit priority is not yet formalized, recommended current default is:
 2. project extension hooks second
 3. project override-produced hook changes resolved before insertion
 4. final deterministic ordering by hook ID within each source precedence layer
+
+Implementation staging note:
+
+- the current implementation sorts hook expansion by insertion phase, then source precedence (`yaml_builtin_system` before `yaml_project`), then relative path and hook ID
 
 This makes ordering predictable even before a richer priority model exists.
 

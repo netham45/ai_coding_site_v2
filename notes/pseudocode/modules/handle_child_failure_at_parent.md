@@ -57,6 +57,11 @@ Optional outputs:
 - affected child set
 - parent replan trigger
 
+Implementation staging note:
+
+- the current implementation returns a structured result payload including decision source, parent/child lifecycle snapshots, and the refreshed child-failure counter catalog
+- the first slice records decision history through `workflow_events` instead of introducing a separate `parent_failure_decisions` table
+
 ---
 
 ## Durable writes

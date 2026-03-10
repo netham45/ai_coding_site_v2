@@ -85,6 +85,14 @@ The main unresolved issues are:
 - `[x]` means the definition is clearly required by the current reviewed docs
 - `[ ]` means the definition is not yet justified strongly enough as a built-in default, but is a plausible extension
 
+## Scaffold Status
+
+The current repository setup phase includes a placeholder packaged scaffold under:
+
+- `src/aicoding/resources/yaml/builtin/system-yaml/`
+
+That scaffold has now been replaced by authored built-ins for the currently implemented families. A checked item below should still be read as "must remain authored meaningfully", not merely "path exists".
+
 ---
 
 ## 1. Required Node Definitions
@@ -198,6 +206,11 @@ These are the reusable subtask types most clearly exercised by the pseudocode di
 - [x] `subtasks/nudge_session.yaml`
 - [x] `subtasks/recover_cursor.yaml`
 
+Packaging note:
+
+- the current implementation now treats these standalone subtask YAML files as the canonical authored built-in subtask catalog even though the live compiler still materializes inline subtask payloads from task definitions
+- the enforced standard for this slice is therefore: every built-in subtask file must remain schema-valid, prompt-bound where required, non-destructive by default, and synthetically compileable/startable against the current runtime
+
 ---
 
 ## 4. Required Layout Definitions
@@ -210,13 +223,18 @@ These layout templates are the built-in decomposition defaults repeatedly assume
 
 ### Optional or project-shaping layouts
 
-- [ ] `layouts/manual_top_node.yaml`
-- [ ] `layouts/research_only_breakdown.yaml`
-- [ ] `layouts/replan_after_failure.yaml`
+- [x] `layouts/manual_top_node.yaml`
+- [x] `layouts/research_only_breakdown.yaml`
+- [x] `layouts/replan_after_failure.yaml`
 
 ---
 
 ## 5. Required Validation Definitions
+
+Packaging note:
+
+- the current implementation now validates these built-in validation, review, testing, and docs families together as one quality-library contract
+- a checked item here therefore means more than "file exists": the built-in file must remain schema-valid, prompt-bound where required, task-bound where required, and compatible with the canonical built-in gate ordering enforced before workflow compilation
 
 These are the validation checks most directly exercised by the simulations and task contracts.
 
@@ -303,6 +321,11 @@ These are the review-stage definitions clearly implied by the quality-gate notes
 ## 10. Required Runtime Policy Definitions
 
 These are needed if the default runtime policy is YAML-owned rather than entirely code-owned.
+
+Packaging note:
+
+- the current implementation now validates the built-in runtime definitions, runtime policies, hooks, environments, prompt references, and required prompt assets together as one operational-library contract
+- a checked item in these operational sections should therefore be read as "schema-valid and reference-valid within the shipped control plane", not merely "file exists"
 
 - [x] `runtime/session_defaults.yaml`
 - [x] `runtime/heartbeat_policy.yaml`

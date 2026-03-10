@@ -1,0 +1,28 @@
+kind: layout_definition
+id: epic_to_phases
+name: Epic To Phases
+description: Default built-in decomposition template for turning an epic into a small set of phases.
+children:
+  - id: discovery
+    kind: phase
+    tier: 1
+    name: Discovery And Framing
+    goal: Establish the implementation scope, risks, and delivery strategy.
+    rationale: The system needs one phase that converges the problem before implementation plans branch.
+    dependencies: []
+    acceptance:
+      - Scope is clarified.
+      - Risks and unknowns are captured.
+    ordinal: 1
+  - id: implementation
+    kind: phase
+    tier: 1
+    name: Implementation
+    goal: Deliver the planned implementation slices.
+    rationale: The main implementation phase should remain distinct from framing and verification.
+    dependencies:
+      - discovery
+    acceptance:
+      - Work is decomposed into executable plans.
+      - Implementation outputs are reviewable.
+    ordinal: 2

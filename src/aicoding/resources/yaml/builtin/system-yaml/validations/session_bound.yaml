@@ -1,0 +1,5 @@
+kind: validation_definition
+id: session_bound
+name: Session Bound
+description: Require a bound runtime session to exist.
+check: {type: session_bound}

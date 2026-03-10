@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: run_prompt
+type: run_prompt
+title: Run Prompt
+description: Execute an authored prompt against the current compiled context.
+prompt: "prompts/runtime/session_bootstrap.md"
+outputs: [{type: ai_json_status, value: OK}]
+retry_policy: {max_attempts: 2, backoff_seconds: 5}
+on_failure: {action: fail_to_parent}

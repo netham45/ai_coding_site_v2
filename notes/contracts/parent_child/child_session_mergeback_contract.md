@@ -150,6 +150,11 @@ That means:
 
 This is important because pushed child sessions are context helpers, not independent workflow stages.
 
+Implementation staging note:
+
+- the current implementation now attaches merge-back payloads into the parent subtask context through the active run state's current subtask context surface
+- the canonical durable store remains `child_session_results`; the attached parent-context copy is a convenience projection for the still-active parent subtask
+
 ---
 
 ## Artifact Return Rule
@@ -256,13 +261,17 @@ Summaries and session events may still provide convenience views, but they are n
 Current or likely useful commands:
 
 - `ai-tool session push --node <id> --reason <reason>`
-- `ai-tool session pop --session <id> --summary-file <path>`
+- `ai-tool session pop --session <id> --file <path>`
 - `ai-tool session show --session <id>`
 - `ai-tool session events --session <id>`
 
 Potential useful addition:
 
 - `ai-tool session result show --session <id>`
+
+Implementation staging note:
+
+- the current implementation expects the pop file to be JSON carrying the structured merge-back artifact rather than a plain summary-only text file
 
 If naming differs, the capability should still exist.
 

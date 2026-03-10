@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: update_provenance
+type: update_provenance
+title: Update Provenance
+description: Refresh provenance metadata after work completes.
+command: "python3 -m aicoding.cli.main node provenance-refresh --node {{node_id}}"
+outputs: [{type: provenance_updated, path: notes/provenance/latest.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

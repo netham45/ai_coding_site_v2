@@ -1,0 +1,22 @@
+kind: review_definition
+id: pre_finalize
+name: Pre Finalize
+applies_to:
+  node_kinds: [task, plan, phase, epic]
+  task_ids: [finalize_node]
+  lifecycle_points: [before_node_complete]
+scope: policy_compliance
+description: Final review before node completion.
+inputs:
+  include_parent_requirements: true
+  include_child_summaries: true
+  include_acceptance_criteria: true
+  include_changed_files: true
+  include_validation_results: true
+  include_test_results: true
+prompt: "prompts/review/review_node_output.md"
+criteria: [All required gates ran.]
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

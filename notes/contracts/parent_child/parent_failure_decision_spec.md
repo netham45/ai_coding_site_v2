@@ -156,6 +156,12 @@ Canonical durability rule:
 - per-child counters live in `node_run_child_failure_counters`
 - `workflow_events` records the decision trail, not the only durable home of required counters
 
+Implementation staging note:
+
+- the current implementation now persists per-child counters in `node_run_child_failure_counters` with the latest failure class, summary, subtask key, failed child run id, and last chosen decision
+- parent decisions are recorded in `workflow_events` with `event_scope = parent_decision` and event types `parent_retry_child`, `parent_regenerate_child`, `parent_replan`, and `parent_pause_for_user`
+- the first implementation slice deliberately reuses `pause_context` plus `workflow_events` for pause/replan summaries instead of creating a separate dedicated parent-summary table
+
 ## Step 2: Classify the failure
 
 Classify the child failure using:
@@ -442,6 +448,7 @@ Likely useful commands:
 - `ai-tool node child-failures --node <id>`
 - `ai-tool node failure-counters --node <id>`
 - `ai-tool node decision-history --node <id>`
+- `ai-tool node respond-to-child-failure --node <id> --child <child_id> [--action <decision>]`
 
 If the names differ, these capabilities should still exist.
 

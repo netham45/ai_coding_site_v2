@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: spawn_child_session
+type: spawn_child_session
+title: Spawn Child Session
+description: Start a delegated child session when policy allows.
+prompt: "prompts/runtime/delegated_child_session.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

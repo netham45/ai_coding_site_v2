@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: build_docs
+type: build_docs
+title: Build Docs
+description: Build or refresh documentation views for the current node.
+command: "python3 -m aicoding.cli.main docs build-node-view --node {{node_id}}"
+outputs: [{type: docs_built, path: docs/generated/node.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

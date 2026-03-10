@@ -1,0 +1,16 @@
+kind: testing_definition
+id: default_integration_test_gate
+name: Default Integration Test Gate
+applies_to:
+  node_kinds: [plan, phase]
+  task_ids: [test_node]
+  lifecycle_points: [after_task]
+scope: integration
+description: Run integration tests for the current slice.
+commands:
+  - command: python3 -m pytest tests/integration -q
+    working_directory: .
+    env: {}
+retry_policy: {max_attempts: 1, rerun_failed_only: false}
+pass_rules: {require_exit_code_zero: true, max_failed_tests: 0}
+on_result: {pass_action: continue, fail_action: fail_to_parent}

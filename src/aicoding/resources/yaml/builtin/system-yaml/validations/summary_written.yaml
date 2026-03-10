@@ -1,0 +1,5 @@
+kind: validation_definition
+id: summary_written
+name: Summary Written
+description: Require a summary artifact to be written.
+check: {type: summary_written, path: "<summary-path>"}

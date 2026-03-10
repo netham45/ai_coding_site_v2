@@ -1,0 +1,18 @@
+kind: task_definition
+id: recover_interrupted_run
+name: Recover Interrupted Run
+description: Recover the working session and cursor after interruption.
+applies_to_kinds: [task, plan, phase, epic]
+policy: {max_subtask_retries: 1, on_failure: pause_for_user}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: recover_session
+    type: run_prompt
+    title: Recover Interrupted Session
+    description: Reconstruct the current execution state after interruption.
+    prompt: "prompts/runtime/replacement_session_bootstrap.md"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

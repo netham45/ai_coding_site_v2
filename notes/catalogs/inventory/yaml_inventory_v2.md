@@ -82,6 +82,11 @@ Defines a named task phase for one or more node kinds and the subtasks that belo
 
 Defines a reusable executable subtask structure or an inline subtask instance shape.
 
+Current rendering note:
+
+- subtask definitions may now include an optional `render_context` block for compile-time prompt/command substitution
+- the current implementation intentionally limits renderable subtask fields to `prompt`, `command`, and `pause_summary_prompt`
+
 ### Y04. Validation check YAML
 
 Defines validation checks such as file checks, schema checks, command exit codes, AI status checks, and content checks.
@@ -126,9 +131,17 @@ Defines policies or scopes for code-entity extraction, relation extraction, rati
 
 Defines rebuild/rectify task structures, reset-from-seed policies, merge ordering policies, and upstream rebuild behaviors where configurable.
 
+Implementation note:
+
+- validation, review, testing, documentation, and rectification families are now backed by explicit rigid Pydantic models in the current implementation, with invalid field combinations rejected during YAML validation instead of being deferred to runtime consumers
+
 ### Y15. Session/runtime policy YAML
 
 Defines runtime/session policies such as heartbeat intervals, idle thresholds, pause behavior, child session policies, and recovery rules.
+
+Implementation note:
+
+- runtime and runtime-policy YAML are now validated as rigid families in the current implementation, including catalog-backed checks for referenced subtask and higher-order YAML assets
 
 ### Y16. Environment/isolation policy YAML
 
@@ -273,6 +286,10 @@ If the design wants generic defaults rather than semantic defaults, that may ins
 Open decision:
 
 - whether the default package should be semantic (`epic`, `phase`, `plan`, `task`) or generic (`tierN` with aliases)
+
+Implementation note:
+
+- the current built-in package uses semantic defaults (`epic`, `phase`, `plan`, `task`) while keeping the underlying hierarchy model generic in `kind` and `tier`
 
 ## 2. Core task definition files
 

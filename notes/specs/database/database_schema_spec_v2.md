@@ -66,6 +66,14 @@ Candidates include:
 
 JSON should be used only where the shape is intentionally extensible rather than obviously relational.
 
+Implementation staging note:
+
+- the current implementation persists live lifecycle and cursor state in a dedicated `node_lifecycle_states` table keyed by durable node id
+- this table is an interim durable current-state surface ahead of the fuller `node_versions` and run-history model described below
+- audit history for lifecycle mutations currently continues to flow through daemon mutation events until the dedicated run-orchestration/history phases land
+- the current implementation now also persists `node_versions` plus `logical_node_current_versions`, with explicit separation between `authoritative_node_version_id` and `latest_created_node_version_id`
+- compiled workflow ids, dependency evaluation, and full run history are still deferred, so current version rows currently preserve version lineage and cutover state before the later compilation/runtime phases bind more assets to them
+
 ---
 
 ## 3. Core hierarchy tables
@@ -142,6 +150,9 @@ Application-enforced invariants:
 
 - only one authoritative version per logical node through `logical_node_current_versions`
 - no cycles in the node tree
+- `active_branch_name` must match the canonical deterministic branch rule for the stored version metadata
+- `branch_generation_number` should match `version_number` in the first-pass branch model
+- candidate versions should inherit their rebuild seed from the latest final commit when available, otherwise the latest seed commit
 
 ### `node_children`
 
@@ -149,6 +160,7 @@ Application-enforced invariants:
 create table node_children (
   parent_node_version_id uuid not null references node_versions(id),
   child_node_version_id uuid not null references node_versions(id),
+  layout_child_id text not null,
   origin_type text not null default 'layout_generated',
   ordinal integer,
   created_at timestamptz not null default now(),
@@ -162,12 +174,15 @@ Recommended indexes:
 
 - `(parent_node_version_id)`
 - `(child_node_version_id)`
+- `(layout_child_id)`
 - `(parent_node_version_id, ordinal)`
 
 Application-enforced invariants:
 
 - each child version has at most one parent
 - parent/child kind and tier relationships must satisfy YAML constraints
+- `layout_child_id` must remain stable for the originating layout child within the parent version
+- if `node_children` rows exist while `parent_child_authority.authoritative_layout_hash` is null, the tree must be treated as reconciliation-required rather than silently rematerialized
 
 ### `parent_child_authority`
 
@@ -186,6 +201,11 @@ Purpose:
 - persist whether a parent's child set is manual, layout-authoritative, or hybrid
 - support explicit reconciliation for mixed manual/layout trees
 - prevent silent structural rematerialization when layout authority is no longer exclusive
+
+Implementation staging note:
+
+- the current implementation treats a matching `authoritative_layout_hash` plus existing `node_children` rows as idempotent materialization
+- a hash mismatch returns a replan/reconciliation-required result instead of mutating the existing child set in place
 
 ---
 
@@ -218,6 +238,39 @@ Application-enforced invariants:
 - parent/cousin/nibling dependencies are not allowed
 
 Dependencies must be enforced in run admission and cursor advancement.
+
+### `node_dependency_blockers`
+
+```sql
+create table node_dependency_blockers (
+  id uuid primary key,
+  node_version_id uuid not null references node_versions(id),
+  dependency_id uuid references node_dependencies(id),
+  blocker_kind text not null,
+  target_node_version_id uuid references node_versions(id),
+  details_json jsonb not null,
+  created_at timestamptz not null default now()
+);
+```
+
+Recommended indexes:
+
+- `(node_version_id, created_at)`
+- `(dependency_id)`
+- `(blocker_kind)`
+- `(target_node_version_id)`
+
+Purpose:
+
+- persist the most recent dependency-readiness explanation for operator inspection
+- expose invalid dependency graphs, blocked waits, and impossible waits without recomputing the result from logs
+- let CLI and daemon read paths share the same blocker surface after an admission/readiness check
+
+Application-enforced invariants:
+
+- blocker rows are a replace-on-write snapshot for the current authoritative `node_version_id`
+- `dependency_id` may be null for graph-level failures such as cycle detection
+- `blocker_kind` should be constrained to the runtime vocabulary used by admission and readiness checks
 
 ### `node_version_lineage`
 
@@ -263,6 +316,16 @@ create table source_documents (
 );
 ```
 
+Implementation staging note:
+
+- the current implementation persists durable source text and hashes in `source_documents`
+- node-version lineage edges are persisted in `node_version_source_documents`
+- current captured inputs are the built-in node/task/layout/policy/prompt-reference YAML set, packaged project-policy YAML, packaged override YAML, plus referenced prompt templates for the node version
+- resolved merged YAML snapshots now persist in `compiled_workflows` once the explicit compile path runs
+- applied override metadata, compatibility warnings, and resolved per-document YAML payloads now persist inside `compiled_workflows.resolved_yaml`
+- durable override conflicts currently rely on `compile_failures` plus persisted source lineage rather than a separate dedicated override-conflict table
+- richer extension layering and hook-expanded merged payloads remain later compile stages
+
 Purpose:
 
 - store built-in, extension, and override source documents used during compilation
@@ -291,6 +354,11 @@ Recommended indexes:
 - `(node_version_id)`
 - `(source_hash)`
 - `(created_at)`
+
+Implementation staging note:
+
+- the current implementation also persists `node_versions.compiled_workflow_id` as the current workflow binding for the authoritative node version
+- recompilation preserves historical `compiled_workflows` rows and moves the current binding pointer only on successful compile
 
 ### `compiled_workflow_sources`
 
@@ -351,6 +419,8 @@ create table compiled_subtasks (
   title text,
   prompt_text text,
   command_text text,
+  environment_policy_ref text,
+  environment_request_json jsonb,
   args_json jsonb,
   env_json jsonb,
   retry_policy_json jsonb,
@@ -371,6 +441,13 @@ Recommended indexes:
 - `(compiled_task_id)`
 - `(subtask_type)`
 - `(compiled_task_id, ordinal)`
+
+Implementation staging note:
+
+- the current implementation compiles the built-in task list into a minimal linear graph with one `run_prompt` subtask per compiled task
+- dependency rows currently represent simple sequential ordering between adjacent compiled subtasks
+- the current implementation now also freezes optional environment execution intent here via `environment_policy_ref` and `environment_request_json`
+- those fields record requested mode, profile, mandatory/best-effort posture, and source identity without persisting launcher-specific host details into the immutable workflow
 
 ### `compiled_subtask_dependencies`
 
@@ -441,6 +518,12 @@ Application-enforced invariants:
 - only one active run per node version unless the system intentionally supports more
 - current primary-session identity should be derived from `sessions`, not duplicated on `node_runs`
 
+Implementation staging note:
+
+- the current runtime slice now uses `node_runs` as the canonical durable record created on successful run admission
+- the earlier daemon-authority tables remain as compatibility mirrors for older inspection surfaces, not the source of truth for active run history
+- operator event-history surfaces currently still read from `daemon_mutation_events` for run admission and pause/resume visibility until dedicated workflow/session event families land
+
 ### `node_run_state`
 
 ```sql
@@ -477,6 +560,12 @@ Application-enforced invariants:
 - task and subtask pointers must belong to the run's compiled workflow
 - cursor advancement must respect compiled dependency readiness
 
+Implementation staging note:
+
+- the current implementation initializes the cursor to the first compiled subtask of the run's compiled workflow
+- `workflow advance` is the explicit durable cursor mutation in this slice
+- pause and resume synchronize this row alongside lifecycle visibility
+
 ### `node_run_child_failure_counters`
 
 This structure is canonical for per-child failure thresholds and parent decision history.
@@ -488,6 +577,11 @@ create table node_run_child_failure_counters (
   failure_count integer not null default 0,
   last_failure_at timestamptz,
   last_failure_class text,
+  last_failure_summary text,
+  last_failure_subtask_key text,
+  last_failed_node_run_id uuid references node_runs(id),
+  last_decision_type text,
+  last_decision_at timestamptz,
   updated_at timestamptz not null default now(),
   primary key (node_run_id, child_node_version_id),
   check (failure_count >= 0)
@@ -503,6 +597,12 @@ Recommended indexes:
 Application-enforced invariants:
 
 - child rows must refer only to node versions that are children of the run's node version in the authoritative lineage for that run
+- `last_decision_type` reflects the daemon's latest applied parent response, not merely the latest observed child failure
+
+Implementation staging note:
+
+- the current implementation uses this table as the canonical per-child threshold surface for parent failure handling
+- daemon authority compatibility constraints were widened in the same slice so retry-reset actions may durably record `last_command = node.run.retry.reset` and `lifecycle_state/resulting_state = ready`
 - the row is incremented durably before the parent chooses retry, regenerate, replan, or pause
 - total and consecutive counters on `node_run_state` remain the current aggregate view, while this table provides the per-child durable detail
 
@@ -517,6 +617,7 @@ create table subtask_attempts (
   status text not null,
   input_context_json jsonb,
   output_json jsonb,
+  execution_environment_json jsonb,
   changed_files_json jsonb,
   git_head_before text,
   git_head_after text,
@@ -535,6 +636,12 @@ Recommended indexes:
 - `(compiled_subtask_id)`
 - `(status)`
 - `(node_run_id, compiled_subtask_id, attempt_number desc)`
+
+Implementation staging note:
+
+- the current implementation persists attempt `RUNNING`, `COMPLETE`, and `FAILED` transitions here
+- richer payload columns such as changed-files, git-head deltas, and validation payloads remain schema-reserved for later slices and are not yet populated by the runtime
+- the current implementation now also persists `execution_environment_json` for each attempt so recovery and operator surfaces can inspect resolved mode, launcher kind, launch status, fallback reason, and environment-launch failures durably
 
 ---
 
@@ -565,6 +672,8 @@ Recommended indexes:
 - `(compiled_subtask_id)`
 - `(status)`
 
+Implementation note: the current runtime now persists F21 validation gate outcomes in this table and mirrors the latest gate summary into `subtask_attempts.validation_json` for fast current-run inspection.
+
 ### `review_results`
 
 ```sql
@@ -591,6 +700,8 @@ Recommended indexes:
 - `(status)`
 - `(scope)`
 
+Implementation note: the current runtime now persists F22 review gate outcomes in this table and mirrors the latest per-attempt review summary into `subtask_attempts.review_json` for current-run inspection and recovery.
+
 ### `test_results`
 
 ```sql
@@ -616,6 +727,8 @@ Recommended indexes:
 - `(compiled_subtask_id)`
 - `(status)`
 - `(suite_name)`
+
+Implementation note: the current runtime now persists F23 testing gate outcomes in this table and mirrors the latest per-attempt testing summary into `subtask_attempts.testing_json` for current-run inspection, retry routing, and recovery.
 
 ### `compile_failures`
 
@@ -652,21 +765,35 @@ Recommended indexes:
 ```sql
 create table prompts (
   id uuid primary key,
+  node_version_id uuid not null references node_versions(id),
   node_run_id uuid not null references node_runs(id),
   compiled_subtask_id uuid references compiled_subtasks(id),
   prompt_role text not null,
+  source_subtask_key text,
+  template_path text,
+  template_hash text,
   content text not null,
   content_hash text not null,
-  created_at timestamptz not null default now()
+  payload_json jsonb not null default '{}'::jsonb,
+  delivered_at timestamptz not null default now()
 );
 ```
 
 Recommended indexes:
 
+- `(node_version_id)`
 - `(node_run_id)`
 - `(compiled_subtask_id)`
 - `(prompt_role)`
 - `(content_hash)`
+- `(delivered_at)`
+
+Implementation note:
+
+- the current implementation writes one `prompts` row each time `ai-tool subtask prompt --node <id>` retrieves the current frozen compiled prompt payload
+- `prompt_role` is currently bounded to daemon-issued audit roles, with the implemented slice using `subtask_prompt`, `review_prompt`, `testing_prompt`, and `docs_prompt`
+- prompt-template identity is persisted via `source_subtask_key`, `template_path`, and `template_hash`
+- the full retrieval payload is mirrored into `payload_json` for deterministic later inspection
 
 ### `summaries`
 
@@ -675,8 +802,14 @@ create table summaries (
   id uuid primary key,
   node_version_id uuid not null references node_versions(id),
   node_run_id uuid references node_runs(id),
+  compiled_subtask_id uuid references compiled_subtasks(id),
+  attempt_number integer,
   summary_type text not null,
+  summary_scope text not null,
+  summary_path text,
   content text not null,
+  content_hash text not null,
+  metadata_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 ```
@@ -685,34 +818,53 @@ Recommended indexes:
 
 - `(node_version_id)`
 - `(node_run_id)`
+- `(compiled_subtask_id)`
 - `(summary_type)`
+- `(summary_scope)`
+- `(content_hash)`
 - `(created_at)`
 
-### `node_docs`
+Implementation note:
+
+- the current implementation writes one `summaries` row each time `ai-tool summary register --node <id> --file <path> --type <type>` succeeds
+- the active-attempt `registered_summaries` mirror remains in place for compatibility, but `summaries` is now the durable audit source
+- the implemented `summary_scope` value for this slice is `subtask_attempt`
+- `summary_type` is now durably bounded to the summary taxonomy used by orchestration, including `subtask`, `failure`, `pause`, `node`, `review`, `testing`, `validation`, `rectification`, `parent_replan`, `parent_child_failure_pause`, `docs`, and `provenance`
+
+### `documentation_outputs`
 
 ```sql
-create table node_docs (
+create table documentation_outputs (
   id uuid primary key,
+  logical_node_id uuid not null references hierarchy_nodes(node_id),
   node_version_id uuid not null references node_versions(id),
-  view_scope text not null check (view_scope in ('local','merged')),
-  doc_kind text not null,
-  path text not null,
+  doc_definition_id text,
+  scope text not null check (scope in ('local','merged','entity_history','rationale_view','custom')),
+  view_name text not null,
+  output_path text not null,
   content text not null,
   content_hash text not null,
+  metadata_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 ```
 
 Recommended indexes:
 
+- `(logical_node_id)`
 - `(node_version_id)`
-- `(view_scope)`
-- `(doc_kind)`
+- `(node_version_id, created_at)`
+- `(logical_node_id, scope, view_name, created_at)`
+- `(scope)`
+- `(doc_definition_id)`
 - `(content_hash)`
 
-Possible future addition:
+Implementation note:
 
-- a dedicated docs build-event table if docs generation requires richer operational history
+- the current implementation persists one row per generated documentation output and treats `documentation_outputs` as the durable audit surface for docs generation
+- node docs and tree docs are both generated against the authoritative node version and are keyed by `scope` rather than a separate docs kind
+- docs build event history is intentionally staged by the append-only output rows for now; there is no separate build-event table in the current slice
+- the schema now also materializes `latest_documentation_outputs` so operator and audit surfaces can retrieve the current output per `(logical_node_id, scope, view_name)` without re-scanning the full append-only history
 
 ---
 
@@ -761,6 +913,11 @@ Application-enforced invariants:
 - only one active primary session per active run
 - pushed child sessions do not own git state or workflow cursor ownership
 
+Implementation staging note:
+
+- the current implementation now persists primary-session records here for bind/attach/resume flows
+- initial active status vocabulary is `BOUND`, `ATTACHED`, `RESUMED`, `RUNNING`, with terminal replacement/loss tracked through non-active statuses such as `LOST`
+
 ### `session_events`
 
 ```sql
@@ -778,6 +935,13 @@ Recommended indexes:
 - `(session_id)`
 - `(event_type)`
 - `(created_at)`
+
+Implementation staging note:
+
+- the current implementation records bind, attach, resume, replacement, and invalidation decisions here so recovery behavior is auditable
+- provider-agnostic recovery now also records `recovery_attempted`, `recovery_resumed_existing`, `recovery_replacement_created`, `recovery_rejected`, and `recovery_paused` event types here
+- idle handling now also records `nudged`, `nudge_skipped`, `nudge_suppressed`, and `nudge_escalated` event types here
+- no separate recovery-event table is required yet because recovery classification is derived from durable run state plus the canonical `sessions`/`session_events` history
 
 ### `child_session_results`
 
@@ -798,6 +962,11 @@ Recommended indexes:
 
 - `(child_session_id)`
 - `(parent_compiled_subtask_id)`
+
+Implementation staging note:
+
+- the current implementation now writes bounded merge-back payloads here on `session pop`
+- parent-context attachment is staged as a projection into the active parent subtask context rather than a separate dedicated context table
 - `(status)`
 
 ---
@@ -827,6 +996,11 @@ Recommended indexes:
 - `(child_node_version_id)`
 - `(parent_node_version_id, merge_order)`
 
+Implementation staging note:
+
+- the current implementation now persists merge events as explicit durable records keyed by parent candidate version and child version
+- automated clean merge recording remains deferred until the later rectification pipeline; this phase closes the durable event/conflict history and resolution surfaces first
+
 ### `merge_conflicts`
 
 ```sql
@@ -845,6 +1019,11 @@ Recommended indexes:
 
 - `(merge_event_id)`
 - `(resolution_status)`
+
+Implementation staging note:
+
+- the current implementation uses bounded `resolution_status` values `unresolved`, `resolved`, and `abandoned`
+- unresolved conflicts now block candidate-version cutover for the affected parent version until a durable resolution is recorded
 
 ### `rebuild_events`
 
@@ -899,6 +1078,11 @@ Recommended event families:
 - cutover completed
 - lineage superseded
 
+Implementation staging note:
+
+- parent failure handling now records decision events in this table with `event_scope = parent_decision`
+- the current event payload includes child node/version/run ids, failure class and summary, counter values at decision time, decision source (`auto` or `override`), and the chosen decision type
+
 ---
 
 ## 12. Provenance tables
@@ -938,8 +1122,17 @@ create table node_entity_changes (
   id uuid primary key,
   node_version_id uuid not null references node_versions(id),
   entity_id uuid not null references code_entities(id),
+  prompt_record_id uuid references prompts(id),
+  summary_record_id uuid references summaries(id),
   change_type text not null,
+  match_confidence text not null,
+  match_reason text not null,
   rationale_summary text,
+  observed_canonical_name text not null,
+  observed_file_path text,
+  observed_signature text,
+  observed_stable_hash text,
+  metadata_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 ```
@@ -947,19 +1140,35 @@ create table node_entity_changes (
 Recommended indexes:
 
 - `(node_version_id)`
+- `(node_version_id, entity_id, created_at)`
 - `(entity_id)`
+- `(entity_id, created_at)`
 - `(change_type)`
+- `(prompt_record_id)`
+- `(summary_record_id)`
+- `(match_confidence)`
+- `(match_reason)`
+- `(observed_canonical_name, created_at)`
+
+Application-enforced invariants:
+
+- current bounded change taxonomy is `added`, `modified`, `unchanged`, `renamed_or_moved`, and `removed`
+- current bounded match-confidence taxonomy is `high`, `medium`, and `low`
+- provenance rows should preserve the observed name/path/signature/hash snapshot used to justify the match instead of only the final durable entity anchor
+- the schema now also materializes `latest_node_entity_changes` so the current per-version rationale state for each entity is queryable without giving up the full append-only history
 
 ### `code_relations`
 
 ```sql
 create table code_relations (
   id uuid primary key,
+  node_version_id uuid not null references node_versions(id),
   from_entity_id uuid not null references code_entities(id),
   to_entity_id uuid not null references code_entities(id),
   relation_type text not null,
   source text not null,
   confidence numeric,
+  rationale_summary text,
   created_at timestamptz not null default now(),
   check (from_entity_id <> to_entity_id)
 );
@@ -967,10 +1176,20 @@ create table code_relations (
 
 Recommended indexes:
 
+- `(node_version_id)`
 - `(from_entity_id)`
 - `(to_entity_id)`
+- `(node_version_id, from_entity_id, to_entity_id, relation_type, created_at)`
+- `(from_entity_id, relation_type, created_at)`
+- `(to_entity_id, relation_type, created_at)`
 - `(relation_type)`
 - `(source)`
+
+Implementation staging note:
+
+- the current bounded provenance slice only materializes `module`, `class`, `function`, and `method` entities plus `contains` and `calls` relations
+- default daemon extraction scans the repository `src/` tree when present, while explicit workspace roots continue to scan the provided tree directly
+- the schema now also materializes `latest_code_relations` so the current relation graph for a node version can be read directly while the full relation history remains append-only
 
 ---
 
@@ -986,6 +1205,11 @@ join logical_node_current_versions lcv
   on lcv.authoritative_node_version_id = nv.id;
 ```
 
+Implementation note:
+
+- the current schema now materializes this view directly for authoritative-version runtime reads
+- `authoritative_node_versions` is also materialized as an explicit compatibility alias for operator and note-level terminology
+
 ### `latest_node_runs`
 
 ```sql
@@ -996,6 +1220,11 @@ from node_runs
 order by node_version_id, run_number desc;
 ```
 
+Implementation note:
+
+- the current schema now materializes this view directly
+- a composite index on `(node_version_id, run_number)` is now present to keep this current-state lookup cheap under repeated runtime inspection
+
 ### `latest_subtask_attempts`
 
 ```sql
@@ -1005,6 +1234,11 @@ select distinct on (node_run_id, compiled_subtask_id)
 from subtask_attempts
 order by node_run_id, compiled_subtask_id, attempt_number desc;
 ```
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- a composite index on `(node_run_id, compiled_subtask_id, attempt_number)` is now present to keep latest-attempt inspection cheap
 
 ### Additional recommended current-state views
 
@@ -1021,11 +1255,21 @@ Recommended implementation:
 - filter to active statuses
 - do not treat `node_runs` as the canonical owner of session identity
 
+Implementation note:
+
+- the current schema now materializes this view directly from `sessions`
+- it intentionally filters only primary sessions in active statuses `BOUND`, `ATTACHED`, `RESUMED`, and `RUNNING`
+- session ownership remains canonical in `sessions`; this view is a current-state read surface only
+
 #### `current_node_cursors`
 
 Purpose:
 
 - flatten node, run, workflow, task, and current subtask into one operational surface
+
+Implementation note:
+
+- the current schema now materializes this view directly over `logical_node_current_versions`, `latest_node_runs`, and `node_run_state`
 
 #### `pending_dependency_nodes`
 
@@ -1033,11 +1277,21 @@ Purpose:
 
 - show which nodes are blocked and on what dependencies
 
+Implementation note:
+
+- the current schema now materializes this view directly from `node_dependency_blockers` plus dependency metadata
+- a composite index on `(node_version_id, created_at)` is now present to keep repeated blocker inspection cheap
+
 #### `latest_validation_results`
 
 Purpose:
 
 - expose latest validation state by node/run/subtask
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(node_version_id, node_run_id, compiled_subtask_id, check_type)`
 
 #### `latest_review_results`
 
@@ -1045,11 +1299,57 @@ Purpose:
 
 - expose latest review state by node/run/subtask
 
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(node_version_id, node_run_id, compiled_subtask_id, review_definition_id, scope)`
+
 #### `latest_test_results`
 
 Purpose:
 
 - expose latest testing state by node/run/subtask
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(node_version_id, node_run_id, compiled_subtask_id, testing_definition_id, suite_name)`
+
+#### `latest_documentation_outputs`
+
+Purpose:
+
+- expose the current documentation output per logical node, scope, and named view while preserving append-only docs history
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(logical_node_id, scope, view_name)`
+- composite indexes on `(node_version_id, created_at)` and `(logical_node_id, scope, view_name, created_at)` are now present to keep both historical and current-state docs reads cheap
+
+#### `latest_node_entity_changes`
+
+Purpose:
+
+- expose the current per-version rationale state for each durable code entity without losing the append-only provenance history
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(node_version_id, entity_id)`
+- composite indexes on `(node_version_id, entity_id, created_at)`, `(entity_id, created_at)`, and `(observed_canonical_name, created_at)` are now present to keep node-rationale and entity-history reads cheap
+
+#### `latest_code_relations`
+
+Purpose:
+
+- expose the current relation graph for a node version while keeping relation history auditable
+
+Implementation note:
+
+- the current schema now materializes this view directly
+- it preserves the latest row by `(node_version_id, from_entity_id, to_entity_id, relation_type)`
+- composite indexes on `(node_version_id, from_entity_id, to_entity_id, relation_type, created_at)`, `(from_entity_id, relation_type, created_at)`, and `(to_entity_id, relation_type, created_at)` are now present to keep relation lookups cheap
 
 #### `authoritative_node_versions`
 
@@ -1060,6 +1360,10 @@ Purpose:
 Recommended implementation:
 
 - derive directly from `logical_node_current_versions.authoritative_node_version_id`
+
+Implementation note:
+
+- the current schema now materializes this view directly as a named alias over the authoritative-selection join so operator/database surfaces can use the note terminology verbatim
 
 #### `candidate_node_versions`
 
@@ -1072,11 +1376,19 @@ Recommended implementation:
 - derive from `logical_node_current_versions.latest_created_node_version_id`
 - exclude versions already selected as authoritative
 
+Implementation note:
+
+- the current schema now materializes this view directly and excludes already-authoritative latest versions
+
 #### `latest_parent_child_authority`
 
 Purpose:
 
 - expose the current child authority mode and authoritative layout hash for each parent node version
+
+Implementation note:
+
+- the current schema now materializes this view directly over `parent_child_authority`
 
 #### `candidate_lineage_edges`
 
@@ -1190,7 +1502,7 @@ This V2 DB spec resolves or reduces the following prior gaps:
 Remaining follow-on work still needed:
 
 - freeze bounded value catalogs in migration-grade form
-- decide whether docs build events need a dedicated table
+- decide whether docs generation later needs a dedicated build-event table in addition to `documentation_outputs`
 - define the exact SQL or materialized-view implementation for authoritative-versus-candidate lineage read surfaces
 - define whether `parent_child_authority` needs a history table in addition to current-state storage
 - align runtime, lifecycle, CLI, and git v2 specs to these structures

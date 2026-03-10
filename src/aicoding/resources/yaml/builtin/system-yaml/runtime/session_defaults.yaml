@@ -1,0 +1,10 @@
+kind: runtime_definition
+id: session_defaults
+name: Session Defaults
+description: Default session posture for primary node execution.
+commands:
+  - ai-tool session bind --node <node_id>
+  - ai-tool session show-current
+thresholds:
+  bind_once_per_run: true
+actions: [rebind_session]

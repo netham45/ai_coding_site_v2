@@ -1,0 +1,19 @@
+kind: docs_definition
+id: build_merged_tree_docs
+name: Build Merged Tree Docs
+applies_to:
+  node_kinds: [phase, plan]
+  task_ids: [reconcile_children]
+  lifecycle_points: [after_task]
+scope: merged
+description: Build merged documentation after child reconciliation.
+inputs:
+  include_static_analysis: false
+  include_entity_relations: true
+  include_node_summaries: true
+  include_prompt_history: false
+  include_review_results: true
+  include_test_results: false
+outputs:
+  - path: docs/generated/merged-tree.md
+    view: merged_tree

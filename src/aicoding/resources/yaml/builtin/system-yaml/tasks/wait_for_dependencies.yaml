@@ -1,0 +1,18 @@
+kind: task_definition
+id: wait_for_dependencies
+name: Wait For Dependencies
+description: Wait for explicit sibling or upstream dependencies to unblock execution.
+applies_to_kinds: [task, plan]
+policy: {max_subtask_retries: 0, on_failure: pause_for_user}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: wait_for_dependency_gate
+    type: wait_for_sibling_dependency
+    title: Wait For Dependency
+    description: Wait for explicit dependency readiness.
+    prompt: "prompts/runtime/missed_step.md"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

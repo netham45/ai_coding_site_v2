@@ -4,6 +4,30 @@
 
 Implement the concrete tmux-backed session manager used for active runs.
 
+## Rationale
+
+- Rationale: Session binding is abstract until the runtime has a concrete terminal/session backend that can be created, reattached, and inspected.
+- Reason for existence: This phase exists to make tmux-backed session management a real implementation surface with durable linkage to runs.
+
+## Related Features
+
+Read these feature plans for implementation context and interaction boundaries:
+
+- `plan/features/16_F12_session_binding_and_resume.md`: F12 is the parent feature for concrete session management.
+- `plan/features/17_F34_provider_agnostic_session_recovery.md`: F34 handles failures or missing identity from this backend.
+- `plan/features/18_F13_idle_detection_and_nudge_behavior.md`: F13 polls and nudges against the active tmux session.
+- `plan/features/50_F12_session_attach_resume_and_control_commands.md`: F12-S2 is the command surface used to operate tmux-backed sessions.
+
+## Required Notes
+
+Read these note files before implementing or revising this phase:
+
+- `notes/specs/runtime/runtime_command_loop_spec_v2.md`
+- `notes/specs/cli/cli_surface_spec_v2.md`
+- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/planning/implementation/tmux_and_session_harness_decisions.md`
+- `notes/scenarios/journeys/common_user_journeys_analysis.md`
+
 ## Scope
 
 - Database: persist tmux session identity, linkage to node run/session records, and relevant events.

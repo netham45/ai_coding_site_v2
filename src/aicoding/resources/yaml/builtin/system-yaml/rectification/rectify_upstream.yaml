@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: rectify_upstream
+name: Rectify Upstream
+description: Rectify upstream nodes when downstream work is blocked by inherited issues.
+trigger: upstream_rectification_requested
+entry_task: rectify_upstream
+subtasks: [run_prompt, write_summary]

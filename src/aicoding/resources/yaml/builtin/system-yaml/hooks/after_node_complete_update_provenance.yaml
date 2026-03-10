@@ -1,0 +1,6 @@
+kind: hook_definition
+id: after_node_complete_update_provenance
+when: after_node_complete
+applies_to: {tiers: [], node_kinds: [task, plan], task_ids: [finalize_node], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: run_command, command: "printf 'provenance updated'"}]

@@ -1,0 +1,5 @@
+kind: validation_definition
+id: git_dirty
+name: Git Dirty
+description: Require a dirty git working tree when output changes are expected.
+check: {type: git_dirty}

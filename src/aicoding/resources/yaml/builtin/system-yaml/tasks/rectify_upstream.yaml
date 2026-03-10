@@ -1,0 +1,18 @@
+kind: task_definition
+id: rectify_upstream
+name: Rectify Upstream
+description: Rectify upstream inputs before retrying downstream work.
+applies_to_kinds: [phase, plan]
+policy: {max_subtask_retries: 1, on_failure: fail_to_parent}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: trigger_upstream_rectification
+    type: run_prompt
+    title: Trigger Upstream Rectification
+    description: Decide and initiate upstream rectification work.
+    prompt: "prompts/runtime/parent_local_replan.md"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

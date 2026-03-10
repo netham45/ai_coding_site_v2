@@ -1,0 +1,6 @@
+schema_family:
+  family: hook_definition
+  source_group: yaml_builtin_system
+  relative_glob: hooks/*.yaml
+  validator_model: HookDefinitionDocument
+  status: active

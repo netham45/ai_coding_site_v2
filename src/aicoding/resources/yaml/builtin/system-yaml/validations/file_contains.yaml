@@ -1,0 +1,5 @@
+kind: validation_definition
+id: file_contains
+name: File Contains
+description: Require a file to contain a string pattern.
+check: {type: file_contains, path: "<path>", pattern: "<pattern>"}

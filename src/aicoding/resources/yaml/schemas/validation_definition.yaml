@@ -1,0 +1,6 @@
+schema_family:
+  family: validation_definition
+  source_group: yaml_builtin_system
+  relative_glob: validations/*.yaml
+  validator_model: ValidationDefinitionDocument
+  status: active

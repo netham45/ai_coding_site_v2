@@ -162,6 +162,9 @@ Recommended canonical values:
 - `detached`
 - `heartbeat`
 - `nudged`
+- `nudge_skipped`
+- `nudge_suppressed`
+- `nudge_escalated`
 - `resume_requested`
 - `resumed`
 - `replacement_created`

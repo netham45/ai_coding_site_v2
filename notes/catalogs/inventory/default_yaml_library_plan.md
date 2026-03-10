@@ -8,6 +8,12 @@ The goal is to move from abstract YAML family definitions into a concrete defaul
 
 This is not yet the final YAML content. It is the file-level library plan for what should exist.
 
+Implementation staging note:
+
+- the current implementation now ships a real authored built-in library across node, task, subtask, layout, validation, review, testing, docs, rectification, runtime, hook, and policy families
+- the default node kinds intentionally still bind to the smaller runtime task set already exercised by the current compiler and orchestration slices, while the broader authored library remains packaged and validation-ready for later runtime-flow phases
+- the packaged default prompt pack is now authored as a concrete implementation asset set with explicit prompt-reference inventory, render compatibility checks, and prompt-to-YAML binding tests
+
 Related documents:
 
 - `notes/catalogs/inventory/yaml_inventory_v2.md`
@@ -221,6 +227,11 @@ These represent the built-in subtask building blocks or canonical named subtask 
 
 - whether these should be referenced as reusable named subtask definitions, copied inline during compilation, or treated as canonical templates for task authors
 
+Implementation staging note:
+
+- the current implementation now freezes the packaging choice explicitly: built-in `subtasks/*.yaml` files are the canonical authored subtask catalog, while the active compiler still consumes inline subtask payloads from task definitions
+- that means standalone subtask files must remain schema-valid, prompt-bound, and synthetically compileable against the current runtime vocabulary even though task definitions are not yet rewritten to reference them by id
+
 ---
 
 ## 4. Default layout definition files
@@ -239,6 +250,12 @@ The system likely needs built-in layout templates or patterns for default semant
 - `layouts/research_only_breakdown.yaml`
 - `layouts/replan_after_failure.yaml`
 
+Implementation note:
+
+- the built-in structural pack now ships these optional layouts as authored assets
+- they remain additive and are not silently wired into the default active decomposition ladder
+- workflow compilation now performs a built-in structural-library integrity check first so missing required node/task/subtask/layout assets fail as explicit compile errors instead of surfacing later as indirect missing-source errors
+
 ### Purpose
 
 These files define:
@@ -254,6 +271,11 @@ These files define:
 ## 5. Hook definition files
 
 The built-in system should likely include default hooks for quality and consistency behavior.
+
+Implementation note:
+
+- the current implementation now treats the built-in runtime, hook, policy, environment, and prompt-reference assets as one inspectable operational-library contract
+- workflow compilation now performs a dedicated built-in operational-library integrity check so missing required runtime/hook/policy files, broken prompt assets, or broken policy references fail as explicit compile errors before source resolution continues
 
 ### Validation/review/testing hooks
 
@@ -293,6 +315,11 @@ The built-in system should likely include default hooks for quality and consiste
 ## 6. Validation definition files
 
 The system should have a built-in validation library.
+
+Implementation note:
+
+- the current implementation now treats the built-in validation, review, testing, and docs families as one inspectable quality-library contract
+- workflow compilation now performs a dedicated built-in quality-library integrity check so missing required gate/docs definitions, broken prompt bindings, or invalid built-in gate ordering fail as explicit compile errors instead of surfacing later as indirect runtime confusion
 
 ### Required validation definitions
 

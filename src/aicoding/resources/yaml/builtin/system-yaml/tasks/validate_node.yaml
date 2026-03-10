@@ -1,0 +1,26 @@
+kind: task_definition
+id: validate_node
+name: Validate Node
+description: Run the default validation gate for the current node.
+applies_to_kinds:
+  - task
+  - plan
+  - phase
+  - epic
+policy:
+  max_subtask_retries: 1
+  on_failure: fail_to_parent
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: run_validation_gate
+    type: validate
+    title: Run Validation Gate
+    description: Run the built-in validation gate checks.
+    command: "python3 -m pytest tests/unit/test_yaml_schemas.py -q"
+    checks:
+      - {type: command_exit_code, exit_code: 0}
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

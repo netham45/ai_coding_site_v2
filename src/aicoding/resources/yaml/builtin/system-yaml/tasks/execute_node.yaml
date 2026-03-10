@@ -1,0 +1,38 @@
+kind: task_definition
+id: execute_node
+name: Execute Node
+description: Perform the main implementation work for a leaf task node.
+applies_to_kinds:
+  - task
+policy:
+  max_subtask_retries: 2
+  on_failure: fail_to_parent
+uses_reviews:
+  - reviews/node_against_requirements.yaml
+uses_testing:
+  - testing/default_unit_test_gate.yaml
+uses_docs:
+  - docs/build_local_node_docs.yaml
+subtasks:
+  - kind: subtask_definition
+    id: run_leaf_prompt
+    type: run_prompt
+    title: Implement Leaf Task
+    description: Execute the current task with the compiled prompt context.
+    prompt: "prompts/execution/implement_leaf_task.md"
+    outputs:
+      - {type: working_tree_dirty}
+      - {type: summary_written, path: summaries/implementation.md}
+    retry_policy: {max_attempts: 2, backoff_seconds: 10}
+    on_failure: {action: fail_to_parent}
+  - kind: subtask_definition
+    id: run_local_command_checks
+    type: run_command
+    title: Run Local Verification Command
+    description: Run a lightweight local verification command after implementation.
+    requires: [{subtask_complete: run_leaf_prompt}]
+    command: "python3 -m pytest -q"
+    checks:
+      - {type: command_exit_code, exit_code: 0}
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

@@ -1,0 +1,6 @@
+schema_family:
+  family: node_definition
+  source_group: yaml_builtin_system
+  relative_glob: nodes/*.yaml
+  validator_model: NodeDefinitionDocument
+  status: active

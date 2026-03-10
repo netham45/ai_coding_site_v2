@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: recover_cursor
+type: build_context
+title: Recover Cursor
+description: Recover the current workflow cursor after interruption.
+prompt: "prompts/recovery/resume_existing_session.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

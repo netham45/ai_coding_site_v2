@@ -1,0 +1,22 @@
+kind: review_definition
+id: merge_result_review
+name: Merge Result Review
+applies_to:
+  node_kinds: [phase, plan]
+  task_ids: [reconcile_children, reconcile_merge_conflict]
+  lifecycle_points: [after_task]
+scope: merge_result
+description: Review the merge result after child reconciliation.
+inputs:
+  include_parent_requirements: false
+  include_child_summaries: true
+  include_acceptance_criteria: false
+  include_changed_files: true
+  include_validation_results: false
+  include_test_results: false
+prompt: "prompts/execution/reconcile_parent_after_merge.md"
+criteria: [Conflict resolution preserved intent.]
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

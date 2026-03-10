@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: pause_on_user_flag
+type: write_summary
+title: Pause On User Flag
+description: Produce a pause summary when a user gate is raised.
+prompt: "prompts/runtime/pause_for_user.md"
+block_on_user_flag: user_guidance_required
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

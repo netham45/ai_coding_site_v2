@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-coding-site-v2"
+version = "0.1.0"
+description = "Spec-driven orchestration system bootstrap."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.14,<2.0",
+    "fastapi>=0.116,<1.0",
+    "psycopg[binary]>=3.2,<4.0",
+    "pydantic>=2.11,<3.0",
+    "pydantic-settings>=2.10,<3.0",
+    "PyYAML>=6.0,<7.0",
+    "sqlalchemy>=2.0,<3.0",
+    "uvicorn>=0.35,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1.0",
+    "pytest>=8.4,<9.0",
+    "pytest-cov>=6.0,<7.0",
+]
+
+[project.scripts]
+aicoding = "aicoding.cli.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "performance: performance-oriented harnesses and smoke checks",
+]
+
+[tool.coverage.run]
+source = ["src/aicoding"]
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true

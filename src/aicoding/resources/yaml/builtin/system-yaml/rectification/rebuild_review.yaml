@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: rebuild_review
+name: Rebuild Review
+description: Re-run the review surface after rectification.
+trigger: review_rebuild_requested
+entry_task: review_node
+subtasks: [review, write_summary]

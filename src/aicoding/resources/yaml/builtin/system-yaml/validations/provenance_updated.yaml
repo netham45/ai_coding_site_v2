@@ -1,0 +1,5 @@
+kind: validation_definition
+id: provenance_updated
+name: Provenance Updated
+description: Require provenance output to be refreshed.
+check: {type: provenance_updated, path: "<provenance-path>"}

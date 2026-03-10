@@ -150,6 +150,11 @@ Recommended default:
 
 - pause or cancel explicitly before allowing conflicting active rebuild execution
 
+Implementation staging note:
+
+- the current implementation takes the stricter simpler path for now: creating a superseding candidate version is rejected while the logical node has an active or paused run
+- explicit pause/cancel-then-supersede flows remain the supported path until later runtime orchestration phases add more nuanced in-daemon conflict resolution
+
 Reason:
 
 - two active lineages for the same logical node can easily create ambiguity
@@ -213,6 +218,11 @@ Candidate lineage properties:
 - should not replace old lineage in “current effective” views until cutover occurs
 
 This suggests the implementation may need to distinguish:
+
+Implementation staging note:
+
+- the current implementation now blocks candidate-version cutover when unresolved durable merge conflicts exist for that candidate version
+- this is a local cutover guard, not yet the full required-scope conflict scan described by the later rectification/cutover phases
 
 - latest created version
 - latest authoritative version
@@ -483,3 +493,4 @@ This note is complete enough when:
 - DB and CLI implications are identified
 
 At that point, supersession cutover is concrete enough to stop being a dangerous implied behavior.
+Implementation note: candidate cutover now has an additional rebuild-specific gate. If a candidate version has recorded rebuild events, at least one `stable` rebuild event must exist before cutover is allowed.

@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: merge_children
+type: merge_children
+title: Merge Children
+description: Merge child outputs into the current branch.
+command: "python3 -m aicoding.cli.main git merge-children --node {{node_id}}"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

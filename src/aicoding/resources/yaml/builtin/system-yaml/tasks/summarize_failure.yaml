@@ -1,0 +1,19 @@
+kind: task_definition
+id: summarize_failure
+name: Summarize Failure
+description: Produce a durable failure summary for operator and parent inspection.
+applies_to_kinds: [task, plan, phase, epic]
+policy: {max_subtask_retries: 0, on_failure: pause_for_user}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: write_failure_summary
+    type: write_summary
+    title: Write Failure Summary
+    description: Record the failure and next-needed action.
+    prompt: "prompts/runtime/command_failed.md"
+    outputs: [{type: summary_written, path: summaries/failure.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

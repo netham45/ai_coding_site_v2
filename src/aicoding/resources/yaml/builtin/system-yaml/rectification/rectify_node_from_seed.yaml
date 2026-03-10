@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: rectify_node_from_seed
+name: Rectify Node From Seed
+description: Reset and rebuild a node from its seed commit.
+trigger: node_rectification_requested
+entry_task: rectify_node_from_seed
+subtasks: [reset_to_seed, run_prompt, update_provenance]

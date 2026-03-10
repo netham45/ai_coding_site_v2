@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: finalize_node
+type: finalize_node
+title: Finalize Node
+description: Prepare final node status and summary state for completion.
+prompt: "prompts/runtime/cli_bootstrap.md"
+outputs: [{type: summary_written, path: summaries/final.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

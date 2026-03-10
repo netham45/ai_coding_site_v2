@@ -1,0 +1,28 @@
+project_policy_definition:
+  id: default_project_policy
+  description: Default project-local policy that exercises the safe extension path without changing the current runtime ladder.
+  defaults:
+    auto_run_children: true
+    auto_merge_to_parent: false
+    auto_merge_to_base: false
+    require_review_before_finalize: true
+    require_testing_before_finalize: true
+    require_docs_before_finalize: true
+  runtime_policy_refs:
+    - runtime/session_defaults.yaml
+    - runtime/idle_nudge_policy.yaml
+  hook_refs:
+    - hooks/default_hooks.yaml
+  review_refs:
+    - reviews/policy_compliance_review.yaml
+  testing_refs:
+    - testing/default_smoke_test_gate.yaml
+  docs_refs:
+    - docs/default_doc_views.yaml
+  enabled_node_kinds:
+    - epic
+    - phase
+    - plan
+    - task
+  prompt_pack: default
+  environment_profiles: []

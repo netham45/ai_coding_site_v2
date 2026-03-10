@@ -1,0 +1,22 @@
+kind: review_definition
+id: policy_compliance_review
+name: Policy Compliance Review
+applies_to:
+  node_kinds: [phase, plan]
+  task_ids: [respond_to_child_failure]
+  lifecycle_points: [after_task]
+scope: policy_compliance
+description: Review whether the response stays within project policy.
+inputs:
+  include_parent_requirements: true
+  include_child_summaries: true
+  include_acceptance_criteria: false
+  include_changed_files: false
+  include_validation_results: false
+  include_test_results: false
+prompt: "prompts/review/review_node_output.md"
+criteria: [Response respects policy thresholds.]
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

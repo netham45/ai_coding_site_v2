@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: record_merge_metadata
+type: update_provenance
+title: Record Merge Metadata
+description: Record merge metadata after child reconciliation.
+command: "python3 -m aicoding.cli.main git merge-events show --node {{node_id}}"
+outputs: [{type: provenance_updated, path: notes/provenance/merge.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

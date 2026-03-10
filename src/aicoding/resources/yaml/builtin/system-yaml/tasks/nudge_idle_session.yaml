@@ -1,0 +1,18 @@
+kind: task_definition
+id: nudge_idle_session
+name: Nudge Idle Session
+description: Prompt the session to report progress when it appears stalled.
+applies_to_kinds: [task, plan, phase, epic]
+policy: {max_subtask_retries: 0, on_failure: pause_for_user}
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: nudge_session
+    type: run_prompt
+    title: Nudge Session
+    description: Ask the active session to confirm current progress or failure.
+    prompt: "prompts/runtime/idle_nudge.md"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

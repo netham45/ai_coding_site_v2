@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: collect_child_summaries
+type: build_context
+title: Collect Child Summaries
+description: Build a child-summary rollup context.
+prompt: "prompts/execution/reconcile_parent_after_merge.md"
+outputs: [{type: summary_written, path: summaries/child_rollup.md}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

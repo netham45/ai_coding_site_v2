@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: reconcile_conflict
+name: Reconcile Conflict
+description: Resolve a conflict and rebuild required metadata.
+trigger: conflict_detected
+entry_task: reconcile_merge_conflict
+subtasks: [merge_children, record_merge_metadata, finalize_git_state]

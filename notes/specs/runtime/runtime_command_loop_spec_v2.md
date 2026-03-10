@@ -146,6 +146,14 @@ tmux requirements:
 - terminal detach must not lose node state
 - host reboot or tmux loss must still allow DB-driven resume or replacement-session recovery
 
+Implementation note:
+
+- tmux access should be isolated behind an adapter abstraction so fake-session-backed tests can exercise bind, attach, capture, idle, and recovery behavior deterministically
+- the current implementation now adds a concrete session-manager layer on top of that adapter
+- primary tmux session names are now derived from durable run/session identity rather than a generic node-only label
+- primary and pushed-child sessions now launch long-lived interactive shell commands instead of placeholder one-shot commands, so real tmux-backed sessions stay attachable after bind
+- session inspection surfaces now expose the persisted working directory, provider session id, tmux existence, and attach command when the backend is real tmux
+
 ---
 
 ## 4. High-level node execution loop
@@ -164,6 +172,12 @@ A normal node execution loop is:
 
 The loop must remain CLI-driven and inspectable.
 
+Implementation staging note:
+
+- the current implementation now persists one durable primary-session record for an active run in `sessions`
+- bind/attach/resume reuse the existing primary session when safe and create a replacement durable session record when the harness session is missing
+- parent-local child-merge handoff is now also durable: after a staged merge run, the daemon stores `parent_reconcile_context` in the active run cursor so the session can resume or inspect that stage without rebuilding it from memory
+
 ---
 
 ## 5. Required AI-facing command loop
@@ -172,15 +186,45 @@ At minimum the runtime loop should support commands like these.
 
 ### Session bootstrap
 
+- `ai-tool workflow start --kind <kind> --prompt <prompt>`
 - `ai-tool session bind --node <id>`
 - `ai-tool session show-current`
 - `ai-tool workflow current --node <id>`
+
+Implementation staging note:
+
+- `workflow start --kind <kind> --prompt <prompt> [--title <title>] [--no-run]` now creates the top-level node, captures source lineage, compiles the authoritative workflow, and optionally admits the first run in one daemon-owned mutation
+- `session bind --node <id>` now requires an admitted active run and creates or reuses the durable primary session record for that run
+- `session show-current` now resolves from the durable primary-session table instead of only the session harness adapter
+- `session show-current` now also returns the bound `logical_node_id`, `node_kind`, `node_title`, current `run_status`, and derived `recovery_classification` so session bootstrap can safely discover what work it is attached to before reading workflow or subtask state
+- session bind/replacement flows now record concrete tmux launch metadata, including the derived session name, launch command, working directory, and tmux attach target
 
 ### Prompt and context retrieval
 
 - `ai-tool subtask current --node <id>`
 - `ai-tool subtask prompt --node <id>`
 - `ai-tool subtask context --node <id>`
+- `ai-tool subtask environment --node <id>`
+- `ai-tool node child-results --node <id>`
+- `ai-tool node reconcile --node <id>`
+
+Implementation staging note:
+
+- `node child-results --node <id>` now exposes authoritative child finals, blocked-child classification, and deterministic merge order
+- `node reconcile --node <id>` now exposes the packaged parent-local reconcile prompt plus the current derived reconcile context
+- `subtask context --node <id>` now includes durable `parent_reconcile_context` when a staged child merge has already run for the active parent node run
+- `subtask prompt --node <id>` and `subtask context --node <id>` now expose the same daemon-assembled `stage_context_json` bundle so stage startup does not depend on terminal scrollback or ad hoc session memory
+- that bundle currently includes:
+  - startup metadata from the authoritative node version and run
+  - current stage metadata from the compiled subtask
+  - dependency edges and persisted blocker state for the node version
+  - recent prompt deliveries and summaries for the run
+  - cursor-carried pause, child-session, and parent-reconcile context
+- `subtask context --node <id>` now also mirrors the same `stage_context_json` under `input_context_json.stage_context_json` so existing context consumers can adopt the richer startup contract incrementally
+- the startup portion currently includes the user-supplied node prompt, node title, node kind, run number, trigger reason, and compiled workflow id
+- the stage portion currently includes compiled task/subtask ids, source subtask key, subtask type, title, and frozen environment request metadata
+- compile-time rendering now freezes prompt and command text before runtime stage execution begins; stage startup consumes that frozen rendered payload plus `stage_context_json` rather than rerendering templates at prompt-fetch time
+- `subtask environment --node <id>` now exposes the current compiled subtask's frozen environment request so the session can tell whether the next step is host, delegated-profile, or best-effort isolation work before starting the attempt
 
 ### Progress marking
 
@@ -189,10 +233,24 @@ At minimum the runtime loop should support commands like these.
 - `ai-tool subtask complete --compiled-subtask <id>`
 - `ai-tool subtask fail --compiled-subtask <id> --summary-file <path>`
 
+Implementation staging note:
+
+- the current runtime slice durably supports `subtask start`, `subtask complete`, and `subtask fail`
+- `subtask fail` now supports the documented file-backed AI path: the CLI reads `--summary-file <path>` locally and sends the file content as the durable failure summary
+- `subtask heartbeat` now persists the latest heartbeat timestamp on both the active attempt output payload and the run cursor metadata; dedicated heartbeat history remains deferred
+- `subtask start` now resolves and persists `execution_environment_json` on the attempt before work proceeds
+- unsupported mandatory isolation requests fail immediately at start time, while unsupported non-mandatory requests are recorded as explicit host fallbacks rather than silently proceeding
+
 ### Summary and artifact registration
 
 - `ai-tool summary register --node <id> --file <path> --type <type>`
 - `ai-tool prompts list --node <id>`
+
+Implementation staging note:
+
+- `subtask prompt --node <id>` now records a durable prompt-delivery artifact each time the current prompt is fetched
+- `summary register --node <id> --file <path> --type <type>` now records a durable summary-history row in addition to the active-attempt compatibility mirror
+- validation checks that require a written summary now consult the durable summary history as well as the mirrored attempt payload
 
 ### Cursor control
 
@@ -204,7 +262,18 @@ At minimum the runtime loop should support commands like these.
 
 - `ai-tool session nudge --node <id>`
 - `ai-tool session resume --node <id>`
+- `ai-tool session recover --node <id>`
 - `ai-tool session attach --node <id>`
+- `ai-tool node recovery-status --node <id>`
+
+Implementation staging note:
+
+- `session resume --node <id>` now runs provider-agnostic recovery against durable run state instead of assuming provider identity is sufficient
+- `session recover --node <id>` is an explicit alias for the same recovery path
+- `node recovery-status --node <id>` now exposes the current recovery classification and recommended action from the daemon
+- `session show --node <id>`, `session show --session <id>`, and `session show-current` now also expose the same `recommended_action` when the selected row is the active primary session, so session-control clients can decide whether to attach or resume from the ordinary session read path
+- the current staged classifier distinguishes `healthy`, `detached`, `stale_but_recoverable`, `lost`, `missing`, `ambiguous`, and `non_resumable`
+- `session nudge --node <id>` now performs bounded idle inspection against the active primary session, suppresses false positives while alt-screen content is active, records durable nudge audit events, and escalates to `PAUSED_FOR_USER` when the configured nudge budget is exhausted
 
 The command names may evolve, but the behavior must exist.
 
@@ -270,6 +339,13 @@ For each compiled subtask:
 
 The cursor must advance only after successful completion and accepted validations.
 
+Implementation staging note:
+
+- the current implementation persists one durable `node_runs` row per admitted active run, one `node_run_state` row for the live cursor, and one `subtask_attempts` row per started attempt
+- `subtask complete` records attempt completion durably, but the cursor advances only when `workflow advance --node <id>` is called
+- `subtask fail` marks the run `FAILED` and mirrors lifecycle visibility to `FAILED_TO_PARENT`
+- validation gating, retry policy, dedicated heartbeat history, and richer pause/recovery orchestration remain later runtime slices
+
 ---
 
 ## 8. Subtask handler classes
@@ -333,11 +409,23 @@ Runtime rule:
 - records `review_results`
 - decides continue, revise, pause, or fail
 
+Implementation staging note:
+
+- the current runtime now persists review gate outcomes in `review_results`
+- the latest per-attempt review summary is mirrored into `subtask_attempts.review_json`
+- `workflow advance` now evaluates `review` subtasks and routes `passed`, `revise`, and `failed` outcomes through daemon-owned cursor/lifecycle transitions
+- the current default `revise_action` routing rewinds to the last non-gate implementation subtask so validation and review re-run naturally on the next pass
+
 ### Testing stage
 
 - executes testing definitions
 - records `test_results`
 - decides continue, fail, or policy-allowed override
+
+Implementation staging note:
+
+- the current runtime now evaluates `run_tests` subtasks as a first-class gate, persists durable `test_results`, mirrors the latest summary into `subtask_attempts.testing_json`, and lets `workflow advance` route pass, retry-pending, fail-to-parent, and pause-for-user outcomes
+- retry behavior is currently driven by testing-definition retry policy, but the packaged default node workflows still rely on explicit task/policy/override selection to introduce `test_node` rather than enabling testing on every built-in node by default
 
 ### Provenance stage
 
@@ -405,6 +493,13 @@ Do not rely on unstored terminal context. The CLI and durable run state are the
 authoritative execution contract.
 ```
 
+Implementation staging note:
+
+- the current command loop slice now exposes real `subtask prompt`, `subtask context`, `subtask heartbeat`, and `summary register` commands
+- heartbeat persistence currently updates active-attempt and run-cursor metadata only
+- summary registration currently attaches durable summary payloads to the active subtask attempt ahead of the later dedicated summary-history phases
+- stage startup now depends on daemon-assembled durable context rather than prior terminal output; restarting a session and refetching `subtask prompt` or `subtask context` should yield the same startup categories for the active stage
+
 ### Default missed-step payload
 
 ```text
@@ -461,6 +556,14 @@ Resume requires:
 
 The runtime must not silently skip a user gate on resume.
 
+Implementation note:
+
+- gated compiled subtasks may carry `block_on_user_flag` and an optional `pause_summary_prompt`
+- when the runtime lands on a gated subtask, it pauses before attempt start, persists `pause_context` in the durable cursor, and records `pause_entered`
+- explicit operator approval records `pause_cleared` without resuming the run yet
+- resume is rejected until the active pause flag is approved unless the daemon is executing an internal forced recovery path
+- `node pause-state`, `node events`, `workflow approve`, and `node approve` are now implemented against that durable pause model
+
 ---
 
 ## 13. Failure handling
@@ -500,6 +603,12 @@ Recommended default parent decision order:
 7. pause for the user if ambiguity or safety thresholds prevent autonomous handling
 8. fail upward only through the parent's own resulting failure path
 
+Implementation staging note:
+
+- the current daemon slice now exposes `node child-failures`, `node decision-history`, and `node respond-to-child-failure`
+- automatic parent decisions currently classify failures from the latest failed child attempt summary plus any validation/review/testing payload cached on that attempt
+- explicit operator overrides are supported for `retry_child`, `regenerate_child`, `replan_parent`, and `pause_for_user`
+
 ---
 
 ## 14. Child node orchestration
@@ -522,6 +631,13 @@ Child-node work is different from pushed child sessions.
 - parent nodes do not share cursor ownership with children
 - parent nodes may query child state through CLI and DB
 
+Implementation staging note:
+
+- the current implementation materializes default built-in layouts through a daemon-owned `node materialize-children --node <id>` path
+- materialization creates child hierarchy rows, authoritative child versions, compiled workflows, ready lifecycle state, and sibling dependency edges in durable storage
+- parent-visible scheduling is currently exposed as derived classifications (`ready`, `blocked`, `invalid`, `impossible_wait`) rather than a separate schedule snapshot table
+- automatic child run start remains deferred; this phase only materializes and classifies child readiness
+
 ### Scheduling rule
 
 Any child whose dependencies are satisfied should be eligible to start immediately.
@@ -542,6 +658,11 @@ Push should:
 - snapshot bounded parent context
 - launch isolated child session context
 - preserve parent cursor without advancing it
+
+Implementation staging note:
+
+- `session push --node <id> --reason <reason>` now requires an active primary session and creates a durable `pushed_child` session linked to that parent session
+- the current implementation launches the child through the same session adapter abstraction used for primary sessions and records the delegated prompt path in session events
 
 ### Child session work
 
@@ -569,6 +690,11 @@ Pop should:
 - attach the summary to parent subtask context
 - mark child session complete
 - return control to the parent session
+
+Implementation staging note:
+
+- `session pop --session <id> --file <path>` now reads a JSON result artifact, validates the bounded merge-back shape, persists it in `child_session_results`, and attaches the same payload into the parent subtask context
+- the parent run remains on the same compiled subtask after pop; no hidden cursor advancement occurs
 
 After merge-back:
 
@@ -645,6 +771,16 @@ Repeated idle behavior should be bounded by runtime policy and may escalate into
 - pause for user
 - failure handling
 
+Implementation staging note:
+
+- the current implementation derives idle state from tmux/fake-session polling rather than a dedicated heartbeat-history table
+- idle audit is currently recorded through `session_events` using `nudged`, `nudge_skipped`, `nudge_suppressed`, and `nudge_escalated`
+- alt-screen sessions are treated as a false-positive suppression case and are not nudged automatically
+- the staged escalation path pauses the run with `pause_flag_name = "idle_nudge_limit_exceeded"` after the configured max nudge count is exceeded
+- the current classifier now also records `screen_polled` evidence with pane-hash comparison metadata and classifies the screen as `active`, `quiet`, or `idle`
+- first-sample polling may still classify as `idle` when the idle threshold is already exceeded, so a missing earlier sample does not block bounded nudge behavior
+- daemon-originated nudge text is treated as non-progress for subsequent idle checks so repeated nudge/escalation decisions do not reset themselves accidentally
+
 Recommended workflow-event scope for first implementation:
 
 - pause entered/cleared
@@ -676,6 +812,11 @@ Examples of likely runtime policy:
 - maximum nudge count
 
 If a policy changes stage structure or gating behavior, it must be part of compiled workflow lineage.
+
+Implementation staging note:
+
+- the current compiler now materializes supported hooks as explicit compiled subtasks before runtime begins; the daemon executes those subtasks through the normal compiled workflow cursor rather than as hidden runtime side effects
+- `workflow hooks --node <id>` and `workflow hooks --workflow <id>` are now the canonical inspection surfaces for selected hooks, skipped hooks, and hook-expanded subtask order
 
 ---
 

@@ -37,6 +37,12 @@ If a value can affect any of the following, it should have a durable representat
 - debugging or incident analysis
 - documentation or rationale output
 
+Implementation note:
+
+- the current implementation now persists generated documentation views durably in `documentation_outputs`, so local docs, merged tree docs, entity-history views, and rationale views are inspectable after the fact rather than being ephemeral render-only outputs
+- run-control mutations such as cancel and subtask retry now leave durable audit in both daemon authority history and `workflow_events`, so operator-visible control actions are no longer runtime-only side effects
+- the current implementation now also exposes daemon-built reconstruction bundles at node and run scope, so operators can inspect a single aggregated view of the durable records behind a node or historical run without reassembling prompt, summary, workflow, session, rebuild, merge, and quality-gate history by hand
+
 If the system cannot later explain why it did something important, the design is carrying hidden state.
 
 This remains true even if live coordination is daemon-owned.
@@ -74,7 +80,7 @@ If a row is `partial` or `no`, capture:
 
 This section records the current spec-stage assessment after the v2 rewrite and appendix pass.
 
-These are not implementation guarantees yet. They reflect how complete the design is on paper today.
+These are now implementation-informed assessments. They should be read as the current state of the repo plus its note set, not just the paper design before implementation.
 
 ### Snapshot Legend
 
@@ -87,22 +93,22 @@ These are not implementation guarantees yet. They reflect how complete the desig
 | Area | Current State | Notes |
 | --- | --- | --- |
 | Node identity and lineage | yes | Node versions, supersession, rebuild lineage, and hierarchy are well covered by the v2 DB/lifecycle/git specs. |
-| Workflow compilation auditability | partial | Source lineage and resolved workflow lineage are strong; compile-failure persistence is now defined, but still needs folding into canonical implementation structures. |
+| Workflow compilation auditability | yes | Source lineage, resolved workflow lineage, compile-stage inspection, frozen rendering payloads, and compile-failure persistence are all implemented durably. |
 | Runtime cursor and execution auditability | yes | Run state, cursor state, subtask attempts, and durable compiled workflows are strongly modeled. |
 | Session auditability | partial | Session identity and recovery are well defined conceptually, but some edge-case event modeling still needs implementation-level decisions. |
 | Dependency and scheduling auditability | partial | Dependency storage and validation direction are strong, but child scheduling and invalid-graph handling were only recently specified and need canonical folding. |
-| Failure, pause, and escalation auditability | partial | Failure summaries and parent-decision logic are much stronger now, but workflow-event persistence is still a live decision. |
+| Failure, pause, and escalation auditability | yes | Workflow-event persistence, failure escalation, pause-state visibility, and parent-decision history are implemented durably. |
 | Validation, review, and testing auditability | yes | These are now first-class families with explicit result models in the v2 spec package. |
 | Git and rebuild auditability | partial | Merge/rebuild/cutover logic is strong, but authority/cutover implementation details still need final normalization. |
-| Prompt, summary, and rationale auditability | partial | Prompt history and summaries are well modeled; summary taxonomy still needs final freezing. |
-| Documentation and provenance auditability | partial | Docs/provenance are well integrated conceptually, but provenance identity remains confidence-based and needs careful implementation. |
-| Action auditability | partial | The automation matrix is strong, but some mutation guardrails and command semantics still need implementation policy. |
-| Reproducibility tests | partial | The design mostly supports reconstruction, but a few authority/event-history decisions still affect how cleanly that works in practice. |
+| Prompt, summary, and rationale auditability | yes | Prompt history, summary history, rationale mapping, and audit-bundle read surfaces are now durably inspectable. |
+| Documentation and provenance auditability | partial | Durable code entities, node-level change history, relation history, rationale inspection, and current-state DB views for docs/provenance now exist, but identity across large refactors remains confidence-based and the current extractor is intentionally bounded to Python implementation code. |
+| Action auditability | partial | Most runtime mutations are now daemon-backed and durably auditable; the biggest remaining gaps are layout/policy mutation semantics and deferred live git execution. |
+| Reproducibility tests | yes | Focused audit-bundle tests now verify that a durable node/run history can be reconstructed from persisted records alone. |
 
 ### Highest Remaining Auditability Risks
 
-- pause and workflow event history may still be too implicit if `workflow_events` is not added
-- authoritative-version and cutover modeling may remain harder to inspect than desired if not made explicit in DB/state views
+- live git reset/merge/finalize execution is still deferred, so some rectification behavior remains auditable only as planned durable state transitions rather than working-tree action history
+- authoritative-version and cutover modeling are durable, but still more complex to reason about than run/session history because they span lineage, merge, and rebuild flows
 - summary taxonomy and source-role taxonomy still need final normalization
 - provenance identity across refactors will remain confidence-based rather than perfectly deterministic
 
@@ -257,6 +263,11 @@ These are not implementation guarantees yet. They reflect how complete the desig
 ### 6.4 Hidden-state check
 
 - Are pause reasons or retry decisions ever implicit rather than durably represented?
+
+Implementation note:
+
+- the current implementation now records retry starts in `workflow_events` and authority-backed node cancellation in both daemon mutation history and workflow-event history
+- retry eligibility is still derived from live durable run/attempt state rather than a separate append-only retry-policy table
 
 ---
 

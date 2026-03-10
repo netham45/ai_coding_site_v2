@@ -2,8 +2,8 @@
 
 This folder defines the task flows the system needs in order to support the common user journeys identified in:
 
-- `notes/common_user_journeys_analysis.md`
-- `notes/code_vs_yaml_delineation.md`
+- `notes/scenarios/journeys/common_user_journeys_analysis.md`
+- `notes/specs/architecture/code_vs_yaml_delineation.md`
 
 These are canonical task-flow specs.
 

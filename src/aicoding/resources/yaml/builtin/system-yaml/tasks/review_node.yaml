@@ -1,0 +1,24 @@
+kind: task_definition
+id: review_node
+name: Review Node
+description: Run the default review gate for the current node.
+applies_to_kinds:
+  - task
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: pause_for_user
+uses_reviews:
+  - reviews/node_against_requirements.yaml
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: review_node_output
+    type: review
+    title: Review Node Output
+    description: Review the current output against requirements before completion.
+    prompt: "prompts/review/review_node_output.md"
+    outputs: [{type: review_results_written, path: reviews/node_review.json}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

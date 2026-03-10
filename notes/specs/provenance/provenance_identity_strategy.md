@@ -220,6 +220,29 @@ This avoids corrupting provenance history through aggressive guessing.
 
 ---
 
+## Current Bounded Implementation
+
+The current implementation is intentionally narrower than the full target model.
+
+- supported entity types today are `module`, `class`, `function`, and `method`
+- supported relation types today are `contains` and `calls`
+- exact matches require the same entity type, canonical name, file path, and signature
+- heuristic rename/move matches require the same entity type, normalized signature, and stable hash while allowing the canonical name or file path to change
+- heuristic matches are currently recorded with `match_confidence = medium`
+- new entities and exact matches are currently recorded with `match_confidence = high`
+- ambiguous split/merge cases still fall back to new durable entity rows rather than attempting many-to-one or one-to-many identity preservation
+
+Stable hashes are currently derived from normalized Python AST structure. This is deliberately code-owned logic, not YAML-owned policy.
+
+Extraction scope is also bounded:
+
+- when the daemon refreshes provenance without an explicit workspace root, it scans the repository `src/` tree when present
+- when a caller provides an explicit workspace root, that tree is scanned directly
+
+This keeps the default refresh path focused on packaged implementation code instead of the whole repository while preserving deterministic behavior for explicit test or tool workspaces.
+
+---
+
 ## Stable Hash Guidance
 
 `stable_hash` should not just be a hash of raw text.

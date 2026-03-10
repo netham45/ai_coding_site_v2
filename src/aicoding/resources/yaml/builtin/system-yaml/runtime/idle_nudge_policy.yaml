@@ -1,0 +1,9 @@
+kind: runtime_definition
+id: idle_nudge_policy
+name: Idle Nudge Policy
+description: Default idle detection and nudge behavior.
+commands:
+  - ai-tool session nudge --node <node_id>
+thresholds:
+  idle_nudge_after_seconds: 300
+actions: [nudge_session]

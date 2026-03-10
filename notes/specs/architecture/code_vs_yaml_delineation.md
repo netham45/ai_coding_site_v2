@@ -168,6 +168,7 @@ YAML should define:
 Reason:
 
 - these are content, not runtime decisions
+- placeholder content may live in YAML or prompt files, but variable scope, precedence, escaping, missing-variable behavior, and which fields are renderable remain code-owned compiler behavior
 
 ---
 

@@ -1,0 +1,5 @@
+kind: validation_definition
+id: file_exists
+name: File Exists
+description: Require a file to exist at a target path.
+check: {type: file_exists, path: "<path>"}

@@ -78,6 +78,8 @@ These directly change workflow meaning or visible gating behavior:
 These are mainly operational pacing controls:
 
 - idle thresholds
+- screen-poll comparison interval/window
+- maximum nudge count
 - retry backoff timing
 - heartbeat cadence
 - session freshness windows

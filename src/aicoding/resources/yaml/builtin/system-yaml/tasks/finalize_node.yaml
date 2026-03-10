@@ -1,0 +1,25 @@
+kind: task_definition
+id: finalize_node
+name: Finalize Node
+description: Write the final summary and mark the node ready for completion handling.
+applies_to_kinds:
+  - task
+  - plan
+  - phase
+  - epic
+policy:
+  max_subtask_retries: 1
+  on_failure: pause_for_user
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: write_final_summary
+    type: finalize_node
+    title: Finalize Node
+    description: Write the final summary and completion record for the node.
+    prompt: "prompts/runtime/missing_required_output.md"
+    outputs: [{type: summary_written, path: summaries/final.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

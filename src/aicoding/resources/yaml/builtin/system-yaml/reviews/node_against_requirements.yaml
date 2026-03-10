@@ -1,0 +1,24 @@
+kind: review_definition
+id: node_against_requirements
+name: Node Against Requirements
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [review_node]
+  lifecycle_points: [before_node_complete]
+scope: node_output
+description: Review current node output against its requirements.
+inputs:
+  include_parent_requirements: true
+  include_child_summaries: false
+  include_acceptance_criteria: true
+  include_changed_files: true
+  include_validation_results: true
+  include_test_results: true
+prompt: "prompts/review/review_node_output.md"
+criteria:
+  - Requirements are satisfied.
+  - Output remains coherent.
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

@@ -1,0 +1,18 @@
+kind: task_definition
+id: rectify_node_from_seed
+name: Rectify Node From Seed
+description: Reset the node to its seed commit and rebuild its local outputs.
+applies_to_kinds: [task, plan]
+policy: {max_subtask_retries: 1, on_failure: fail_to_parent}
+uses_reviews: [reviews/merge_result_review.yaml]
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: reset_to_seed
+    type: reset_to_seed
+    title: Reset To Seed
+    description: Reset the node working state to the seed commit.
+    command: "git reset --hard HEAD"
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

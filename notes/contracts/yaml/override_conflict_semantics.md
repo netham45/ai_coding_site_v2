@@ -26,6 +26,13 @@ Related documents:
 - `notes/planning/expansion/runtime_pseudocode_plan.md`
 - `notes/catalogs/traceability/cross_spec_gap_matrix.md`
 
+Implementation staging note:
+
+- the current implementation now applies override files during the compiler's explicit `override_resolution` stage and records failures as durable compile failures with target family and target ID
+- the current implementation enforces top-level field merge modes per YAML family rather than arbitrary nested patch paths
+- identity fields such as document `id` and node `kind` are currently treated as immutable during override resolution even if the broader spec later relaxes some of those cases
+- create-if-missing override behavior remains unsupported
+
 ---
 
 ## Core Rule

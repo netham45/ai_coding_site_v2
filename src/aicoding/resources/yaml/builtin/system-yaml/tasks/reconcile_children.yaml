@@ -1,0 +1,25 @@
+kind: task_definition
+id: reconcile_children
+name: Reconcile Children
+description: Merge or otherwise reconcile child outputs into the parent branch and context.
+applies_to_kinds:
+  - epic
+  - phase
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: fail_to_parent
+uses_reviews:
+  - reviews/merge_result_review.yaml
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: merge_child_outputs
+    type: merge_children
+    title: Merge Child Outputs
+    description: Merge completed child branches into the parent working branch.
+    command: "git status --short"
+    outputs: [{type: working_tree_dirty}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: fail_to_parent}

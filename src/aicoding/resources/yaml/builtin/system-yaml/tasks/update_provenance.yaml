@@ -1,0 +1,23 @@
+kind: task_definition
+id: update_provenance
+name: Update Provenance
+description: Refresh provenance and rationale mapping after successful implementation.
+applies_to_kinds:
+  - task
+  - plan
+policy:
+  max_subtask_retries: 1
+  on_failure: pause_for_user
+uses_reviews: []
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: refresh_provenance
+    type: update_provenance
+    title: Refresh Provenance
+    description: Update durable provenance output files.
+    command: "printf 'provenance refreshed'"
+    outputs: [{type: provenance_updated, path: notes/provenance/latest.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

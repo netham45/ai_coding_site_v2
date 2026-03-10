@@ -1,0 +1,16 @@
+kind: testing_definition
+id: project_command_suite
+name: Project Command Suite
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [test_node]
+  lifecycle_points: [after_task]
+scope: project_custom
+description: Run a project-local command suite if configured.
+commands:
+  - command: python3 -m pytest tests/unit/test_cli.py -q
+    working_directory: .
+    env: {}
+retry_policy: {max_attempts: 1, rerun_failed_only: false}
+pass_rules: {require_exit_code_zero: true, max_failed_tests: 0}
+on_result: {pass_action: continue, fail_action: fail_to_parent}

@@ -1,0 +1,6 @@
+kind: hook_definition
+id: before_testing_default
+when: before_testing
+applies_to: {tiers: [], node_kinds: [task, plan], task_ids: [test_node], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: run_tests, command: "python3 -m pytest -q"}]

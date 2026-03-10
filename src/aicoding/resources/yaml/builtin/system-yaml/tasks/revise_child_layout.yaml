@@ -1,0 +1,19 @@
+kind: task_definition
+id: revise_child_layout
+name: Revise Child Layout
+description: Revise the current child layout after review feedback.
+applies_to_kinds: [epic, phase, plan]
+policy: {max_subtask_retries: 1, on_failure: pause_for_user}
+uses_reviews: [reviews/layout_against_prompt.yaml]
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: revise_layout_from_feedback
+    type: run_prompt
+    title: Revise Layout
+    description: Update the layout from review feedback.
+    prompt: "prompts/review/review_layout_against_request.md"
+    outputs: [{type: file_updated, path: layouts/generated_layout.yaml}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

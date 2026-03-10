@@ -110,6 +110,13 @@ When a user manually creates a child under a parent:
 
 The system should not pretend the layout automatically “contained” the new child unless the layout is explicitly updated.
 
+Implementation staging note:
+
+- the current implementation now persists manual child creation through the same `node_children` and `parent_child_authority` records used by layout materialization
+- first manual child insertion under a parent with no structural authority record creates `authority_mode = manual`
+- manual child insertion under a `layout_authoritative` parent flips the parent to `hybrid` and clears the authoritative layout hash so later layout rematerialization cannot proceed silently
+- manual remove/reorder/replace flows are still deferred; this slice only closes manual child creation and mixed-authority detection
+
 ---
 
 ## Layout Regeneration Behavior In Mixed Trees

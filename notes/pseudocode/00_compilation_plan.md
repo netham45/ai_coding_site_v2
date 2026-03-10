@@ -70,6 +70,11 @@ For each module:
 5. define failure, pause, retry, and recovery paths
 6. attach unresolved questions
 
+Implementation note:
+
+- the live system now exposes a daemon-backed `workflow source-discovery` inspection surface for the first compile stage, returning deterministic discovered source order plus resolved-document inventory for one compiled workflow
+- the live system also exposes explicit inspection reads for later compile stages through `workflow schema-validation`, `workflow override-resolution`, `workflow hook-policy`, and `workflow rendering`
+
 Deliverables:
 
 - module files under `modules/`

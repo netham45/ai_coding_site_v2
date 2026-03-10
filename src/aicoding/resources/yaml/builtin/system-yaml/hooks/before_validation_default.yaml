@@ -1,0 +1,6 @@
+kind: hook_definition
+id: before_validation_default
+when: before_validation
+applies_to: {tiers: [], node_kinds: [task, plan], task_ids: [validate_node], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: validate, command: "python3 -m pytest tests/unit/test_yaml_schemas.py -q"}]

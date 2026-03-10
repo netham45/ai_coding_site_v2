@@ -1,0 +1,19 @@
+kind: docs_definition
+id: entity_history_view
+name: Entity History View
+applies_to:
+  node_kinds: [task, plan, phase, epic]
+  task_ids: []
+  lifecycle_points: [after_node_complete]
+scope: entity_history
+description: Build the entity history documentation view.
+inputs:
+  include_static_analysis: false
+  include_entity_relations: true
+  include_node_summaries: true
+  include_prompt_history: true
+  include_review_results: true
+  include_test_results: true
+outputs:
+  - path: docs/generated/entity-history.md
+    view: entity_history

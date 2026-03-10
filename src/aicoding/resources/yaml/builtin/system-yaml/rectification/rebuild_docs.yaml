@@ -1,0 +1,7 @@
+kind: rectification_definition
+id: rebuild_docs
+name: Rebuild Docs
+description: Rebuild docs after rectification changes land.
+trigger: docs_rebuild_requested
+entry_task: build_node_docs
+subtasks: [build_docs, write_summary]

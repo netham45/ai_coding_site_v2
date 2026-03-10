@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: nudge_session
+type: run_prompt
+title: Nudge Session
+description: Nudge an idle session back into active reporting.
+prompt: "prompts/recovery/idle_nudge.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

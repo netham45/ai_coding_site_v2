@@ -1,0 +1,5 @@
+kind: validation_definition
+id: yaml_schema
+name: YAML Schema
+description: Validate a YAML payload against a named schema.
+check: {type: yaml_schema, schema: "<schema-name>"}

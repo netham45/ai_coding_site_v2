@@ -1,0 +1,9 @@
+kind: runtime_definition
+id: child_session_policy
+name: Child Session Policy
+description: Default posture for optional delegated child sessions.
+commands:
+  - ai-tool session bind --node <child_node_id>
+thresholds:
+  allow_child_sessions: false
+actions: [spawn_child_session]

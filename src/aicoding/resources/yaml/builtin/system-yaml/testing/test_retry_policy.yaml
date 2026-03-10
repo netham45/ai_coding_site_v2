@@ -1,0 +1,16 @@
+kind: testing_definition
+id: test_retry_policy
+name: Test Retry Policy
+applies_to:
+  node_kinds: [task]
+  task_ids: [test_node]
+  lifecycle_points: [after_task]
+scope: project_custom
+description: Exercise retry semantics for flaky test handling.
+commands:
+  - command: python3 -m pytest tests/performance/test_harness.py -q
+    working_directory: .
+    env: {}
+retry_policy: {max_attempts: 2, rerun_failed_only: true}
+pass_rules: {require_exit_code_zero: true, max_failed_tests: 0}
+on_result: {pass_action: continue, fail_action: pause_for_user}

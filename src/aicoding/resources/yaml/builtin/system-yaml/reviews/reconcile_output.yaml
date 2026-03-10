@@ -1,0 +1,22 @@
+kind: review_definition
+id: reconcile_output
+name: Reconcile Output
+applies_to:
+  node_kinds: [phase, plan]
+  task_ids: [reconcile_children]
+  lifecycle_points: [after_task]
+scope: merge_result
+description: Review reconciled outputs after merging child work.
+inputs:
+  include_parent_requirements: true
+  include_child_summaries: true
+  include_acceptance_criteria: true
+  include_changed_files: true
+  include_validation_results: false
+  include_test_results: false
+prompt: "prompts/execution/reconcile_parent_after_merge.md"
+criteria: [Merged output remains coherent.]
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

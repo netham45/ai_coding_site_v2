@@ -1,0 +1,6 @@
+kind: environment_policy_definition
+id: isolated_test_profile
+isolation_mode: custom_profile
+allow_network: false
+runtime_profile: isolated_test_profile
+mandatory: true

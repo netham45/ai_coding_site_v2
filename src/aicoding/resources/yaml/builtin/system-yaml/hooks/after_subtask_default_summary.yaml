@@ -1,0 +1,6 @@
+kind: hook_definition
+id: after_subtask_default_summary
+when: after_subtask
+applies_to: {tiers: [], node_kinds: [task, plan, phase, epic], task_ids: [], subtask_types: [run_prompt, run_command, run_tests]}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: write_summary, prompt: "prompts/runtime/missing_required_output.md"}]

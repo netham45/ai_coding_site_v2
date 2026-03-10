@@ -1,0 +1,6 @@
+kind: hook_definition
+id: after_upstream_rectify_default
+when: after_upstream_rectify
+applies_to: {tiers: [], node_kinds: [phase, plan], task_ids: [rectify_upstream], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: write_summary, prompt: "prompts/runtime/missing_required_output.md"}]

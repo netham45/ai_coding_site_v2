@@ -1,0 +1,16 @@
+kind: layout_definition
+id: plan_to_tasks
+name: Plan To Tasks
+description: Default built-in decomposition template for turning a plan into task nodes.
+children:
+  - id: implementation_task
+    kind: task
+    tier: 3
+    name: Implementation Task
+    goal: Complete one coherent implementation slice.
+    rationale: The default built-in system should create the smallest task set that remains independently executable.
+    dependencies: []
+    acceptance:
+      - Output is implemented.
+      - Output is validated.
+    ordinal: 1

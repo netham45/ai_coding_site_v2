@@ -1,0 +1,6 @@
+schema_family:
+  family: task_definition
+  source_group: yaml_builtin_system
+  relative_glob: tasks/*.yaml
+  validator_model: TaskDefinitionDocument
+  status: active

@@ -1,0 +1,6 @@
+schema_family:
+  family: runtime_policy_definition
+  source_group: yaml_builtin_system
+  relative_glob: policies/*.yaml
+  validator_model: RuntimePolicyDefinitionDocument
+  status: active

@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: build_context
+type: build_context
+title: Build Context
+description: Gather durable context before execution continues.
+prompt: "prompts/runtime/cli_bootstrap.md"
+outputs: [{type: summary_written, path: summaries/context.md}]
+retry_policy: {max_attempts: 2, backoff_seconds: 5}
+on_failure: {action: pause_for_user}

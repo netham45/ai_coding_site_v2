@@ -258,6 +258,11 @@ Likely useful commands:
 
 - `ai-tool workflow compile-status --node <id>`
 - `ai-tool workflow compile-failures --node <id>`
+
+Implementation staging note:
+
+- the current compiler now durably records unexpected persistence-tail exceptions as `failure_stage = workflow_persistence` and `failure_class = workflow_persistence_failure`
+- those failures roll back any partial compiled workflow/task/subtask rows before the compile-failure row is written, so no half-persisted compiled workflow remains bound to the node version
 - `ai-tool workflow compile-check --node <id>`
 
 If names differ, these capabilities should still exist.

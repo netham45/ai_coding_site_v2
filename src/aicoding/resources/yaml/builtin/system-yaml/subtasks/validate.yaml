@@ -1,0 +1,9 @@
+kind: subtask_definition
+id: validate
+type: validate
+title: Validate
+description: Run a validation command and enforce required checks.
+command: "python3 -m aicoding.cli.main node validate --node {{node_id}}"
+checks: [{type: command_exit_code, exit_code: 0}]
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

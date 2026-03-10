@@ -1,0 +1,6 @@
+kind: hook_definition
+id: after_merge_children_default
+when: after_merge_children
+applies_to: {tiers: [], node_kinds: [phase, plan], task_ids: [reconcile_children], subtask_types: []}
+if: {changed_entity_types: [], paths_match: []}
+run: [{type: review, prompt: "prompts/review/review_node_output.md"}]

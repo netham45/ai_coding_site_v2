@@ -1,0 +1,6 @@
+schema_family:
+  family: testing_definition
+  source_group: yaml_builtin_system
+  relative_glob: testing/*.yaml
+  validator_model: TestingDefinitionDocument
+  status: active

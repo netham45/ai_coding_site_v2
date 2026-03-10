@@ -1,0 +1,19 @@
+kind: task_definition
+id: respond_to_child_failure
+name: Respond To Child Failure
+description: Summarize child failure and decide whether the parent should replan or pause.
+applies_to_kinds: [epic, phase, plan]
+policy: {max_subtask_retries: 1, on_failure: pause_for_user}
+uses_reviews: [reviews/policy_compliance_review.yaml]
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: summarize_child_failure
+    type: write_summary
+    title: Summarize Child Failure
+    description: Summarize the child failure surface for parent handling.
+    prompt: "prompts/runtime/parent_pause_for_user.md"
+    outputs: [{type: summary_written, path: summaries/child_failure.md}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

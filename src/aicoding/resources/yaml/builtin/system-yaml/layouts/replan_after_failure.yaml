@@ -1,0 +1,40 @@
+kind: layout_definition
+id: replan_after_failure
+name: Replan After Failure
+description: Optional remediation layout for regrouping after a child or workflow failure.
+children:
+  - id: restate_requirements
+    kind: task
+    tier: 3
+    name: Restate Requirements
+    goal: Re-anchor the problem statement, constraints, and failure context.
+    rationale: Remediation should begin by freezing what failed and what still matters.
+    dependencies: []
+    acceptance:
+      - The failure context is summarized.
+      - The required outcome is restated clearly.
+    ordinal: 1
+  - id: adjust_plan
+    kind: task
+    tier: 3
+    name: Adjust Plan
+    goal: Produce a revised execution plan that addresses the failure.
+    rationale: The parent should not retry blindly without an updated plan.
+    dependencies:
+      - restate_requirements
+    acceptance:
+      - The revised plan addresses the failure cause.
+      - Dependencies and risks are re-evaluated.
+    ordinal: 2
+  - id: resume_execution
+    kind: task
+    tier: 3
+    name: Resume Execution
+    goal: Resume implementation from the revised plan.
+    rationale: A remediation layout should end with a concrete handoff back to execution.
+    dependencies:
+      - adjust_plan
+    acceptance:
+      - The node is ready to re-enter execution.
+      - The next task has a clear starting point.
+    ordinal: 3

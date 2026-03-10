@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: rebind_session
+type: build_context
+title: Rebind Session
+description: Rebind or recreate the active session.
+prompt: "prompts/recovery/replacement_session_bootstrap.md"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

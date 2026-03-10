@@ -117,6 +117,12 @@ This is important for:
 - recovery
 - parent replan flows
 
+Implementation staging note:
+
+- the current implementation keys idempotency off the authoritative parent node version plus the SHA-256 of the resolved default built-in layout document
+- `node_children.layout_child_id` stores the exact layout child id so reruns do not have to infer identity from mutable child titles
+- if child rows already exist while the authoritative layout hash is missing, the parent is treated as `reconciliation_required` rather than silently rematerialized
+
 ---
 
 ## Layout Change Behavior
@@ -212,6 +218,11 @@ That means:
 Recommended default:
 
 - all materialized children for the active layout must complete before parent reconciliation
+
+Implementation staging note:
+
+- the current scheduling read path derives child readiness from `node_dependencies`, `node_dependency_blockers`, and each child lifecycle row
+- no standalone scheduling snapshot table is currently required because the derived state has been sufficient for operator and parent inspection
 
 ---
 

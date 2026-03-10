@@ -1,0 +1,6 @@
+schema_family:
+  family: review_definition
+  source_group: yaml_builtin_system
+  relative_glob: reviews/*.yaml
+  validator_model: ReviewDefinitionDocument
+  status: active

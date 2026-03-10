@@ -1,0 +1,19 @@
+kind: docs_definition
+id: default_doc_views
+name: Default Doc Views
+applies_to:
+  node_kinds: [task, plan, phase, epic]
+  task_ids: []
+  lifecycle_points: [after_node_complete]
+scope: custom
+description: Default documentation views supported by the built-in system.
+inputs:
+  include_static_analysis: false
+  include_entity_relations: true
+  include_node_summaries: true
+  include_prompt_history: true
+  include_review_results: true
+  include_test_results: true
+outputs:
+  - path: docs/generated/default-views.md
+    view: overview

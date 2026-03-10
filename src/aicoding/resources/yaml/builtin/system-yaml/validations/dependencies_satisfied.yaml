@@ -1,0 +1,5 @@
+kind: validation_definition
+id: dependencies_satisfied
+name: Dependencies Satisfied
+description: Require dependencies to be satisfied before execution advances.
+check: {type: dependencies_satisfied}

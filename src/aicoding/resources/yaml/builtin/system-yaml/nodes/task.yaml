@@ -1,0 +1,36 @@
+node_definition:
+  id: task
+  kind: task
+  tier: 3
+  description: Leaf execution node that performs concrete work.
+  main_prompt: prompts/execution/implement_leaf_task.md
+  entry_task: execute_node
+  available_tasks:
+    - execute_node
+    - validate_node
+    - review_node
+  parent_constraints:
+    allowed_kinds:
+      - plan
+    allowed_tiers:
+      - 2
+    allow_parentless: false
+  child_constraints:
+    allowed_kinds: []
+    allowed_tiers: []
+    min_children: 0
+    max_children: 0
+  policies:
+    max_node_regenerations: 3
+    max_subtask_retries: 2
+    child_failure_threshold_total: 0
+    child_failure_threshold_consecutive: 0
+    child_failure_threshold_per_child: 0
+    require_review_before_finalize: false
+    require_testing_before_finalize: false
+    require_docs_before_finalize: false
+    auto_run_children: false
+    auto_rectify_upstream: false
+    auto_merge_to_parent: true
+    auto_merge_to_base: false
+  hooks: []

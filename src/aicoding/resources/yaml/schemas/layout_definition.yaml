@@ -1,0 +1,6 @@
+schema_family:
+  family: layout_definition
+  source_group: yaml_builtin_system
+  relative_glob: layouts/*.yaml
+  validator_model: LayoutDefinitionDocument
+  status: active

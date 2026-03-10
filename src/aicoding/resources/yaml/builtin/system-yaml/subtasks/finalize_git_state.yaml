@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: finalize_git_state
+type: finalize_node
+title: Finalize Git State
+description: Inspect the durable final-commit anchor before marking git-facing completion.
+command: "python3 -m aicoding.cli.main git final show --node {{node_id}}"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: pause_for_user}

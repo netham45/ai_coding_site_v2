@@ -45,12 +45,18 @@ Each node version is associated with one logical branch identity.
 
 Recommended branch naming should be deterministic and derivable from node metadata.
 
-Example patterns:
+Current implementation rule:
 
-- `tier/<tier>/<kind>/<slug>__<node_id>`
-- `root/<slug>__<node_id>/<child_kind>/<child_slug>__<node_id>`
+- `tier/<tier>/<kind>/<title-slug>__<logical_node_id_hex>/v<version_number>`
 
-The exact scheme may vary, but the system must freeze one canonical rule in implementation.
+Where:
+
+- `tier` and `kind` are normalized to lowercase dash-separated path components
+- `title-slug` is a lowercase dash-separated slug derived from the node-version title
+- `logical_node_id_hex` is the stable logical node UUID with dashes removed
+- `version_number` matches the durable branch generation number for the node version
+
+This freezes one canonical first-pass naming rule for implementation and testing.
 
 Each active branch record must include:
 
@@ -58,6 +64,11 @@ Each active branch record must include:
 - `final_commit_sha`
 - `active_head_sha` if tracked operationally
 - `branch_generation_number`
+
+Implementation staging note:
+
+- the current implementation persists `active_branch_name`, `seed_commit_sha`, `final_commit_sha`, and `branch_generation_number`
+- `active_head_sha` remains deferred until live git/session orchestration phases actually track working head state durably
 
 ---
 
@@ -86,6 +97,11 @@ It should be recorded only after:
 5. provenance refresh succeeds
 6. docs build succeeds
 7. finalization succeeds
+
+Implementation staging note:
+
+- the current implementation supports durable seed/final recording and immutable commit anchors per node version
+- it does not yet enforce the full quality-gate/finalization pipeline before `final_commit_sha` is recorded; that stronger guard lands with the later runtime/git phases
 
 ---
 
@@ -119,6 +135,11 @@ Recommended precedence:
 4. child node ID as final tiebreaker
 
 The chosen order must be persisted in merge metadata.
+
+Implementation staging note:
+
+- the current implementation now computes deterministic child merge order from durable sibling dependencies, child ordinals, child-edge creation time, and logical child id
+- merge execution in this phase is metadata-backed rather than shelling out to live `git merge`; the daemon records replayable `merge_events`, persists the derived parent reconcile context, and defers real branch checkout/reset/merge mechanics to the later git-runtime phases
 
 ---
 
@@ -406,3 +427,4 @@ Remaining follow-on work still needed:
 - decide the final canonical branch naming pattern
 - further refine active old-run behavior during supersession
 - rerun the gap matrix against the completed v2 core spec set
+Implementation note: the current codebase now persists staged rebuild history and deterministic candidate rectification anchors in the database. Real working-tree `git reset` / merge execution is still deferred, but rebuild lineage, merge ordering, and cutover gating are now durable and inspectable.

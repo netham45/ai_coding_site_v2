@@ -1,0 +1,13 @@
+kind: runtime_policy_definition
+id: default_review_policy
+name: Default Review Policy
+description: Default review surfaces for the built-in system.
+defaults:
+  require_review_before_finalize: true
+runtime_policy_refs: []
+hook_refs: [hooks/before_review_default.yaml, hooks/after_review_default.yaml]
+review_refs:
+  - reviews/layout_against_prompt.yaml
+  - reviews/node_against_requirements.yaml
+testing_refs: []
+docs_refs: []

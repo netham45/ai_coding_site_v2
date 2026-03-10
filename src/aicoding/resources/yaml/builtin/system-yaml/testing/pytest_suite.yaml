@@ -1,0 +1,22 @@
+kind: testing_definition
+id: pytest_suite
+name: Pytest Suite
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [test_node]
+  lifecycle_points: [after_task]
+scope: unit
+description: Run the repository pytest suite.
+commands:
+  - command: python3 -m pytest -q
+    working_directory: .
+    env: {}
+retry_policy:
+  max_attempts: 1
+  rerun_failed_only: false
+pass_rules:
+  require_exit_code_zero: true
+  max_failed_tests: 0
+on_result:
+  pass_action: continue
+  fail_action: fail_to_parent

@@ -1,0 +1,15 @@
+kind: layout_definition
+id: phase_to_plans
+name: Phase To Plans
+description: Default built-in decomposition template for turning a phase into executable plans.
+children:
+  - id: primary_plan
+    kind: plan
+    tier: 2
+    name: Primary Plan
+    goal: Execute the main phase delivery path.
+    rationale: The default system should prefer a single coherent plan unless complexity justifies more.
+    dependencies: []
+    acceptance:
+      - The plan breaks work into crisp task nodes.
+    ordinal: 1

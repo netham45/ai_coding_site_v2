@@ -1,0 +1,22 @@
+kind: review_definition
+id: docs_quality_review
+name: Docs Quality Review
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [build_node_docs]
+  lifecycle_points: [after_task]
+scope: docs
+description: Review generated docs for clarity and completeness.
+inputs:
+  include_parent_requirements: false
+  include_child_summaries: false
+  include_acceptance_criteria: true
+  include_changed_files: true
+  include_validation_results: false
+  include_test_results: false
+prompt: "prompts/docs/build_node_docs.md"
+criteria: [Docs explain current output.]
+on_result:
+  pass_action: continue
+  revise_action: rerun_task
+  fail_action: pause_for_user

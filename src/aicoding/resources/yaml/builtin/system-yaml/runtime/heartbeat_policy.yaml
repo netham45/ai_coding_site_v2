@@ -1,0 +1,9 @@
+kind: runtime_definition
+id: heartbeat_policy
+name: Heartbeat Policy
+description: Default heartbeat cadence for active sessions.
+commands:
+  - ai-tool subtask heartbeat --compiled-subtask <compiled_subtask_id>
+thresholds:
+  heartbeat_seconds: 30
+actions: [write_summary]

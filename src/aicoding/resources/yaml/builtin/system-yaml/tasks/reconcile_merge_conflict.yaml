@@ -1,0 +1,19 @@
+kind: task_definition
+id: reconcile_merge_conflict
+name: Reconcile Merge Conflict
+description: Reconcile a merge conflict exposed during child or upstream integration.
+applies_to_kinds: [phase, plan]
+policy: {max_subtask_retries: 1, on_failure: pause_for_user}
+uses_reviews: [reviews/merge_result_review.yaml]
+uses_testing: []
+uses_docs: []
+subtasks:
+  - kind: subtask_definition
+    id: reconcile_conflict
+    type: run_prompt
+    title: Reconcile Merge Conflict
+    description: Resolve the merge conflict without losing authored intent.
+    prompt: "prompts/execution/reconcile_parent_after_merge.md"
+    outputs: [{type: working_tree_dirty}]
+    retry_policy: {max_attempts: 1, backoff_seconds: 0}
+    on_failure: {action: pause_for_user}

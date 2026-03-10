@@ -1,0 +1,37 @@
+node_definition:
+  id: epic
+  kind: epic
+  tier: 0
+  description: Top-level outcome-oriented planning container.
+  main_prompt: prompts/layouts/generate_phase_layout.md
+  entry_task: research_context
+  available_tasks:
+    - research_context
+    - execute_node
+    - validate_node
+    - review_node
+  parent_constraints:
+    allowed_kinds: []
+    allowed_tiers: []
+    allow_parentless: true
+  child_constraints:
+    allowed_kinds:
+      - phase
+    allowed_tiers:
+      - 1
+    min_children: 0
+    max_children: 12
+  policies:
+    max_node_regenerations: 3
+    max_subtask_retries: 2
+    child_failure_threshold_total: 3
+    child_failure_threshold_consecutive: 2
+    child_failure_threshold_per_child: 2
+    require_review_before_finalize: false
+    require_testing_before_finalize: false
+    require_docs_before_finalize: false
+    auto_run_children: true
+    auto_rectify_upstream: false
+    auto_merge_to_parent: false
+    auto_merge_to_base: false
+  hooks: []

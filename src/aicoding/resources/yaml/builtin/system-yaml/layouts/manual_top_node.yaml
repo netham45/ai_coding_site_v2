@@ -1,0 +1,16 @@
+kind: layout_definition
+id: manual_top_node
+name: Manual Top Node
+description: Optional top-level layout for projects that prefer one explicit umbrella epic.
+children:
+  - id: main_epic
+    kind: epic
+    tier: 0
+    name: Main Epic
+    goal: Hold the top-level project outcome under one explicit epic node.
+    rationale: Some projects want a single manual wrapper before the normal epic-to-phase ladder begins.
+    dependencies: []
+    acceptance:
+      - The project has one canonical top-level epic.
+      - Downstream decomposition can proceed through the default ladder.
+    ordinal: 1

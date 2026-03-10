@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: spawn_child_node
+type: spawn_child_node
+title: Spawn Child Node
+description: Create a child node from accepted layout data.
+command: "python3 -m aicoding.cli.main node materialize-children --node {{node_id}}"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

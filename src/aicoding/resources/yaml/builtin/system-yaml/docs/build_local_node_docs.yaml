@@ -1,0 +1,19 @@
+kind: docs_definition
+id: build_local_node_docs
+name: Build Local Node Docs
+applies_to:
+  node_kinds: [task, plan]
+  task_ids: [build_node_docs]
+  lifecycle_points: [after_task]
+scope: local
+description: Build the local node documentation view.
+inputs:
+  include_static_analysis: true
+  include_entity_relations: false
+  include_node_summaries: true
+  include_prompt_history: false
+  include_review_results: true
+  include_test_results: true
+outputs:
+  - path: docs/generated/node.md
+    view: local_node

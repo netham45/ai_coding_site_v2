@@ -1,0 +1,8 @@
+kind: subtask_definition
+id: reset_to_seed
+type: reset_to_seed
+title: Reset To Seed
+description: Inspect the recorded seed commit used for bounded rectification.
+command: "python3 -m aicoding.cli.main git seed show --node {{node_id}}"
+retry_policy: {max_attempts: 1, backoff_seconds: 0}
+on_failure: {action: fail_to_parent}

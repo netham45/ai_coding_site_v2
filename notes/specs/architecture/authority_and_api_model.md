@@ -27,6 +27,11 @@ The daemon is the live orchestration authority.
 
 The database is the durable canonical record.
 
+Implementation staging note:
+
+- early authority slices may persist daemon-owned runtime records keyed by external node identifiers before the richer `node_versions`/`node_runs` schema families are implemented
+- that staging choice does not change the core rule that the daemon owns live mutations and the database owns the durable record
+
 That means:
 
 - the daemon decides admission, locking, coordination, recovery, cutover, and other live orchestration behavior

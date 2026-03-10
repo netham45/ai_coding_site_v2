@@ -1,0 +1,5 @@
+kind: environment_policy_definition
+id: local_default
+isolation_mode: none
+allow_network: true
+mandatory: false

@@ -87,6 +87,12 @@ Every workflow event should preserve enough structure to answer:
 - clear pause
 - resume from pause
 
+Implementation note:
+
+- the current implementation records `pause_entered` when a manual pause, idle escalation, or gated compiled subtask pushes the run into `PAUSED_FOR_USER`
+- explicit approval records `pause_cleared` while leaving the run paused
+- successful resume records `pause_resumed`
+
 ### Recovery scope
 
 - record recovery attempt

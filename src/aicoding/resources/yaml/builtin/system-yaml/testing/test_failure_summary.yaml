@@ -1,0 +1,16 @@
+kind: testing_definition
+id: test_failure_summary
+name: Test Failure Summary
+applies_to:
+  node_kinds: [task]
+  task_ids: [summarize_failure]
+  lifecycle_points: [after_task]
+scope: project_custom
+description: Ensure failure summaries are emitted when tests fail.
+commands:
+  - command: python3 -m pytest tests/unit/test_errors.py -q
+    working_directory: .
+    env: {}
+retry_policy: {max_attempts: 1, rerun_failed_only: false}
+pass_rules: {require_exit_code_zero: true, max_failed_tests: 0}
+on_result: {pass_action: continue, fail_action: pause_for_user}

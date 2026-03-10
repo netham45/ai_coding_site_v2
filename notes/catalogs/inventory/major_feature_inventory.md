@@ -489,7 +489,7 @@ The largest remaining `needs_review` areas are:
 
 ## F24. User gating and pause flags
 
-- Status: `identified`
+- Status: `implemented`
 - Priority: `high`
 - Description: The runtime should support pause conditions that require user review or approval.
 - Related specs:

@@ -139,6 +139,17 @@ Recommended initial design stance:
 - support `none`, `container`, and `namespace` conceptually
 - allow `custom_profile` only if project policy explicitly defines it
 
+Implementation staging note:
+
+- the current implementation now validates and catalogs `environment_policy_definition` YAML from both built-in and project roots
+- compiled subtasks now freeze `environment_policy_ref` plus a resolved `environment_request_json` snapshot so runtime behavior is auditable from the immutable workflow
+- project policy `environment_profiles` are now enforced at compile time for `custom_profile` requests
+- actual container and namespace launchers remain deferred
+- current runtime launch behavior is intentionally bounded:
+  - `none` launches on the host runtime
+  - declared `custom_profile` requests are surfaced as delegated/manual-profile execution metadata
+  - unsupported `container` and `namespace` requests either fall back to host execution when non-mandatory or fail the attempt immediately when mandatory
+
 ---
 
 ## Policy Placement
@@ -210,6 +221,11 @@ If a subtask requires isolated execution:
 Key rule:
 
 - isolation affects execution context, not orchestration truth ownership
+
+Implementation staging note:
+
+- the daemon now persists per-attempt `execution_environment_json` describing the requested mode, resolved mode, launcher kind, launch status, fallback reason, and failure classification
+- this makes deferred launcher behavior explicit to CLI and recovery flows rather than hiding it in session-local logic
 
 ---
 

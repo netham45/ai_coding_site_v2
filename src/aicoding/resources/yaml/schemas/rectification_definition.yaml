@@ -1,0 +1,6 @@
+schema_family:
+  family: rectification_definition
+  source_group: yaml_builtin_system
+  relative_glob: rectification/*.yaml
+  validator_model: RectificationDefinitionDocument
+  status: active

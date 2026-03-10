@@ -52,7 +52,13 @@ A compiled executable stage inside a task. Subtasks are the unit of step-by-step
 
 ### Compiled workflow
 
-An immutable expanded snapshot created when a node version is created or superseded.
+An immutable expanded snapshot created by the workflow compiler for a specific node version.
+
+Implementation staging note:
+
+- current node creation and supersede flows capture source lineage immediately
+- immutable workflow creation now occurs on the explicit compile path rather than automatically at node/version creation time
+- the current top-level startup surface now bridges those steps explicitly: `workflow start` creates the node at `DRAFT`, compiles it, transitions it to `READY`, and optionally admits the first run immediately
 
 ### Node version
 
@@ -96,6 +102,12 @@ Manual tree construction must be supported. A user may create a node at any tier
 
 If manual and layout-generated children coexist under one parent, the system should treat that child set as structurally hybrid rather than silently allowing one authority model to overwrite the other.
 
+Implementation staging note:
+
+- the current implementation now persists parented manual node creation through `node_children` with `origin_type = manual`
+- a parent with only manually inserted durable children is treated as `manual`
+- adding a manual child to a previously layout-authoritative parent now flips the parent to `hybrid`
+
 ---
 
 ## 3. Compiled workflow model
@@ -121,6 +133,13 @@ This ensures:
 Compiled workflow durability does not remove daemon ownership of live coordination.
 
 The runtime should execute from compiled artifacts under daemon control and persist each coordination-relevant transition durably.
+
+Implementation staging note:
+
+- stage startup context is now derived from durable node/run/history state rather than terminal history
+- the current daemon assembles a repeatable context bundle from node-version startup metadata, current compiled-subtask metadata, dependency state, recent prompt/summary history, and cursor-carried reconcile/child-session state
+- the same assembled bundle is exposed through both `subtask prompt` and `subtask context`, and `subtask context` mirrors it inside `input_context_json.stage_context_json` for compatibility with older context consumers
+- this stage-context bundle remains a derived read model, not a separate durable authority; the canonical inputs remain node/run/workflow/history tables plus run-cursor overlays
 
 ---
 
@@ -198,6 +217,14 @@ Recommended fields:
 - `working_tree_state`
 
 Both layers must be durable and queryable.
+
+Implementation staging note:
+
+- the current implementation persists these fields in a durable `node_lifecycle_states` table even before immutable compiled workflows and full node-version lineage are implemented
+- hierarchy-created nodes are seeded at `DRAFT`
+- daemon-started legacy nodes that do not yet have a lifecycle row are temporarily bootstrapped through `READY` so pre-versioned authority tests and simple operational commands can still exercise run admission
+- this bootstrap path should be removed once node versioning and compiled workflow admission become authoritative
+- node lifecycle is still currently keyed by logical node id rather than node version id, so version cutover changes the current authoritative version selector without yet preserving separate lifecycle rows per historical version
 
 ---
 
@@ -400,6 +427,13 @@ Recommended parent decision order:
 7. pause for the user if ambiguity or thresholds prevent safe autonomous handling
 8. fail upward later only through the parent becoming the failing node itself
 
+Implementation staging note:
+
+- parent failure handling is now daemon-owned and durable for the first recovery loop
+- `retry_child` currently resets the failed child's lifecycle and authority mirror back to `READY` without auto-starting a replacement run
+- `replan_parent` currently pauses the parent with `pause_flag_name = parent_replan_required`
+- threshold exhaustion currently pauses the parent with `pause_flag_name = parent_child_failure_pause`
+
 Representative failure classes include:
 
 - `transient_execution_failure`
@@ -472,6 +506,12 @@ The nudge should include:
 - expected failure-summary command
 
 Repeated idle behavior should be bounded by policy and may eventually escalate to user pause or failure depending on runtime configuration.
+
+Implementation staging note:
+
+- the current daemon now classifies screen state as `active`, `quiet`, or `idle` using pane-hash comparisons plus idle-threshold timing
+- `quiet` covers unchanged panes below the idle threshold and alt-screen suppression cases
+- only the `idle` classification feeds bounded nudge/escalation behavior
 
 ---
 
@@ -576,6 +616,12 @@ For ancestors:
 1. transition to `RECTIFYING_UPSTREAM`
 2. repeat the same rebuild-from-seed logic using current child finals
 
+Implementation staging note:
+
+- the current implementation now supports the durable child-result collection part of rectification and the parent-local reconcile handoff
+- parent nodes can inspect authoritative child finals, blocked children, and deterministic merge order; successful staged merge execution records `merge_events` and writes a `parent_reconcile_context` snapshot into the active run cursor
+- real working-tree mutation for reset/merge/finalize remains deferred until the later git/runtime phases
+
 ---
 
 ## 19. Supersession and cutover rule
@@ -639,5 +685,7 @@ This V2 lifecycle spec resolves or reduces the following prior gaps:
 Remaining follow-on work still needed:
 
 - fold hybrid manual-vs-layout child-set rules into implementation-facing hierarchy metadata
-- freeze the minimum event-history model for pause, failure, recovery, and cutover visibility
 - finalize active-old-run handling during supersession
+Implementation note: subtree regeneration and upstream rectification now create durable candidate lineages plus `rebuild_events`; candidate cutover is blocked until the rebuild path marks the candidate stable.
+Implementation note: the current default compiled workflow now includes `validate_node` as a durable gate after execution, and `workflow advance` enforces required validation success before the run can continue or complete.
+Implementation note: user-gated pauses are now persisted through both `node_run_state.execution_cursor_json.pause_context` and the narrow `workflow_events` history. `pause_entered`, `pause_cleared`, and `pause_resumed` are emitted durably, `node pause-state` reads the mirrored lifecycle row, and resume is blocked until the active pause flag is approved unless the daemon is performing a forced recovery action.

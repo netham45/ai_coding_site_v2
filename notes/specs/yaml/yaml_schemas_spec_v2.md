@@ -128,6 +128,32 @@ Recommended canonical source roles:
 - `testing_definition`
 - `docs_definition`
 - `rectification_definition`
+- `prompt_template`
+
+Implementation staging note:
+
+- the current implementation persists source lineage for built-in node creation/versioning using:
+  - built-in node/task/layout YAML
+  - built-in runtime-policy and prompt-reference YAML
+  - the node definition's referenced prompt template
+- the current implementation now also validates `override_definition` YAML from the packaged project-local override root and persists those override documents in node-version source lineage
+- the current implementation now compiles those captured inputs into immutable workflow snapshots and durable compile-failure records
+- the current implementation now performs deterministic override resolution during compilation for node, task, layout, runtime-policy, project-policy, prompt-reference, review, testing, docs, hook, and rectification YAML families
+- the current implementation persists the applied override chain, compatibility warnings, and resolved per-document YAML payloads into the compiled workflow snapshot for daemon and CLI inspection
+- the current built-in library now uses authored non-node family documents instead of `status: scaffold` placeholders across tasks, subtasks, layouts, validations, reviews, testing, docs, rectification, runtime, hooks, and policies
+- the current default built-in node workflows now include `review_node` after `validate_node`, and source-lineage capture now includes referenced built-in review definitions plus their prompt templates when a compiled task declares `uses_reviews`
+- the current implementation now also captures referenced testing definitions in node-version source lineage and compiled workflow source backfill when a task declares `uses_testing`
+- the current implementation now treats `run_tests` as a first-class durable gate with `test_results` persistence and cached `subtask_attempts.testing_json`, but the packaged default node workflows still stage testing as opt-in through explicit task selection, policy, or override rather than silently inserting `test_node` into every built-in node kind
+- current override merging is bounded to top-level family fields with explicit field-level merge modes; nested path-addressed patch semantics remain deferred
+- the current override source set is the packaged project-local override root as a deterministic compile input boundary; narrower node-scoped applicability rules remain deferred
+- the current compiler now performs deterministic compile-time hook selection and expansion for policy and node hook refs, persists hook diagnostics in `compiled_workflows.resolved_yaml.hook_expansion`, and records inserted subtasks with `inserted_by_hook` metadata
+- the current compile-time hook boundary is intentionally limited to explicit workflow insertion triggers; runtime-only triggers such as `on_node_created` and `on_merge_conflict`, plus conditional `if` matching, remain deferred
+- the current implementation now validates `environment_policy_definition` YAML from `environments/*.yaml`, allows `subtask_definition.environment_policy_ref`, freezes resolved environment requests into compiled subtasks, and records referenced environment policy documents in source lineage
+- the current implementation now also validates optional `render_context` blocks on `subtask_definition` and hook run steps; compile-time rendering supports canonical `{{variable}}` syntax with legacy `<variable>` compatibility, freezes rendered prompt/command text into compiled subtasks, and rejects render syntax in unsupported fields such as `args`, `env`, `checks`, `outputs`, and `retry_policy`
+- the current implementation now treats validation, review, testing, docs, and rectification YAML as rigid higher-order families with explicit field validation instead of permissive catch-all payloads
+- schema validation now also checks prompt-bearing review and hook definitions against the packaged prompt catalog so broken prompt refs fail at YAML validation time instead of surfacing later during runtime use
+- the current implementation now also treats `runtime_definition`, `runtime_policy_definition`, and `prompt_reference_definition` as rigid schema families with catalog-backed reference validation
+- runtime definitions now validate declared action refs against packaged subtask assets, runtime-policy docs validate referenced runtime/hook/review/testing/docs YAML assets, and prompt-reference docs validate dotted keys plus prompt-pack-relative markdown targets
 
 ---
 
@@ -164,6 +190,12 @@ The system should support the following YAML families.
 Open rule:
 
 - optional families may be omitted in an implementation phase, but the design must still explicitly classify them as deferred rather than leaving them implied.
+
+Implementation staging note:
+
+- the current implementation validates `node_definition` with full field coverage
+- the currently authored built-in and project-policy families are validated with explicit family models
+- `override_definition` is now a first-class validated family for the packaged project-local override root
 
 ---
 
@@ -567,6 +599,13 @@ If a project policy changes workflow structure or quality gates, it must contrib
 
 The same principle applies to override compatibility metadata when it affects whether an override is valid, stale, or warning-worthy during compilation.
 
+Implementation staging note:
+
+- the current implementation now validates and loads project policy YAML from `yaml/project/project-policies/*.yaml`
+- effective project policy is merged deterministically over the built-in default runtime policy and is embedded into compiled workflow payloads for auditability
+- the current slice now also allows `project_policy_definition` and `runtime_policy_definition` to participate in the compiler override-resolution stage
+- prompt-template selection can now be changed through resolved node or project-policy override inputs, and the chosen prompt asset is preserved in source lineage
+
 ---
 
 ## 15. Review definition schema
@@ -670,6 +709,12 @@ documentation_definition:
     on_docs_request: boolean
 ```
 
+Implementation staging note:
+
+- the current packaged family name is `docs_definition`
+- the current validator and built-in library support `scope`, `inputs`, and `outputs` with `path` plus `view`
+- rebuild-policy fields remain deferred, and docs generation is currently triggered through explicit daemon/CLI build requests rather than implicit automatic rebuild hooks
+
 ---
 
 ## 18. Rectification definition schema
@@ -721,6 +766,12 @@ environment_policy_definition:
   runtime_profile: string
   mandatory: boolean
 ```
+
+Implementation staging note:
+
+- the current built-in library ships `environments/local_default.yaml` and `environments/isolated_test_profile.yaml`
+- `custom_profile` requests are compile-time validated against project policy `environment_profiles`
+- infrastructure-specific launcher details remain outside YAML and are resolved at daemon runtime
 
 ---
 
