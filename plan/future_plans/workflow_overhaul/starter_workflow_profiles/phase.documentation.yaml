@@ -1,0 +1,47 @@
+kind: workflow_profile_definition
+id: phase.documentation
+name: Documentation Phase
+description: Align notes, commands, checklists, and process docs with implemented behavior.
+applies_to_kind: phase
+profile_family: phase
+status: draft
+main_prompt_ref: prompts/sub_epic/documentation.md
+default_child_layout: layouts/phase_documentation_to_plans.yaml
+compatible_layouts:
+  - layouts/phase_documentation_to_plans.yaml
+layout_tags:
+  - documentation
+  - alignment
+child_generation:
+  allowed_child_kinds: [plan]
+  required_child_roles:
+    - authoring
+    - verification
+  allow_extra_roles: true
+  min_children: 2
+  max_children: 5
+  balance_strategy: estimated_points
+  max_point_skew_percent: 35
+child_profile_defaults:
+  authoring: plan.authoring
+  verification: plan.verification
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - document_schema
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/sub_epic/global_brief.md
+  include_node_tier_prompt: true
+  include_profile_prompt: true
+  include_recommended_child_profiles: true
+  include_cli_discovery_note: true
+metadata:
+  intent: documentation_alignment
+  maturity: starter_builtin

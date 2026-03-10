@@ -33,7 +33,13 @@ class SessionPollResult:
 class SessionAdapter(Protocol):
     backend_name: str
 
-    def create_session(self, session_name: str, command: str, working_directory: str) -> SessionSnapshot: ...
+    def create_session(
+        self,
+        session_name: str,
+        command: str,
+        working_directory: str,
+        environment: dict[str, str] | None = None,
+    ) -> SessionSnapshot: ...
     def session_exists(self, session_name: str) -> bool: ...
     def capture_pane(self, session_name: str, *, include_alt_screen: bool = False) -> str: ...
     def send_input(self, session_name: str, text: str, *, press_enter: bool = True) -> None: ...
@@ -49,8 +55,19 @@ class TmuxSessionAdapter:
     def _run(self, *args: str) -> CompletedProcess[str]:
         return run(["tmux", *args], check=False, text=True, capture_output=True)
 
-    def create_session(self, session_name: str, command: str, working_directory: str) -> SessionSnapshot:
-        result = self._run("new-session", "-d", "-s", session_name, "-c", working_directory, command)
+    def create_session(
+        self,
+        session_name: str,
+        command: str,
+        working_directory: str,
+        environment: dict[str, str] | None = None,
+    ) -> SessionSnapshot:
+        args = ["new-session", "-d", "-s", session_name, "-c", working_directory]
+        if environment:
+            for key, value in sorted(environment.items()):
+                args.extend(["-e", f"{key}={value}"])
+        args.append(command)
+        result = self._run(*args)
         if result.returncode != 0:
             raise ConfigurationError(
                 message="Failed to create tmux session.",
@@ -175,7 +192,13 @@ class FakeSessionAdapter:
     _sessions: dict[str, FakeSessionState] = field(default_factory=dict)
     _creation_order: list[str] = field(default_factory=list)
 
-    def create_session(self, session_name: str, command: str, working_directory: str) -> SessionSnapshot:
+    def create_session(
+        self,
+        session_name: str,
+        command: str,
+        working_directory: str,
+        environment: dict[str, str] | None = None,
+    ) -> SessionSnapshot:
         current_time = self.now()
         state = FakeSessionState(
             session_name=session_name,

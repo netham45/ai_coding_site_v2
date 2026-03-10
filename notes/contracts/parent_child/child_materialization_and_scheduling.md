@@ -119,7 +119,9 @@ This is important for:
 
 Implementation staging note:
 
-- the current implementation keys idempotency off the authoritative parent node version plus the SHA-256 of the resolved default built-in layout document
+- the current implementation keys idempotency off the authoritative parent node version plus the SHA-256 of the effective resolved layout document
+- effective layout resolution now prefers `layouts/generated_layout.yaml` under the configured workspace root when that file exists
+- the packaged built-in layout for the parent kind remains the fallback when no generated layout file exists
 - `node_children.layout_child_id` stores the exact layout child id so reruns do not have to infer identity from mutable child titles
 - if child rows already exist while the authoritative layout hash is missing, the parent is treated as `reconciliation_required` rather than silently rematerialized
 
@@ -214,6 +216,13 @@ The parent should not busy-loop blindly. The scheduling mechanism may be:
 - hybrid
 
 But the durable model should look the same either way.
+
+Implementation staging note:
+
+- the current daemon now runs a background child auto-start loop
+- after child materialization, the daemon scans authoritative parent-child edges, evaluates readiness from durable child state, and auto-starts only children that are actually `ready`
+- the current implementation admits the child run with trigger reason `auto_run_child` and binds a primary session immediately
+- dependency-blocked siblings remain unstarted until their dependencies clear
 
 ---
 

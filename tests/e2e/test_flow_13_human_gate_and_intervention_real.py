@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
+
+
+def _tmux_capture(session_name: str) -> str:
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"[tmux capture failed] {result.stderr.strip()}"
+    return result.stdout
 
 
 def _write_workspace_pause_override(workspace_root) -> None:
@@ -29,6 +44,8 @@ def _write_workspace_pause_override(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_13_human_gate_and_intervention_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
     _write_workspace_pause_override(real_daemon_harness.workspace_root)
 
@@ -44,39 +61,31 @@ def test_flow_13_human_gate_and_intervention_runs_against_real_daemon_and_real_c
     )
     assert start_result.exit_code == 0, start_result.stderr
     node_id = str(start_result.json()["node"]["node_id"])
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    bind_payload = bind_result.json()
+    session_name = str(bind_payload["session_name"])
 
     paused_progress = None
-    while True:
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
         progress_result = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
         assert progress_result.exit_code == 0, progress_result.stderr
         progress_payload = progress_result.json()
+        last_pane_text = _tmux_capture(session_name)
         current_subtask = progress_payload["current_subtask"]
         if current_subtask["source_subtask_key"].startswith("pause_for_user."):
             paused_progress = progress_payload
             break
-        compiled_subtask_id = str(progress_payload["state"]["current_compiled_subtask_id"])
-        start_subtask_result = real_daemon_harness.cli(
-            "subtask",
-            "start",
-            "--node",
-            node_id,
-            "--compiled-subtask",
-            compiled_subtask_id,
-        )
-        complete_subtask_result = real_daemon_harness.cli(
-            "subtask",
-            "complete",
-            "--node",
-            node_id,
-            "--compiled-subtask",
-            compiled_subtask_id,
-            "--summary",
-            "advance to pause gate",
-        )
-        advance_result = real_daemon_harness.cli("workflow", "advance", "--node", node_id)
-        assert start_subtask_result.exit_code == 0, start_subtask_result.stderr
-        assert complete_subtask_result.exit_code == 0, complete_subtask_result.stderr
-        assert advance_result.exit_code == 0, advance_result.stderr
+        time.sleep(2.0)
+
+    assert paused_progress is not None, (
+        "Expected the real primary tmux/Codex session to advance the run to the explicit human pause gate "
+        "without manual subtask completion from the test.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
 
     interventions_result = real_daemon_harness.cli("node", "interventions", "--node", node_id)
     pause_state_result = real_daemon_harness.cli("node", "pause-state", "--node", node_id)
@@ -98,7 +107,6 @@ def test_flow_13_human_gate_and_intervention_runs_against_real_daemon_and_real_c
     approved_pause_state_result = real_daemon_harness.cli("node", "pause-state", "--node", node_id)
     resume_result = real_daemon_harness.cli("workflow", "resume", "--node", node_id)
 
-    assert paused_progress is not None
     assert interventions_result.exit_code == 0, interventions_result.stderr
     assert pause_state_result.exit_code == 0, pause_state_result.stderr
     assert blocked_resume_result.exit_code == 4, blocked_resume_result.stderr
@@ -116,6 +124,8 @@ def test_flow_13_human_gate_and_intervention_runs_against_real_daemon_and_real_c
 
     assert paused_payload["run"]["run_status"] == "PAUSED"
     assert paused_payload["current_subtask"]["source_subtask_key"].startswith("pause_for_user.")
+    assert bind_payload["logical_node_id"] == node_id
+    assert bind_payload["tmux_session_exists"] is True
     assert any(item["kind"] == "pause_approval" for item in interventions_payload["interventions"])
     assert pause_state_payload["pause_flag_name"] == "user_guidance_required"
     assert pause_state_payload["approval_required"] is True

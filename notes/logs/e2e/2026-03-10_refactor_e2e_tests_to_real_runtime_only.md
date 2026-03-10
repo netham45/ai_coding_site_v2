@@ -178,3 +178,99 @@
   - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_e2e_execution_policy_docs.py tests/unit/test_feature_checklist_docs.py -q`
 - Result: The document consistency suite passed. The rewritten Flow 05 failed in the real runtime path because the primary tmux/Codex session never produced durable attempt, summary, or completed-subtask state, and tmux eventually vanished while the daemon still reported the run as active. That runtime gap is recorded separately in `notes/logs/e2e/2026-03-10_real_e2e_failure_flow05_primary_session_progress.md`.
 - Next step: Continue rewriting the remaining operator-driven E2E files to require live runtime progress and log each resulting product/runtime gap instead of allowing manual advancement to mask it.
+
+## Entry 10
+
+- Timestamp: 2026-03-10
+- Task ID: refactor_e2e_tests_to_real_runtime_only
+- Task title: Refactor E2E tests to real runtime only
+- Status: partial
+- Affected systems: cli, daemon, database, prompts, sessions, tests, notes
+- Summary: Rewrote Flow 08 to stop manually failing the child subtask and instead require a daemon-recorded child failure produced by the live child tmux/Codex session.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_refactor_e2e_tests_to_real_runtime_only.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/e2e/test_flow_08_handle_failure_and_escalate_real.py -q`
+  - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_e2e_execution_policy_docs.py tests/unit/test_feature_checklist_docs.py -q`
+- Result: The document consistency suite passed. The rewritten Flow 08 failed in the real runtime path because the child tmux/Codex session stayed `RUNNING`, emitted unsupported CLI `--json` flags in the pane, and never produced a durable failed child run for the parent to respond to. That runtime gap is recorded separately in `notes/logs/e2e/2026-03-10_real_e2e_failure_flow08_child_failure_progress.md`.
+- Next step: Continue rewriting the remaining operator-driven E2E files to require live runtime progress and log each resulting product/runtime gap instead of allowing manual advancement to mask it.
+
+## Entry 11
+
+- Timestamp: 2026-03-10
+- Task ID: refactor_e2e_tests_to_real_runtime_only
+- Task title: Refactor E2E tests to real runtime only
+- Status: partial
+- Affected systems: cli, daemon, database, prompts, sessions, tests, notes
+- Summary: Rewrote Flow 13 to stop manually advancing subtasks and instead require the live primary tmux/Codex session to reach the explicit pause gate before testing intervention approval.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_refactor_e2e_tests_to_real_runtime_only.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/e2e/test_flow_13_human_gate_and_intervention_real.py -q`
+- Result: The rewritten Flow 13 failed in the real runtime path because the primary tmux/Codex session never advanced the run to `pause_for_user`, and the tmux pane disappeared before the daemon surfaced a pause state. That runtime gap is recorded separately in `notes/logs/e2e/2026-03-10_real_e2e_failure_flow13_pause_gate_progress.md`.
+- Next step: Continue rewriting the remaining operator-driven E2E files to require live runtime progress and log each resulting product/runtime gap instead of allowing manual advancement to mask it.
+
+## Entry 12
+
+- Timestamp: 2026-03-10
+- Task ID: refactor_e2e_tests_to_real_runtime_only
+- Task title: Refactor E2E tests to real runtime only
+- Status: partial
+- Affected systems: cli, daemon, database, prompts, sessions, tests, notes
+- Summary: Rewrote Flow 09 to stop manually advancing subtasks and instead require the live runtime to reach the quality-gate stages before running the quality chain.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_refactor_e2e_tests_to_real_runtime_only.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/e2e/test_flow_09_run_quality_gates_real.py -q`
+- Result: The rewritten Flow 09 failed in the real runtime path because `node quality-chain` still returned `409 Conflict`; the node never progressed into a built-in quality-gate subtask on its own. That runtime gap is recorded separately in `notes/logs/e2e/2026-03-10_real_e2e_failure_flow09_quality_chain_entry.md`.
+- Next step: Continue rewriting the remaining operator-driven E2E files to require live runtime progress and log each resulting product/runtime gap instead of allowing manual advancement to mask it.
+
+## Entry 13
+
+- Timestamp: 2026-03-10
+- Task ID: refactor_e2e_tests_to_real_runtime_only
+- Task title: Refactor E2E tests to real runtime only
+- Status: partial
+- Affected systems: cli, daemon, database, prompts, sessions, tests, notes
+- Summary: Rewrote the full epic-tree E2E test to stop manually driving leaf-task execution and instead require durable progress from the live leaf-task primary session.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_refactor_e2e_tests_to_real_runtime_only.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q`
+- Result: The rewritten full-tree E2E failed in the real runtime path because the leaf-task primary tmux/Codex session disappeared before the daemon recorded any durable leaf-task progress. That runtime gap is recorded separately in `notes/logs/e2e/2026-03-10_real_e2e_failure_full_tree_leaf_progress.md`.
+- Next step: With the major manual-advance E2E offenders rewritten, continue auditing the remaining E2E surface for any residual operator-driven runtime shortcuts and then decide whether the next phase is product-gap remediation or additional strict-path rewrites.
+
+## Entry 14
+
+- Timestamp: 2026-03-10
+- Task ID: refactor_e2e_tests_to_real_runtime_only
+- Task title: Refactor E2E tests to real runtime only
+- Status: partial
+- Affected systems: cli, daemon, tests, notes
+- Summary: Audited the current `tests/e2e/` surface after the major rewrites to verify whether manual runtime-driving commands still remain in the suite.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_refactor_e2e_tests_to_real_runtime_only.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `rg -n 'subtask\", \"(start|complete|fail)|summary\", \"register|session\", \"pop|workflow\", \"advance|respond-to-child-failure' tests/e2e`
+  - `rg -n 'pytest\\.fail\\(|create_engine\\(|\\.request\\(|node\", \"lifecycle\", \"transition' tests/e2e`
+- Result: The audit found no remaining direct DB/API proof, placeholder failures, lifecycle-transition shortcuts, or manual subtask/summary/workflow-advance shortcuts in `tests/e2e`. The only remaining operator mutation match is `respond-to-child-failure` in Flow 08, which is the actual operator command that flow is intended to validate.
+- Next step: The remaining work has shifted from “remove simulated/manual advancement” to “fix or log the real runtime gaps exposed by those now-strict E2E tests.”

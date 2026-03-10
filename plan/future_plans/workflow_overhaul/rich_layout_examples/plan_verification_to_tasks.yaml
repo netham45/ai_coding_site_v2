@@ -1,0 +1,56 @@
+kind: layout_definition
+id: plan_verification_to_tasks
+name: Verification Plan To Tasks
+description: Break a verification plan into check-execution and result-assessment tasks.
+profile: plan.verification
+compatible_workflow_profiles:
+  - plan.verification
+layout_tags:
+  - verification
+  - proof
+children:
+  - id: execute_checks
+    role: execute_checks
+    workflow_profile: task.verification
+    kind: task
+    tier: 3
+    name: Execute Declared Checks
+    goal: Run the declared verification commands against the intended surface.
+    rationale: Verification starts with actual command execution rather than interpretation alone.
+    artifact_targets:
+      - verification commands
+      - runtime outputs
+    required_updates:
+      - checklist
+      - development_log
+      - e2e_mapping
+    verification_commands:
+      - canonical bounded or real-E2E commands for the scope
+    estimated_points: 2
+    dependencies: []
+    acceptance:
+      - The declared checks have been run or blocked explicitly with reasons.
+    ordinal: 1
+  - id: assess_results
+    role: assess_results
+    workflow_profile: task.review
+    kind: task
+    tier: 3
+    name: Assess Verification Results
+    goal: Classify the command outcomes and state whether the proved surface is complete, failed, or blocked.
+    rationale: Raw command output should become an explicit verification judgment.
+    artifact_targets:
+      - verification evidence
+      - assessment summary
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_commands:
+      - review of executed verification outputs
+    estimated_points: 1
+    dependencies:
+      - execute_checks
+    acceptance:
+      - The proving surface has an explicit outcome and next-step posture.
+    ordinal: 2

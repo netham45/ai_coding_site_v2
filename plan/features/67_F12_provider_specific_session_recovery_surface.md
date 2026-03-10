@@ -22,7 +22,7 @@ Read these feature plans for implementation context and interaction boundaries:
 
 Read these note files before implementing or revising this phase:
 
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/specs/cli/cli_surface_spec_v2.md`
 - `notes/specs/database/database_schema_spec_v2.md`

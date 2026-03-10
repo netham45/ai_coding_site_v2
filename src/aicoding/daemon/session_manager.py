@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from aicoding.config import get_settings
+
 
 @dataclass(frozen=True, slots=True)
 class SessionLaunchPlan:
@@ -15,13 +17,46 @@ class SessionLaunchPlan:
     command: str
     working_directory: str
     attach_command: str | None
+    environment: dict[str, str] | None = None
     launch_mode: str | None = None
     prompt_cli_command: str | None = None
     prompt_log_path: str | None = None
 
 
 def default_session_working_directory() -> str:
+    workspace_root = get_settings().workspace_root
+    if workspace_root is not None:
+        return str(workspace_root)
     return str(Path.cwd())
+
+
+def session_runtime_environment() -> dict[str, str]:
+    allowed_exact_keys = {
+        "CODEX_HOME",
+        "HOME",
+        "LANG",
+        "LOGNAME",
+        "PATH",
+        "PYTHONPATH",
+        "SHELL",
+        "TMP",
+        "TMPDIR",
+        "TEMP",
+        "USER",
+        "VIRTUAL_ENV",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    }
+    allowed_prefixes = (
+        "AICODING_",
+        "OPENAI_",
+    )
+    environment: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in allowed_exact_keys or key.startswith(allowed_prefixes):
+            environment[key] = value
+    return environment
 
 
 def project_name_for_working_directory(working_directory: str) -> str:
@@ -127,6 +162,7 @@ def build_primary_session_plan(
         command=fresh_codex_bootstrap_command(logical_node_id=logical_node_id, prompt_log_path=prompt_log_path),
         working_directory=working_directory,
         attach_command=tmux_attach_command(session_name),
+        environment=session_runtime_environment(),
         launch_mode="codex_fresh",
         prompt_cli_command=prompt_cli_command,
         prompt_log_path=prompt_log_path,
@@ -145,6 +181,7 @@ def build_recovery_primary_session_plan(
         command=recovery_codex_resume_command(),
         working_directory=default_session_working_directory(),
         attach_command=tmux_attach_command(session_name),
+        environment=session_runtime_environment(),
         launch_mode="codex_resume_last",
     )
 
@@ -160,4 +197,5 @@ def build_child_session_plan(
         command=default_interactive_shell_command(),
         working_directory=default_session_working_directory(),
         attach_command=tmux_attach_command(session_name),
+        environment=session_runtime_environment(),
     )

@@ -1,0 +1,21 @@
+kind: workflow_profile_definition
+id: task.verification
+name: Verification Task
+description: Run one declared proving surface and preserve the result accurately for downstream judgment.
+applies_to_kind: task
+profile_family: task
+status: draft
+main_prompt_ref: prompts/task/verification.md
+required_repository_updates:
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+  - real_e2e
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+metadata:
+  intent: verification
+  maturity: starter_builtin

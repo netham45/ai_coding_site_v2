@@ -84,7 +84,15 @@ python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
 python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
 python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
 python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
+python3 -m pytest tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -q
 ```
+
+Current git-proof caveat:
+
+- `tests/e2e/test_flow_11_finalize_and_merge_real.py` proves the shipped live bootstrap, merge, finalize, merge-event, and git-status path.
+- `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py` now also proves merged parent-repo file contents on disk after a clean multi-child merge and finalize, rerun reset/replay of current child finals on the parent merge tier, and abort-to-seed rollback after a live merge conflict.
+- The repo still does not yet prove rollback/reset correctness through the `node rectify-upstream` rebuild path or resolved file contents after conflict reconciliation.
+- Those stronger assertions require the planned git-content suites described in `plan/tasks/2026-03-10_git_e2e_merge_rectification_planning.md` before any note or checklist can treat the git rectification surface as fully real-E2E covered.
 
 The current real-E2E harness now creates one database per test, so DB-backed execution no longer depends on a shared database fixture.
 

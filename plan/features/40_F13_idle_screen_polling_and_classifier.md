@@ -25,7 +25,7 @@ Read these note files before implementing or revising this phase:
 - `notes/specs/runtime/node_lifecycle_spec_v2.md`
 - `notes/specs/prompts/prompt_library_plan.md`
 - `notes/catalogs/tuning/runtime_tuning_matrix.md`
-- `notes/planning/implementation/tmux_and_session_harness_decisions.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#backend-abstraction-and-test-posture`
 
 ## Scope
 

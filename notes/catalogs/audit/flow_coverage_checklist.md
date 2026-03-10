@@ -57,7 +57,7 @@ Interpretation rule:
 - [ ] Current top-level behavior is reconciled with the doctrine that any node kind may be top-level when created without a parent and allowed by hierarchy YAML
 - [x] First real E2E checkpoint exists with real daemon subprocess plus real CLI subprocess
 - [x] Product-owned configurable workspace root now exists for project resources and default provenance refresh
-- [ ] Live git and session cwd ownership are still not unified around the workspace root
+- [ ] Live git working-tree ownership is still not unified around the workspace root
 
 Latest targeted rerun:
 
@@ -134,6 +134,10 @@ Real E2E checkpoint:
     `tree show --full` payload shape
 - current conclusion: Flow 03 now has one real end-to-end checkpoint through the real daemon
   subprocess and real CLI subprocess
+- additional limitation for the automated full-tree `cat` narrative:
+  - this flow still proves only the shipped explicit materialization path
+  - it does not yet prove parent-generated layout authority or daemon-owned automatic child start
+  - those missing layers are now frozen as planned work in `notes/planning/implementation/automated_full_tree_cat_runtime_preimplementation_note.md`
 
 ### 04 Manual Tree Edit And Reconcile Flow
 
@@ -321,6 +325,11 @@ Real E2E checkpoint:
 - [x] Covers end-to-end live git finalize path
 - [x] Covers live git status inspection for the finalized parent repo
 - [x] First real E2E checkpoint exists with real daemon subprocess plus real CLI subprocess plus actual git commits inside the bootstrapped repos
+- [x] Companion git-content E2E now verifies parent-repo file contents after clean merge/finalize
+- [x] Companion git-content E2E now verifies merge output against an expected filesystem snapshot for a clean multi-child merge
+- [x] Companion git-content E2E now verifies merge-tier rerun resets the parent repo to seed and replays current authoritative child finals
+- [x] Companion git-content E2E now verifies aborting a conflicted live merge restores seed contents and a clean git state
+- [ ] Current git E2E coverage does not yet verify resolved output contents after a conflicted merge is reconciled
 - [ ] Live git repos are still rooted in the daemon runtime tree rather than the workspace-root contract
 
 Real E2E checkpoint:
@@ -330,9 +339,12 @@ Real E2E checkpoint:
 - issues found during hardening:
   - the original runtime lacked a product-owned git bootstrap surface for the per-version repos
   - that gap was fixed by adding `git bootstrap-node`
+  - the original Flow 11 checkpoint stopped at status, merge-event, and final-commit assertions rather than validating merged tree contents on disk
+  - candidate-version live repo bootstrap originally failed when a superseding version inherited a seed commit; the companion git-content suite exposed and drove a runtime fix for that bootstrap path
+  - a companion suite now closes the clean-merge content gap, proves rerun reset/replay and conflict abort rollback, but conflict-resolution content proof is still missing
 - current conclusion: Flow 11 now has one real end-to-end checkpoint for the shipped
   live bootstrap, merge, finalize, merge-event, final-commit, and git-status path,
-  but repo-root ownership is still not unified with the workspace-root contract
+  and a companion git-content suite now proves the clean merged parent tree on disk, rerun reset/replay at the merge tier, and abort rollback from merge-conflict state, but rectification-path rollback and post-conflict resolved-content verification are still missing, and repo-root ownership is still not unified with the workspace-root contract
 
 ### 12 Query Provenance And Docs Flow
 

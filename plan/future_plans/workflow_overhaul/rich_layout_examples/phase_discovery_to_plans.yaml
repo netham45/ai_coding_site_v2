@@ -1,0 +1,86 @@
+kind: layout_definition
+id: phase_discovery_to_plans
+name: Discovery Phase To Plans
+description: Break a discovery phase into context, boundary-definition, and verification-mapping plans.
+profile: phase.discovery
+compatible_workflow_profiles:
+  - phase.discovery
+layout_tags:
+  - discovery
+  - scoping
+children:
+  - id: context
+    role: context
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Context Build
+    goal: Gather the current code, notes, assumptions, and constraints relevant to the slice.
+    rationale: Discovery should begin with evidence rather than guesses.
+    expected_outputs:
+      - research note
+      - source inventory
+    artifact_targets:
+      - source inventory
+      - research notes
+    required_updates:
+      - notes
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies: []
+    acceptance:
+      - The work slice has enough context to reason from actual repo state.
+    ordinal: 1
+  - id: boundary_definition
+    role: boundary_definition
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Boundary Definition
+    goal: Make the implementation boundaries and invariants explicit.
+    rationale: Hidden boundaries create drift and low-quality implementation plans.
+    expected_outputs:
+      - boundary note
+      - invariant list
+    artifact_targets:
+      - boundary definitions
+      - invariant list
+    required_updates:
+      - notes
+      - plan
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies:
+      - context
+    acceptance:
+      - The main boundaries and invariants for the slice are explicit.
+    ordinal: 2
+  - id: verification_mapping
+    role: verification_mapping
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: Verification Mapping
+    goal: Name the proving commands and E2E target for the slice.
+    rationale: Discovery is not complete if proof expectations remain vague.
+    expected_outputs:
+      - verification commands
+      - e2e target note
+    artifact_targets:
+      - verification command surfaces
+      - e2e target notes
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 1
+    dependencies:
+      - boundary_definition
+    acceptance:
+      - The slice has named bounded and real-E2E proof expectations.
+    ordinal: 3

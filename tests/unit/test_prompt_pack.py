@@ -21,7 +21,18 @@ def _render_context():
         scopes={
             "node": {
                 "id": "node-123",
+                "kind": "task",
                 "title": "Implement durable prompt pack",
+                "prompt": "Wait silently until nudged, then emit the done notification commands.",
+            },
+            "task": {
+                "key": "execute_node",
+                "name": "Execute Node",
+                "description": "Perform the main implementation work for a leaf task node.",
+            },
+            "subtask": {
+                "key": "run_leaf_prompt",
+                "id": "run_leaf_prompt",
             },
             "compat": {
                 "node_id": "node-123",
@@ -100,3 +111,21 @@ def test_builtin_yaml_prompt_bindings_resolve_to_authored_prompt_pack(builtin_sy
         prompt_path = catalog.resolve("prompt_pack_default", relative_path)
         assert prompt_path.exists(), relative_path
         render_text(prompt_path.read_text(encoding="utf-8"), context=_render_context(), field_name="prompt")
+
+
+def test_execution_prompt_includes_original_node_request() -> None:
+    catalog = load_resource_catalog()
+    prompt_path = catalog.resolve("prompt_pack_default", "execution/implement_leaf_task.md")
+    content = prompt_path.read_text(encoding="utf-8")
+
+    assert "{{node.prompt}}" in content
+    rendered = render_text(content, context=_render_context(), field_name="prompt")
+
+    assert "Wait silently until nudged" in rendered.rendered_text
+    assert "wait instruction overrides the default workflow ordering" in rendered.rendered_text
+    assert "do not convert \"waiting\" into shell activity" in rendered.rendered_text
+    assert "do not register that as a durable summary" in rendered.rendered_text
+    assert "--type subtask" in rendered.rendered_text
+    assert "--type implementation" not in rendered.rendered_text
+    assert "--result-file summaries/implementation.md" not in rendered.rendered_text
+    assert "--result-file summaries/failure.md" not in rendered.rendered_text

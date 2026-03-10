@@ -16,7 +16,7 @@ It is a synthesis of the current notes, especially:
 - `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`
 - `notes/contracts/runtime/invalid_dependency_graph_handling.md`
 - `notes/contracts/persistence/compile_failure_persistence.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#primary-session-lifecycle`
 - `notes/catalogs/traceability/cross_spec_gap_matrix.md`
 
 ---

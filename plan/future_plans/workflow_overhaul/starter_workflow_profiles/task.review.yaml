@@ -1,0 +1,21 @@
+kind: workflow_profile_definition
+id: task.review
+name: Review Task
+description: Inspect one bounded surface, gather evidence, and leave a remediation-ready conclusion.
+applies_to_kind: task
+profile_family: task
+status: draft
+main_prompt_ref: prompts/task/review.md
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+metadata:
+  intent: review
+  maturity: starter_builtin

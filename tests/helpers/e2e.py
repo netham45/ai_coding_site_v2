@@ -68,11 +68,7 @@ class RealDaemonHarness:
         last_error: str | None = None
         while time.time() < deadline:
             if self.process.poll() is not None:
-                raise RuntimeError(
-                    "Real daemon process exited before becoming ready.\n"
-                    f"stdout:\n{self.process.stdout.read() if self.process.stdout else ''}\n"
-                    f"stderr:\n{self.process.stderr.read() if self.process.stderr else ''}"
-                )
+                raise RuntimeError(self.dead_process_message("Real daemon process exited before becoming ready."))
             try:
                 response = httpx.get(f"{self.base_url}/healthz", timeout=0.5)
                 if response.status_code == 200 and self.token_file.exists():
@@ -81,6 +77,15 @@ class RealDaemonHarness:
                 last_error = str(exc)
             time.sleep(0.1)
         raise RuntimeError(f"Timed out waiting for daemon readiness at {self.base_url}. Last error: {last_error}")
+
+    def dead_process_message(self, prefix: str) -> str:
+        stdout = self.process.stdout.read() if self.process.stdout else ""
+        stderr = self.process.stderr.read() if self.process.stderr else ""
+        return f"{prefix}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+
+    def assert_process_alive(self, *, prefix: str = "Real daemon process exited during E2E.") -> None:
+        if self.process.poll() is not None:
+            raise AssertionError(self.dead_process_message(prefix))
 
     def read_token(self) -> str:
         deadline = time.time() + 10.0

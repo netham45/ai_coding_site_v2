@@ -1,0 +1,21 @@
+kind: workflow_profile_definition
+id: task.docs
+name: Documentation Task
+description: Author or align authoritative written artifacts with actual or intended behavior.
+applies_to_kind: task
+profile_family: task
+status: draft
+main_prompt_ref: prompts/task/docs.md
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - document_schema
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+metadata:
+  intent: documentation
+  maturity: starter_builtin

@@ -1,0 +1,85 @@
+kind: layout_definition
+id: phase_remediation_to_plans
+name: Remediation Phase To Plans
+description: Break a remediation phase into fix, status-alignment, and proof plans.
+profile: phase.remediation
+compatible_workflow_profiles:
+  - phase.remediation
+layout_tags:
+  - remediation
+  - closure
+children:
+  - id: fix
+    role: fix
+    workflow_profile: plan.execution
+    kind: plan
+    tier: 2
+    name: Fix Execution
+    goal: Apply the code, config, or content changes required to resolve the accepted findings.
+    rationale: Remediation begins with concrete corrective changes rather than status writing.
+    expected_outputs:
+      - corrective changes
+      - remediation implementation
+    artifact_targets:
+      - affected repo surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 4
+    dependencies: []
+    acceptance:
+      - The accepted findings have a concrete corrective change set.
+    ordinal: 1
+  - id: status_alignment
+    role: status_alignment
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Status Alignment
+    goal: Update notes, checklists, and tracking surfaces to reflect the remediation state honestly.
+    rationale: The repo should not hide remediation progress in code-only changes.
+    expected_outputs:
+      - note updates
+      - checklist updates
+    artifact_targets:
+      - status surfaces
+      - remediation notes
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 1
+    dependencies:
+      - fix
+    acceptance:
+      - The repository status surfaces accurately describe the remediation state.
+    ordinal: 2
+  - id: proof
+    role: proof
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: Remediation Proof
+    goal: Re-run the proving surface that justifies closing the findings.
+    rationale: Remediation is not complete until the triggering contradiction is re-checked.
+    expected_outputs:
+      - verification results
+      - closure evidence
+    artifact_targets:
+      - proof outputs
+      - closure summary
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 2
+    dependencies:
+      - status_alignment
+    acceptance:
+      - The remediation has explicit proof or an explicit residual blocker.
+    ordinal: 3

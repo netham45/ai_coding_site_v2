@@ -39,7 +39,7 @@ Read these note files before implementing or revising this phase:
 - `notes/catalogs/checklists/e2e_execution_policy.md`
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/contracts/persistence/compile_failure_persistence.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/contracts/parent_child/child_session_mergeback_contract.md`
 - `notes/planning/implementation/real_e2e_flow_contract_phase1_decisions.md`
 - `notes/specs/cli/cli_surface_spec_v2.md`

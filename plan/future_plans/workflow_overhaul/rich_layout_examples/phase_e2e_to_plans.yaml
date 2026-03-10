@@ -1,0 +1,87 @@
+kind: layout_definition
+id: phase_e2e_to_plans
+name: E2E Phase To Plans
+description: Break an E2E phase into execution, verification, and remediation plans.
+profile: phase.e2e
+compatible_workflow_profiles:
+  - phase.e2e
+layout_tags:
+  - e2e
+  - hardening
+  - runtime_proof
+children:
+  - id: execution
+    role: execution
+    workflow_profile: plan.execution
+    kind: plan
+    tier: 2
+    name: E2E Execution
+    goal: Implement or stage the real runtime flow under test.
+    rationale: The real runtime path must exist before it can be proven.
+    expected_outputs:
+      - e2e implementation
+      - flow wiring
+    artifact_targets:
+      - runtime flow
+      - e2e test surfaces
+    required_updates:
+      - development_log
+    verification_targets:
+      - real_e2e
+    estimated_points: 3
+    dependencies: []
+    acceptance:
+      - The target flow is runnable end to end.
+    ordinal: 1
+  - id: verification
+    role: verification
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: E2E Verification
+    goal: Run the real E2E command set and record the result honestly.
+    rationale: Real flow claims require real execution results.
+    expected_outputs:
+      - e2e results
+      - flow status update
+    artifact_targets:
+      - command outputs
+      - e2e mapping surfaces
+    required_updates:
+      - checklist
+      - development_log
+      - e2e_mapping
+    verification_targets:
+      - real_e2e
+    estimated_points: 2
+    dependencies:
+      - execution
+    acceptance:
+      - The canonical E2E command passes or the gap is recorded explicitly.
+    ordinal: 2
+  - id: remediation
+    role: remediation
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Remediation And Status Alignment
+    goal: Fix or document the remaining gaps exposed by the E2E run.
+    rationale: E2E work is incomplete if the result is not reflected in repo status surfaces.
+    expected_outputs:
+      - remediation notes
+      - updated coverage surfaces
+    artifact_targets:
+      - remediation notes
+      - coverage tracking surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 1
+    dependencies:
+      - verification
+    acceptance:
+      - Remaining E2E gaps are fixed or documented explicitly.
+    ordinal: 3

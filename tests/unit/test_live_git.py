@@ -119,3 +119,32 @@ def test_finalize_live_git_state_rejects_dirty_worktree(migrated_public_schema) 
 
     with pytest.raises(Exception, match="clean working tree"):
         finalize_live_git_state(factory, logical_node_id=node.node_id)
+
+
+def test_bootstrap_live_git_repo_uses_candidate_inherited_seed_commit(migrated_public_schema) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    from aicoding.db.session import create_session_factory
+    from aicoding.daemon.versioning import create_superseding_node_version
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Candidate Bootstrap", prompt="p")
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    version = initialize_node_version(factory, logical_node_id=node.node_id)
+    bootstrap_live_git_repo(factory, version_id=version.id, files={"shared.txt": "seed\n"}, replace_existing=True)
+    first_final = stage_live_git_change(
+        factory,
+        version_id=version.id,
+        files={"shared.txt": "seed\nv1 final\n"},
+        message="Version 1 final",
+        record_as_final=True,
+    )
+
+    candidate = create_superseding_node_version(factory, logical_node_id=node.node_id, title="Candidate Bootstrap v2")
+    candidate_status = bootstrap_live_git_repo(factory, version_id=candidate.id, base_version_id=version.id, replace_existing=True)
+
+    from pathlib import Path
+
+    assert candidate_status.seed_commit_sha == first_final.final_commit_sha
+    assert candidate_status.head_commit_sha == first_final.final_commit_sha
+    assert (Path(candidate_status.repo_path) / "shared.txt").read_text(encoding="utf-8") == "seed\nv1 final\n"

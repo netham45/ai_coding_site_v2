@@ -1,0 +1,47 @@
+kind: workflow_profile_definition
+id: plan.verification
+name: Verification Plan
+description: Prove a declared behavior or artifact surface through explicit commands and evidence.
+applies_to_kind: plan
+profile_family: plan
+status: draft
+main_prompt_ref: prompts/plan/verification.md
+default_child_layout: layouts/plan_verification_to_tasks.yaml
+compatible_layouts:
+  - layouts/plan_verification_to_tasks.yaml
+layout_tags:
+  - verification
+  - proof
+child_generation:
+  allowed_child_kinds: [task]
+  required_child_roles:
+    - execute_checks
+    - assess_results
+  allow_extra_roles: true
+  min_children: 1
+  max_children: 4
+  balance_strategy: estimated_points
+  max_point_skew_percent: 30
+child_profile_defaults:
+  execute_checks: task.verification
+  assess_results: task.review
+required_repository_updates:
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+  - real_e2e
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/plan/global_brief.md
+  include_node_tier_prompt: true
+  include_profile_prompt: true
+  include_recommended_child_profiles: true
+  include_cli_discovery_note: true
+metadata:
+  intent: verification
+  maturity: starter_builtin

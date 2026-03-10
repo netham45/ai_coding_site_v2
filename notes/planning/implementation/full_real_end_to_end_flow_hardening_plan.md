@@ -137,7 +137,7 @@ Read and keep aligned with:
 - `notes/specs/git/git_rectification_spec_v2.md`
 - `notes/specs/prompts/prompt_library_plan.md`
 - `notes/specs/yaml/yaml_schemas_spec_v2.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/contracts/parent_child/child_session_mergeback_contract.md`
 - `notes/contracts/runtime/cutover_policy_note.md`
 - `notes/planning/implementation/per_flow_gap_remediation_plan.md`

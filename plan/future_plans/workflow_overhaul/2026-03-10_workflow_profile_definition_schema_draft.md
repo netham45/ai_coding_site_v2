@@ -1,0 +1,341 @@
+# Workflow Profile Definition Schema Draft
+
+## Purpose
+
+Define a draft schema for the proposed `workflow_profile_definition` YAML family and show the minimum fields needed for the workflow-overhaul model to become structurally real.
+
+This is a working draft for the workflow-overhaul bundle.
+
+It is not an adopted repository schema.
+
+## Design Goals
+
+The schema should let the system declare:
+
+- which stable node kind a profile applies to
+- which layout the profile prefers
+- which child roles are required
+- which lower-tier profiles are implied
+- which updates and verification categories are mandatory
+- which completion claims are restricted
+- whether a compiler-generated brief or work packet is required
+
+The schema should not move legality or completion enforcement into YAML-only behavior.
+
+## Draft Top-Level Shape
+
+```yaml
+kind: workflow_profile_definition
+id: epic.feature
+name: Feature Epic
+description: Default epic profile for delivering a feature through implementation and proof.
+applies_to_kind: epic
+profile_family: epic
+status: draft
+main_prompt_ref: prompts/epic/feature.md
+default_child_layout: layouts/epic_feature_to_phases.yaml
+compatible_layouts:
+  - layouts/epic_feature_to_phases.yaml
+layout_tags:
+  - feature_delivery
+  - requires_docs_band
+  - requires_real_e2e_band
+child_generation:
+  allowed_child_kinds: [phase]
+  required_child_roles:
+    - discovery
+    - implementation
+    - documentation
+    - e2e
+  allow_extra_roles: true
+  min_children: 4
+  max_children: 8
+  balance_strategy: estimated_points
+  max_point_skew_percent: 35
+child_profile_defaults:
+  discovery: phase.discovery
+  implementation: phase.implementation
+  documentation: phase.documentation
+  e2e: phase.e2e
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+  - real_e2e
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - complete
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/epic/global_brief.md
+  include_node_tier_prompt: true
+  include_profile_prompt: true
+  include_recommended_child_profiles: true
+  include_cli_discovery_note: true
+metadata:
+  intent: feature_delivery
+  maturity: starter_builtin
+```
+
+## Proposed Field Set
+
+### Required fields
+
+- `kind`
+- `id`
+- `name`
+- `description`
+- `applies_to_kind`
+- `profile_family`
+- `main_prompt_ref`
+- `child_generation`
+
+### Strongly recommended fields
+
+- `default_child_layout`
+- `compatible_layouts`
+- `layout_tags`
+- `child_profile_defaults`
+- `required_repository_updates`
+- `required_verification`
+- `completion_restrictions`
+- `brief_generation`
+
+### Optional fields
+
+- `status`
+- `metadata`
+
+## Proposed Nested Sections
+
+### `child_generation`
+
+Purpose:
+
+- define the structural expectations for generated children
+
+Suggested fields:
+
+- `allowed_child_kinds`
+- `required_child_roles`
+- `allow_extra_roles`
+- `min_children`
+- `max_children`
+- `balance_strategy`
+- `max_point_skew_percent`
+
+### `child_profile_defaults`
+
+Purpose:
+
+- map child role names to lower-tier workflow profiles
+
+Example:
+
+```yaml
+child_profile_defaults:
+  discovery: phase.discovery
+  implementation: phase.implementation
+  documentation: phase.documentation
+  e2e: phase.e2e
+```
+
+### `completion_restrictions`
+
+Purpose:
+
+- declare which stronger status labels remain illegal until profile obligations are met
+
+Suggested fields:
+
+- `forbidden_statuses_until_requirements_met`
+
+### `brief_generation`
+
+Purpose:
+
+- declare whether the compiler must emit an epic or phase brief derived from this profile
+
+Suggested fields:
+
+- `require_compiler_generated_brief`
+- `brief_prompt_ref`
+- `include_node_tier_prompt`
+- `include_profile_prompt`
+- `include_recommended_child_profiles`
+- `include_cli_discovery_note`
+
+This section is mainly relevant for decomposing tiers such as `epic`, `phase`, and `plan`.
+
+## Recommended Prompt Stack
+
+The future brief or decomposition context should be assembled from multiple sources rather than one prompt only.
+
+Recommended stack:
+
+1. node-tier prompt
+2. selected workflow-profile prompt
+3. selected layout summary
+4. recommended child role-to-profile mapping
+5. CLI discovery note for the broader available child-profile set
+
+Reason:
+
+- the stable node kind still carries tier-wide responsibilities
+- the selected profile carries the behavioral contract
+- the layout carries the recommended child-role structure
+- operators and AI contributors still need a discoverable path to the full available profile set rather than only the recommendation
+
+## Recommended Child-Profile Guidance
+
+The brief or decomposition context should include, for each recommended child:
+
+- role
+- recommended workflow profile id
+- recommended workflow profile name
+- recommended workflow profile description
+
+Example:
+
+```yaml
+recommended_children:
+  - role: documentation
+    workflow_profile:
+      id: phase.documentation
+      name: Documentation Phase
+      description: Align notes, commands, checklists, and process docs with implemented behavior.
+```
+
+## Recommended CLI Discovery Note
+
+The brief or decomposition context should also tell the caller how to inspect the full available option set.
+
+Recommended guidance:
+
+- use `node types --node <id>` to inspect kinds, supported workflow profiles, compatible layouts, and role mappings
+- use `node profiles --node <id>` when only the profile-focused view is needed
+
+This keeps the generator or compiler from overclaiming that the recommended child profiles are the only legal choices.
+
+## Vocabulary Recommendations
+
+### `profile_family`
+
+Keep this aligned with the stable node kind for the first implementation:
+
+- `epic`
+- `phase`
+- `plan`
+- `task`
+
+### Starter verification vocabulary
+
+Suggested reusable values:
+
+- `bounded_tests`
+- `integration_tests`
+- `real_e2e`
+- `document_schema`
+- `performance_check`
+- `resilience_check`
+
+### Starter repository-update vocabulary
+
+Suggested reusable values:
+
+- `notes`
+- `plan`
+- `checklist`
+- `development_log`
+- `verification_commands`
+- `e2e_mapping`
+
+## Proposed Validation Rules
+
+### Rule 1
+
+`applies_to_kind` must match the major prefix in `id`.
+
+Examples:
+
+- `epic.feature` -> `applies_to_kind: epic`
+- `phase.discovery` -> `applies_to_kind: phase`
+
+### Rule 2
+
+Every role mentioned in `child_profile_defaults` must also appear in `required_child_roles` unless a future extension explicitly allows optional-role defaults.
+
+### Rule 3
+
+`default_child_layout` must also appear in `compatible_layouts` when `compatible_layouts` is declared.
+
+### Rule 4
+
+`main_prompt_ref` and `brief_prompt_ref` must resolve against the prompt catalog when the family is adopted.
+
+### Rule 5
+
+Any `child_profile_defaults` value must point to a profile whose `applies_to_kind` is allowed by `allowed_child_kinds`.
+
+### Rule 6
+
+`forbidden_statuses_until_requirements_met` must use the repository's approved completion vocabulary only.
+
+## Relationship To Other Families
+
+### Node definitions
+
+Node definitions should eventually point to:
+
+- `default_workflow_profile`
+- `supported_workflow_profiles`
+
+### Layout definitions
+
+Layouts should eventually point back to:
+
+- compatible profile ids
+- role-bearing child declarations
+
+### Prompt assets
+
+Profiles should choose prompt references, but prompts should not be the only place profile behavior exists.
+
+### Compiler
+
+The compiler should:
+
+- resolve the selected profile
+- validate profile/layout compatibility
+- validate required child-role coverage
+- freeze selected profile and derived obligations into compiled workflow context
+
+## Suggested First Adoption Scope
+
+If this family is implemented, the complete starter bundle in this note set now covers:
+
+- `epic.planning`
+- `epic.feature`
+- `epic.review`
+- `epic.documentation`
+- `phase.discovery`
+- `phase.implementation`
+- `phase.documentation`
+- `phase.review`
+- `phase.remediation`
+- `phase.e2e`
+- `plan.authoring`
+- `plan.execution`
+- `plan.verification`
+- `task.implementation`
+- `task.review`
+- `task.verification`
+- `task.docs`
+- `task.e2e`
+- `task.remediation`
+
+A first runtime adoption slice may still choose a smaller subset, but the design bundle is no longer limited to the top two tiers.

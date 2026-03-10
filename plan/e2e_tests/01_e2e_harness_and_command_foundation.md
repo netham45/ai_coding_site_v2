@@ -29,7 +29,7 @@ Read these note files before implementing or revising this phase:
 - `notes/planning/implementation/full_real_end_to_end_flow_hardening_plan.md`
 - `notes/specs/cli/cli_surface_spec_v2.md`
 - `notes/specs/database/database_schema_spec_v2.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/checklists/e2e_execution_policy.md`
 

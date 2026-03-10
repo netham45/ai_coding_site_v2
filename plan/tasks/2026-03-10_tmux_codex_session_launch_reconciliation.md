@@ -36,7 +36,7 @@ Read these note files before implementing or revising this phase:
 - `plan/reconcilliation/04_tmux_codex_session_launch_reconciliation.md`
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/specs/architecture/code_vs_yaml_delineation.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/checklists/e2e_execution_policy.md`
 

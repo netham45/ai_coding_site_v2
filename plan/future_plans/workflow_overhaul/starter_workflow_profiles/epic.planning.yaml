@@ -1,0 +1,49 @@
+kind: workflow_profile_definition
+id: epic.planning
+name: Planning Epic
+description: Turn rough intent into explicit requirements, architecture, and verification mapping.
+applies_to_kind: epic
+profile_family: epic
+status: draft
+main_prompt_ref: prompts/epic/planning.md
+default_child_layout: layouts/epic_planning_to_phases.yaml
+compatible_layouts:
+  - layouts/epic_planning_to_phases.yaml
+layout_tags:
+  - planning
+  - architecture
+  - verification_mapping
+child_generation:
+  allowed_child_kinds: [phase]
+  required_child_roles:
+    - requirements
+    - architecture
+    - planning
+    - verification_mapping
+  allow_extra_roles: true
+  min_children: 4
+  max_children: 8
+  balance_strategy: estimated_points
+  max_point_skew_percent: 30
+child_profile_defaults:
+  requirements: phase.discovery
+  architecture: phase.discovery
+  planning: phase.documentation
+  verification_mapping: phase.documentation
+required_repository_updates:
+  - notes
+  - plan
+  - checklist
+  - development_log
+required_verification:
+  - document_schema
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/epic/global_brief.md
+metadata:
+  intent: planning
+  maturity: starter_builtin

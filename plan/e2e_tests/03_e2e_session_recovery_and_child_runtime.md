@@ -38,7 +38,7 @@ Read these feature plans for implementation context and interaction boundaries:
 
 ## Required Notes
 
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/contracts/parent_child/child_materialization_and_scheduling.md`
 - `notes/contracts/parent_child/child_session_mergeback_contract.md`
 - `notes/contracts/parent_child/manual_vs_auto_tree_interaction.md`

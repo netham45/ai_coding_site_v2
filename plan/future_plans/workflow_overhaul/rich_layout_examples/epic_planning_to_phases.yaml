@@ -1,0 +1,119 @@
+kind: layout_definition
+id: epic_planning_to_phases
+name: Planning Epic To Phases
+description: Planning-oriented epic breakdown for requirements, architecture, planning, and verification mapping.
+profile: epic.planning
+compatible_workflow_profiles:
+  - epic.planning
+layout_tags:
+  - planning
+  - architecture
+  - verification_mapping
+children:
+  - id: requirements
+    role: requirements
+    workflow_profile: phase.discovery
+    kind: phase
+    tier: 1
+    name: Requirements And Scope
+    goal: Clarify the product request, boundaries, and invariants.
+    rationale: Planning quality depends on clear scope and constraints.
+    expected_outputs:
+      - concept updates
+      - invariant draft
+      - risk inventory
+    artifact_targets:
+      - concept notes
+      - invariant surfaces
+    required_updates:
+      - notes
+      - plan
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 3
+    dependencies: []
+    acceptance:
+      - The rough request is translated into explicit requirements and constraints.
+    ordinal: 1
+  - id: architecture
+    role: architecture
+    workflow_profile: phase.discovery
+    kind: phase
+    tier: 1
+    name: Architecture
+    goal: Define durable state, system boundaries, and code-vs-YAML ownership.
+    rationale: Execution planning should follow architecture rather than invent it implicitly.
+    expected_outputs:
+      - architecture notes
+      - boundary notes
+      - stack decisions
+    artifact_targets:
+      - architecture notes
+      - boundary definitions
+    required_updates:
+      - notes
+      - plan
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 4
+    dependencies:
+      - requirements
+    acceptance:
+      - System boundaries and ownership rules are explicit enough for setup and feature planning.
+    ordinal: 2
+  - id: planning
+    role: planning
+    workflow_profile: phase.documentation
+    kind: phase
+    tier: 1
+    name: Plan Breakdown
+    goal: Break the architecture into implementation tracks, plans, and proving surfaces.
+    rationale: Large work should be decomposed deliberately before execution begins.
+    expected_outputs:
+      - task plan set
+      - future-plan notes
+      - checklist mapping
+    artifact_targets:
+      - plans
+      - future notes
+      - checklist surfaces
+    required_updates:
+      - plan
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 3
+    dependencies:
+      - architecture
+    acceptance:
+      - Implementation tracks and proving obligations are explicit.
+    ordinal: 3
+  - id: verification_mapping
+    role: verification_mapping
+    workflow_profile: phase.documentation
+    kind: phase
+    tier: 1
+    name: Verification Mapping
+    goal: Define canonical commands and proof targets for the planned scope.
+    rationale: Planning is incomplete if proving commands are still guesswork.
+    expected_outputs:
+      - verification command catalog updates
+      - e2e target mapping
+    artifact_targets:
+      - verification catalog
+      - e2e mapping surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies:
+      - planning
+    acceptance:
+      - The planned work names its bounded and real-E2E proof surfaces.
+    ordinal: 4

@@ -26,7 +26,7 @@ Read these note files before implementing or revising this phase:
 - `notes/contracts/runtime/cutover_policy_note.md`
 - `notes/specs/runtime/node_lifecycle_spec_v2.md`
 - `notes/specs/database/database_schema_spec_v2.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/planning/implementation/per_flow_gap_remediation_plan.md`
 
 ## Scope

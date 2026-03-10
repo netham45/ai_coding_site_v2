@@ -113,7 +113,12 @@ def push_child_session(
 
         record_id = uuid4()
         launch_plan = build_child_session_plan(parent_session_id=parent.id, session_id=record_id)
-        snapshot = adapter.create_session(launch_plan.session_name, launch_plan.command, launch_plan.working_directory)
+        snapshot = adapter.create_session(
+            launch_plan.session_name,
+            launch_plan.command,
+            launch_plan.working_directory,
+            environment=launch_plan.environment,
+        )
         adapter.send_input(launch_plan.session_name, delegated_prompt_text, press_enter=True)
         record = Session(
             id=record_id,

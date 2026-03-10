@@ -38,16 +38,17 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
 - Closed:
   - shared E2E harness fake default removed; tmux is now the default harness posture
   - `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py` no longer manually issues `subtask start`, `summary register`, `subtask complete`, or `workflow advance`; it now waits for live primary-session progress
-  - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` rewritten in place as a passing CLI-only real runtime narrative
+  - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` no longer manually issues `subtask start`, `summary register`, `subtask complete`, or `workflow advance`; it now waits for live leaf-task session progress
+  - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` now passes its real leaf-runtime slice after workspace-backed fixture setup, parent-request prompt propagation, corrected compiled-subtask guidance in the prompt, and tmux/Codex trust-prompt handling
   - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` rewritten to use parent child-materialization instead of forcing child readiness
   - `tests/e2e/test_flow_11_finalize_and_merge_real.py` rewritten to reach finalize and merge through real git/runtime progression instead of lifecycle forcing
   - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` rewritten to use real parent workflow start plus child materialization instead of forcing sibling readiness
+  - audit grep confirms no remaining `subtask start`, `subtask complete`, `subtask fail`, `summary register`, `session pop`, or `workflow advance` shortcut usage inside `tests/e2e/`; the only remaining operator mutation match is `respond-to-child-failure`, which is the intentional operator action under test in Flow 08
 - Open:
   - `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py` now exposes a real runtime gap: the primary tmux/Codex session can disappear without durable attempt, summary, or completed-subtask state being recorded
-  - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` still manually issues `subtask start`, `summary register`, `subtask complete`, and `workflow advance`; it is not acceptable as full real-workflow proof
-  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` still manually issues `subtask start` and `subtask fail`; it proves operator failure handling, not live child execution
-  - `tests/e2e/test_flow_09_run_quality_gates_real.py` still loops through manual `subtask complete` and `workflow advance` calls to reach quality stages; it is not acceptable as full real-workflow proof
-  - `tests/e2e/test_flow_13_human_gate_and_intervention_real.py` still loops through manual `subtask complete` and `workflow advance` calls to reach the human pause gate; it is not acceptable as full real-workflow proof
+  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` now exposes a real runtime gap: the live child tmux/Codex session stays `RUNNING`, emits unsupported CLI `--json` flags, and never records a durable failed child run for the parent to handle
+  - `tests/e2e/test_flow_09_run_quality_gates_real.py` now exposes a real runtime gap: the live runtime does not advance the node into a built-in quality gate, so `node quality-chain` remains blocked with a state conflict
+  - `tests/e2e/test_flow_13_human_gate_and_intervention_real.py` now exposes a real runtime gap: the primary tmux/Codex session can disappear before the run reaches the explicit `pause_for_user` gate
   - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` now exposes a real runtime/contract gap: after a failed compile, `workflow source-discovery` returns `compiled workflow not found` instead of remaining inspectable through the CLI
   - `tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py` now exposes a real runtime gap: the delegated child tmux session receives raw prompt text with an unresolved `{{node_id}}` placeholder and never produces a durable merge-back result
   - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` now exposes a real runtime gap: the dependency-blocked sibling is still admitted by `node run start` before the prerequisite sibling completes

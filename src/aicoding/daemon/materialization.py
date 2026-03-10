@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from uuid import UUID
 
 import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from aicoding.config import get_settings
 from aicoding.daemon.admission import add_node_dependency, check_node_dependency_readiness
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.hierarchy import create_hierarchy_node
@@ -105,6 +107,12 @@ class ChildReconciliationInspectionSnapshot:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedMaterializationLayout:
+    relative_path: str
+    content: str
+
+
 def materialize_layout_children(
     session_factory: sessionmaker[Session],
     registry: HierarchyRegistry,
@@ -123,12 +131,9 @@ def materialize_layout_children(
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
 
-        layout_relative_path = _default_layout_for_kind(parent_node.kind)
-        if layout_relative_path is None:
-            raise DaemonConflictError("no default layout is configured for this node kind")
-        loaded = resources.load_text("yaml_builtin_system", layout_relative_path)
-        layout_hash = sha256(loaded.content.encode("utf-8")).hexdigest()
-        parsed = yaml.safe_load(loaded.content)
+        resolved_layout = _resolve_materialization_layout(resources=resources, parent_kind=parent_node.kind)
+        layout_hash = sha256(resolved_layout.content.encode("utf-8")).hexdigest()
+        parsed = yaml.safe_load(resolved_layout.content)
         children_spec = list(parsed.get("children", []))
         if not children_spec:
             raise DaemonConflictError("layout has no children")
@@ -144,7 +149,7 @@ def materialize_layout_children(
             session.add(authority)
             session.flush()
         if authority.authority_mode in {"manual", "hybrid"}:
-            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=layout_relative_path, layout_hash=layout_hash, status="reconciliation_required", authority_mode=authority.authority_mode)
+            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=resolved_layout.relative_path, layout_hash=layout_hash, status="reconciliation_required", authority_mode=authority.authority_mode)
         existing_edges = session.execute(
             select(NodeChild).where(NodeChild.parent_node_version_id == parent_version.id).order_by(NodeChild.ordinal)
         ).scalars().all()
@@ -153,15 +158,15 @@ def materialize_layout_children(
                 session_factory,
                 logical_node_id=logical_node_id,
                 parent_version_id=parent_version.id,
-                layout_relative_path=layout_relative_path,
+                layout_relative_path=resolved_layout.relative_path,
                 layout_hash=layout_hash,
                 status="reconciliation_required",
                 authority_mode=authority.authority_mode,
             )
         if authority.authoritative_layout_hash == layout_hash and existing_edges:
-            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=layout_relative_path, layout_hash=layout_hash, status="already_materialized", authority_mode=authority.authority_mode)
+            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=resolved_layout.relative_path, layout_hash=layout_hash, status="already_materialized", authority_mode=authority.authority_mode)
         if existing_edges and authority.authoritative_layout_hash not in {None, layout_hash}:
-            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=layout_relative_path, layout_hash=layout_hash, status="replan_required", authority_mode=authority.authority_mode)
+            return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=resolved_layout.relative_path, layout_hash=layout_hash, status="replan_required", authority_mode=authority.authority_mode)
 
         created_children: list[MaterializedChildSnapshot] = []
         child_version_by_layout_id: dict[str, UUID] = {}
@@ -171,7 +176,7 @@ def materialize_layout_children(
                 registry,
                 kind=child_spec["kind"],
                 title=child_spec["name"],
-                prompt=child_spec["goal"],
+                prompt=_child_prompt_from_layout(parent_version=parent_version, child_spec=child_spec),
                 parent_node_id=logical_node_id,
             )
             seed_node_lifecycle(session_factory, node_id=str(created.node_id), initial_state="DRAFT")
@@ -214,7 +219,20 @@ def materialize_layout_children(
         authority.authoritative_layout_hash = layout_hash
         session.flush()
 
-    return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=layout_relative_path, layout_hash=layout_hash, status="created", authority_mode="layout_authoritative")
+    return _existing_materialization_snapshot(session_factory, logical_node_id=logical_node_id, parent_version_id=parent_version.id, layout_relative_path=resolved_layout.relative_path, layout_hash=layout_hash, status="created", authority_mode="layout_authoritative")
+
+
+def _child_prompt_from_layout(*, parent_version: NodeVersion, child_spec: dict[str, object]) -> str:
+    goal = str(child_spec.get("goal", "")).strip()
+    parent_prompt = parent_version.prompt.strip()
+    acceptance = [str(item).strip() for item in child_spec.get("acceptance", []) if str(item).strip()]
+    parts = [goal] if goal else []
+    if parent_prompt:
+        parts.extend(["", f"Parent {parent_version.node_kind.title()} Request:", parent_prompt])
+    if acceptance:
+        parts.extend(["", "Child Acceptance Criteria:"])
+        parts.extend(f"- {item}" for item in acceptance)
+    return "\n".join(parts).strip()
 
 
 def _existing_materialization_snapshot(
@@ -313,6 +331,25 @@ def _default_layout_for_kind(kind: str) -> str | None:
     }.get(kind)
 
 
+def _resolve_materialization_layout(*, resources: ResourceCatalog, parent_kind: str) -> ResolvedMaterializationLayout:
+    workspace_root = get_settings().workspace_root or Path.cwd()
+    generated_layout_path = workspace_root / "layouts" / "generated_layout.yaml"
+    if generated_layout_path.exists():
+        return ResolvedMaterializationLayout(
+            relative_path="layouts/generated_layout.yaml",
+            content=generated_layout_path.read_text(encoding="utf-8"),
+        )
+
+    layout_relative_path = _default_layout_for_kind(parent_kind)
+    if layout_relative_path is None:
+        raise DaemonConflictError("no default layout is configured for this node kind")
+    loaded = resources.load_text("yaml_builtin_system", layout_relative_path)
+    return ResolvedMaterializationLayout(
+        relative_path=layout_relative_path,
+        content=loaded.content,
+    )
+
+
 def _validate_layout_children(children_spec: list[dict[str, object]]) -> None:
     child_ids = [str(item.get("id", "")).strip() for item in children_spec]
     if any(not child_id for child_id in child_ids):
@@ -366,17 +403,14 @@ def inspect_materialized_children(
         parent_version = session.get(NodeVersion, selector.authoritative_node_version_id)
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
-        layout_relative_path = _default_layout_for_kind(parent_node.kind)
-        if layout_relative_path is None:
-            raise DaemonConflictError("no default layout is configured for this node kind")
-        loaded = resources.load_text("yaml_builtin_system", layout_relative_path)
-        layout_hash = sha256(loaded.content.encode("utf-8")).hexdigest()
+        resolved_layout = _resolve_materialization_layout(resources=resources, parent_kind=parent_node.kind)
+        layout_hash = sha256(resolved_layout.content.encode("utf-8")).hexdigest()
         authority = session.get(ParentChildAuthority, parent_version.id)
         if authority is None:
             return MaterializationResultSnapshot(
                 parent_node_id=logical_node_id,
                 parent_node_version_id=parent_version.id,
-                layout_relative_path=layout_relative_path,
+                layout_relative_path=resolved_layout.relative_path,
                 layout_hash=layout_hash,
                 status="not_materialized",
                 authority_mode="layout_authoritative",
@@ -396,7 +430,7 @@ def inspect_materialized_children(
             session_factory,
             logical_node_id=logical_node_id,
             parent_version_id=parent_version.id,
-            layout_relative_path=layout_relative_path,
+            layout_relative_path=resolved_layout.relative_path,
             layout_hash=layout_hash,
             status=status,
             authority_mode=authority.authority_mode,

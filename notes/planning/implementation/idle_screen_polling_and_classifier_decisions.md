@@ -12,8 +12,8 @@
 - The classifier uses pane-hash comparison plus idle-threshold timing rather than only `last_activity_at`.
 - `quiet` is a deliberate middle state:
   - unchanged pane below the idle threshold
-  - alt-screen suppression cases
-- `idle` is reserved for unchanged panes past the idle threshold, including first-sample cases where the threshold is already exceeded.
+  - stable panes that have not yet crossed the idle threshold, including alt-screen captures
+- `idle` is reserved for unchanged panes past the idle threshold, including first-sample cases where the threshold is already exceeded and stable alt-screen captures with no active-work markers.
 - Daemon-originated nudge text is treated as non-progress for the next classifier step so repeated bounded nudge behavior does not reset itself.
 
 ## Boundaries kept in place

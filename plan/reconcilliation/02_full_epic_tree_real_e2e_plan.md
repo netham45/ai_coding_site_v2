@@ -117,6 +117,14 @@ Optional helper or split suites if the single file becomes too large:
 
 The primary suite remains the authoritative proof target. Split files are only acceptable if they preserve one explicit feature-to-narrative mapping and do not dilute the claim.
 
+## Follow-On Expansion
+
+The git lifecycle expansion for this narrative is tracked separately in:
+
+- `plan/reconcilliation/05_full_epic_tree_git_lifecycle_expansion.md`
+
+That follow-on plan extends this runtime narrative from real leaf execution into hierarchy-wide git merge, rollback, redo, and conflict proof.
+
 ## Required Stage Coverage
 
 ### Stage 1: Epic startup

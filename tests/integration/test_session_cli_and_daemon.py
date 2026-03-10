@@ -159,6 +159,7 @@ def test_cli_subtask_prompt_and_context_include_stage_start_context(cli_runner, 
     assert prompt_result.json()["stage_context_json"]["startup"]["node_id"] == node_id
     assert prompt_result.json()["stage_context_json"]["startup"]["trigger_reason"] == "workflow_start"
     assert prompt_result.json()["prompt_text"]
+    assert "boot prompt" in prompt_result.json()["prompt_text"]
 
     assert context_result.exit_code == 0
     assert context_result.json()["stage_context_json"]["startup"]["node_prompt"] == "boot prompt"

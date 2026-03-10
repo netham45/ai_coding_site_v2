@@ -1,0 +1,20 @@
+kind: workflow_profile_definition
+id: task.implementation
+name: Implementation Task
+description: Change repository behavior or shipped assets for one bounded execution slice.
+applies_to_kind: task
+profile_family: task
+status: draft
+main_prompt_ref: prompts/task/implementation.md
+required_repository_updates:
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+metadata:
+  intent: implementation
+  maturity: starter_builtin

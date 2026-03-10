@@ -106,7 +106,7 @@ Use this section for direct feature-plan-to-checklist lookup.
 
 - Included feature plans: `plan/features/02_F01_configurable_node_hierarchy.md`, `plan/features/04_F07_durable_node_lifecycle_state.md`, `plan/features/05_F02_node_versioning_and_supersession.md`
 - Affected systems: Database, CLI, Daemon, YAML, Notes
-- Status: Database `implemented`; CLI `partial`; Daemon `implemented`; YAML `implemented`; Prompts `not_applicable`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_core_orchestration_runtime.py`, `tests/e2e/test_flow_01_create_top_level_node_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `partial`.
+- Status: Database `implemented`; CLI `partial`; Daemon `implemented`; YAML `implemented`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_core_orchestration_runtime.py`, `tests/e2e/test_flow_01_create_top_level_node_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `partial`.
 - Known limitations: Early real flow coverage exists for top-level creation, and a new full-tree skeleton now exercises real descent from epic toward tasks, but durable lifecycle, supersession, and post-merge hierarchy narratives still lack passing broader real-runtime suites.
 
 ## FC-03: YAML Schema Families
@@ -121,7 +121,7 @@ Use this section for direct feature-plan-to-checklist lookup.
 - Included feature plans: `plan/features/06_F27_source_document_lineage.md`, `plan/features/09_F35_project_policy_extensibility.md`, `plan/features/10_F06_override_and_merge_resolution.md`
 - Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
 - Status: Database `implemented`; CLI `partial`; Daemon `implemented`; YAML `implemented`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_compile_variants_and_diagnostics.py`, `tests/e2e/test_e2e_provenance_and_docs_real.py`; E2E status `planned`; Performance/resilience `planned`; Overall `partial`.
-- Known limitations: Override and lineage handling are covered by code and bounded tests, but the target real compile/provenance suites are still planned rather than present.
+- Known limitations: Override and lineage handling are covered by code and bounded tests, but the target real compile/provenance suites are still planned rather than present. The automated full-tree `cat` narrative now explicitly depends on a scoped parent decomposition selection path, and that scoping rule is planned in `notes/planning/implementation/automated_full_tree_cat_runtime_preimplementation_note.md` rather than implemented.
 
 ## FC-05: Compile Pipeline And Diagnostics
 
@@ -142,21 +142,21 @@ Use this section for direct feature-plan-to-checklist lookup.
 - Included feature plans: `plan/features/11_F08_dependency_graph_and_admission_control.md`, `plan/features/20_F15_child_node_spawning.md`, `plan/features/21_F16_manual_tree_construction.md`, `plan/features/64_F08_F15_richer_child_scheduling_and_blocker_explanation.md`, `plan/features/65_F04_layout_replacement_and_hybrid_reconciliation.md`
 - Affected systems: Database, CLI, Daemon, YAML, Notes
 - Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `implemented`; Prompts `not_applicable`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_flow_03_materialize_and_schedule_children_real.py`, `tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py`, `tests/e2e/test_e2e_dependency_and_child_materialization_real.py`, `tests/e2e/test_e2e_child_merge_and_reconciliation_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `implemented`.
-- Known limitations: The repo has real flow coverage for materialization and manual tree edits, and the new full-tree skeleton now drives one real epic -> phase -> plan -> task descent, but richer blocker explanation, hybrid reconciliation, and the full hierarchical merge story still rely on planned or expected-failing suites.
+- Known limitations: The repo has real flow coverage for materialization and manual tree edits, and the new full-tree skeleton now drives one real epic -> phase -> plan -> task descent, but richer blocker explanation, hybrid reconciliation, and the full hierarchical merge story still rely on planned or expected-failing suites. For the automated full-tree `cat` narrative specifically, parent-driven generated-layout authority and daemon-owned automatic child start are still planned rather than implemented.
 
 ## FC-08: Branching, Conflicts, And Live Mergeback
 
 - Included feature plans: `plan/features/12_F17_deterministic_branch_model.md`, `plan/features/22_F20_conflict_detection_and_resolution.md`, `plan/features/23_F18_child_merge_and_reconcile_pipeline.md`, `plan/features/71_F11_live_git_merge_and_finalize_execution.md`
 - Affected systems: Database, CLI, Daemon, Prompts, Notes
 - Status: Database `implemented`; CLI `partial`; Daemon `partial`; YAML `not_applicable`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_branch_identity_and_history_real.py`, `tests/e2e/test_e2e_merge_conflict_and_resolution_real.py`, `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`, `tests/e2e/test_e2e_child_merge_and_reconciliation_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `planned`; Performance/resilience `partial`; Overall `partial`.
-- Known limitations: Git-oriented code and bounded tests exist, and the full-tree suite now names the intended hierarchy-wide merge narrative, but the live branch, merge-conflict, finalize, and end-to-end mergeback stories are still not present as passing real suites.
+- Known limitations: Git-oriented code and bounded tests exist, and the repo now has real E2E proof for the live bootstrap/merge/finalize/status path, clean merged parent-repo file contents on disk, rerun reset/replay of the merge tier against new authoritative child finals, and conflict abort rollback back to seed via `tests/e2e/test_flow_11_finalize_and_merge_real.py` and `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`. It still lacks passing real suites that verify rollback/reset success through the `node rectify-upstream` rebuild path and resolved file contents after conflict reconciliation. The full-tree suite also still names, rather than proves, the hierarchy-wide merge narrative.
 
 ## FC-09: Node Run Orchestration And Result Capture
 
 - Included feature plans: `plan/features/13_F09_node_run_orchestration.md`, `plan/features/66_F05_execution_orchestration_and_result_capture.md`
 - Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
 - Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `implemented`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py`, `tests/e2e/test_e2e_core_orchestration_runtime.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `implemented`.
-- Known limitations: The repo now has a real Flow 05 checkpoint for the shipped durable run-control loop, and the full-tree skeleton now uses that control loop at the leaf task layer, but the broader core-orchestration runtime suite and hierarchy-wide mergeback path are still not present.
+- Known limitations: The repo now has a real Flow 05 checkpoint for the shipped durable run-control loop, and the full-tree skeleton now uses that control loop at the leaf task layer, but the broader core-orchestration runtime suite and hierarchy-wide mergeback path are still not present. For the automated full-tree `cat` narrative specifically, daemon-owned child auto-start and multi-tier parent decomposition remain planned rather than implemented.
 
 ## FC-10: AI CLI Runtime Surface
 
@@ -177,14 +177,14 @@ Use this section for direct feature-plan-to-checklist lookup.
 - Included feature plans: `plan/features/16_F12_session_binding_and_resume.md`, `plan/features/17_F34_provider_agnostic_session_recovery.md`, `plan/features/39_F12_tmux_session_manager.md`, `plan/features/50_F12_session_attach_resume_and_control_commands.md`, `plan/features/67_F12_provider_specific_session_recovery_surface.md`
 - Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
 - Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `partial`; Prompts `implemented`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_session_binding_and_resume_real.py`, `tests/e2e/test_e2e_tmux_session_runtime_real.py`, `tests/e2e/test_e2e_provider_recovery_real.py`; E2E status `planned`; Performance/resilience `partial`; Overall `implemented`.
-- Known limitations: Session binding and resume foundations are implemented, but the live primary-session tmux launch path still starts an interactive shell rather than a real Codex session, and the matrix still points to future real tmux and provider-recovery suites.
+- Known limitations: Session binding and resume foundations are implemented, including Codex-backed primary-session bind and recovery launch plans, but the matrix still points to future real tmux and provider-recovery suites and does not yet have dedicated passing E2E proof for live primary-session Codex launch behavior.
 
 ## FC-13: Idle Detection And Human Intervention Expansion
 
 - Included feature plans: `plan/features/18_F13_idle_detection_and_nudge_behavior.md`, `plan/features/40_F13_idle_screen_polling_and_classifier.md`, `plan/features/72_F13_expanded_human_intervention_matrix.md`
 - Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
 - Status: Database `partial`; CLI `partial`; Daemon `partial`; YAML `partial`; Prompts `implemented`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_tmux_session_runtime_real.py`, `tests/e2e/test_e2e_failure_escalation_and_intervention_real.py`; E2E status `planned`; Performance/resilience `partial`; Overall `partial`.
-- Known limitations: The repo contains idle and intervention code paths plus bounded coverage, but dedicated real tmux/Codex idle, nudge, repeated-idle, and live session-originated completion/failure E2E suites are still future work.
+- Known limitations: The repo contains idle and intervention code paths plus bounded coverage, but dedicated real tmux/Codex idle, nudge, repeated-idle, and live session-originated completion/failure E2E suites are still future work, and the first prompt-bootstrap E2E currently shows the primary session may exit before the expected prompt log is written.
 
 ## FC-14: Child Session Isolation And Optional Runtime Environments
 

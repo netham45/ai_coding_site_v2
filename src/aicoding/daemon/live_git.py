@@ -98,6 +98,7 @@ def bootstrap_live_git_repo(
         branch_name = _require_branch_name(version)
         node_id = version.logical_node_id
         base_version = _resolve_bootstrap_base_version(session, version, explicit_base_version_id=base_version_id)
+        target_seed_commit = version.seed_commit_sha
     if replace_existing and repo_path.exists():
         shutil.rmtree(repo_path)
     if base_version is None:
@@ -120,6 +121,7 @@ def bootstrap_live_git_repo(
             raise DaemonConflictError("base live git repo has not been bootstrapped")
         if base_version.seed_commit_sha is None:
             raise DaemonConflictError("base live git repo requires a recorded seed commit")
+        checkout_commit = target_seed_commit or base_version.seed_commit_sha
         repo_path.parent.mkdir(parents=True, exist_ok=True)
         clone_result = subprocess.run(
             ["git", "clone", "--no-hardlinks", str(parent_repo_path), str(repo_path)],
@@ -135,7 +137,7 @@ def bootstrap_live_git_repo(
         _git(repo_path, "config", "user.email", "aicoding@example.invalid")
         if _git_try(repo_path, "remote", "get-url", "origin").ok:
             _git(repo_path, "remote", "remove", "origin")
-        _git(repo_path, "checkout", "-B", branch_name, base_version.seed_commit_sha)
+        _git(repo_path, "checkout", "-B", branch_name, checkout_commit)
         for relative_path, content in sorted((files or {}).items()):
             target = repo_path / relative_path
             target.parent.mkdir(parents=True, exist_ok=True)

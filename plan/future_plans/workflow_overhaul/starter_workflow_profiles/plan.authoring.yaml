@@ -1,0 +1,50 @@
+kind: workflow_profile_definition
+id: plan.authoring
+name: Authoring Plan
+description: Produce or revise authoritative written artifacts with explicit verification expectations.
+applies_to_kind: plan
+profile_family: plan
+status: draft
+main_prompt_ref: prompts/plan/authoring.md
+default_child_layout: layouts/plan_authoring_to_tasks.yaml
+compatible_layouts:
+  - layouts/plan_authoring_to_tasks.yaml
+layout_tags:
+  - authoring
+  - documentation
+child_generation:
+  allowed_child_kinds: [task]
+  required_child_roles:
+    - author
+    - review
+    - finalize
+  allow_extra_roles: true
+  min_children: 1
+  max_children: 5
+  balance_strategy: estimated_points
+  max_point_skew_percent: 35
+child_profile_defaults:
+  author: task.docs
+  review: task.review
+  finalize: task.docs
+required_repository_updates:
+  - notes
+  - plan
+  - checklist
+  - development_log
+required_verification:
+  - document_schema
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/plan/global_brief.md
+  include_node_tier_prompt: true
+  include_profile_prompt: true
+  include_recommended_child_profiles: true
+  include_cli_discovery_note: true
+metadata:
+  intent: authoring
+  maturity: starter_builtin

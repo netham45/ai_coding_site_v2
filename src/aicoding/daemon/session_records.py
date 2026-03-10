@@ -3,16 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
+import time
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
+from aicoding.daemon.admission import admit_node_run, check_node_dependency_readiness
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.session_manager import build_primary_session_plan, build_recovery_primary_session_plan
 from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
-from aicoding.db.models import NodeRun, NodeRunState, NodeVersion, Session, SessionEvent
+from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeRun, NodeRunState, NodeVersion, Session, SessionEvent, SubtaskAttempt
 from aicoding.db.session import query_session_scope, session_scope
+from aicoding.hierarchy import HierarchyRegistry
+from aicoding.project_policies import resolve_effective_policy
+from aicoding.resources import ResourceCatalog
+from aicoding.rendering import build_render_context, render_text
 
 ACTIVE_SESSION_STATUSES = {"BOUND", "ATTACHED", "RESUMED", "RUNNING"}
 RECOVERABLE_SESSION_CLASSIFICATIONS = {
@@ -24,6 +30,13 @@ RECOVERABLE_SESSION_CLASSIFICATIONS = {
     "ambiguous",
     "non_resumable",
 }
+CODEX_WORKSPACE_TRUST_PROMPT = "Do you trust the contents of this directory?"
+CODEX_WORKSPACE_TRUST_ACCEPT_MARKER = "1. Yes, continue"
+_ACTIVE_WORK_MARKERS = (
+    "• Working (",
+    "Working (",
+    "Messages to be submitted after next tool call",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +290,26 @@ class SessionScreenStateSnapshot:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class AutoStartedChildSnapshot:
+    parent_node_id: UUID
+    child_node_id: UUID
+    readiness_status: str
+    admission_status: str
+    session_id: UUID | None
+    session_status: str | None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "parent_node_id": str(self.parent_node_id),
+            "child_node_id": str(self.child_node_id),
+            "readiness_status": self.readiness_status,
+            "admission_status": self.admission_status,
+            "session_id": None if self.session_id is None else str(self.session_id),
+            "session_status": self.session_status,
+        }
+
+
 def show_current_primary_session(
     session_factory: sessionmaker[OrmSession],
     *,
@@ -329,7 +362,12 @@ def bind_primary_session(
             session_id=durable_id,
             compiled_subtask_id=state.current_compiled_subtask_id,
         )
-        adapter_snapshot = adapter.create_session(launch_plan.session_name, launch_plan.command, launch_plan.working_directory)
+        adapter_snapshot = adapter.create_session(
+            launch_plan.session_name,
+            launch_plan.command,
+            launch_plan.working_directory,
+            environment=launch_plan.environment,
+        )
         durable = Session(
             id=durable_id,
             node_version_id=version.id,
@@ -360,6 +398,12 @@ def bind_primary_session(
                 "prompt_cli_command": launch_plan.prompt_cli_command,
                 "prompt_log_path": launch_plan.prompt_log_path,
             },
+        )
+        _accept_codex_workspace_trust_prompt(
+            session,
+            durable_id=durable.id,
+            adapter=adapter,
+            session_name=launch_plan.session_name,
         )
         session.flush()
         return _session_snapshot(session, durable, adapter=adapter, poller=poller)
@@ -548,7 +592,12 @@ def recover_primary_session(
             run_number=run.run_number,
             session_id=durable_id,
         )
-        adapter_snapshot = adapter.create_session(launch_plan.session_name, launch_plan.command, launch_plan.working_directory)
+        adapter_snapshot = adapter.create_session(
+            launch_plan.session_name,
+            launch_plan.command,
+            launch_plan.working_directory,
+            environment=launch_plan.environment,
+        )
         durable = Session(
             id=durable_id,
             node_version_id=version.id,
@@ -580,6 +629,12 @@ def recover_primary_session(
                 "prompt_cli_command": launch_plan.prompt_cli_command,
                 "prompt_log_path": launch_plan.prompt_log_path,
             },
+        )
+        _accept_codex_workspace_trust_prompt(
+            session,
+            durable_id=durable.id,
+            adapter=adapter,
+            session_name=launch_plan.session_name,
         )
         session.flush()
         from aicoding.daemon.run_orchestration import sync_resumed_run
@@ -775,6 +830,33 @@ def nudge_primary_session(
         screen_state = _classify_session_screen_state(session, current, adapter=adapter, poller=poller, persist=True)
         poll_result = poller.poll(current.tmux_session_name)
         latest_event_type = _latest_session_event_type(session, current.id)
+        if _current_subtask_has_registered_summary(session, run.id, state.current_compiled_subtask_id):
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {
+                    "reason": "summary_already_registered",
+                    "idle_seconds": poll_result.idle_seconds,
+                    "screen_classification": screen_state.classification,
+                    "screen_reason": screen_state.reason,
+                },
+            )
+            session.flush()
+            return SessionNudgeSnapshot(
+                node_id=logical_node_id,
+                session_id=current.id,
+                status="summary_registered",
+                action="none",
+                session_status=current.status,
+                idle_seconds=poll_result.idle_seconds,
+                in_alt_screen=poll_result.snapshot.in_alt_screen,
+                nudge_count=_nudge_event_count(session, current.id),
+                max_nudge_count=max_nudge_count,
+                prompt_relative_path=None,
+                pause_flag_name=state.pause_flag_name,
+                screen_state=screen_state.to_payload(),
+            )
         if (
             screen_state.classification == "active"
             and screen_state.reason == "pane_changed"
@@ -787,33 +869,6 @@ def nudge_primary_session(
                 reason="daemon_nudge_only_change",
             )
         nudge_count = _nudge_event_count(session, current.id)
-        if screen_state.in_alt_screen:
-            _record_session_event(
-                session,
-                current.id,
-                "nudge_suppressed",
-                {
-                    "reason": "alt_screen_active",
-                    "idle_seconds": poll_result.idle_seconds,
-                    "screen_classification": screen_state.classification,
-                    "screen_reason": screen_state.reason,
-                },
-            )
-            session.flush()
-            return SessionNudgeSnapshot(
-                node_id=logical_node_id,
-                session_id=current.id,
-                status="suppressed_alt_screen",
-                action="none",
-                session_status=current.status,
-                idle_seconds=poll_result.idle_seconds,
-                in_alt_screen=True,
-                nudge_count=nudge_count,
-                max_nudge_count=max_nudge_count,
-                prompt_relative_path=None,
-                pause_flag_name=state.pause_flag_name,
-                screen_state=screen_state.to_payload(),
-            )
         if screen_state.classification != "idle":
             _record_session_event(
                 session,
@@ -868,10 +923,10 @@ def nudge_primary_session(
                 screen_state=screen_state.to_payload(),
             )
         prompt_relative_path = "recovery/idle_nudge.md"
-        prompt_text = idle_nudge_text
+        prompt_text = _render_recovery_prompt(idle_nudge_text, logical_node_id=logical_node_id)
         if nudge_count + 1 >= max_nudge_count:
             prompt_relative_path = "recovery/repeated_missed_step.md"
-            prompt_text = repeated_nudge_text
+            prompt_text = _render_recovery_prompt(repeated_nudge_text, logical_node_id=logical_node_id)
         adapter.send_input(current.tmux_session_name, prompt_text, press_enter=True)
         current.last_heartbeat_at = datetime.now(timezone.utc)
         _record_session_event(
@@ -901,6 +956,179 @@ def nudge_primary_session(
             pause_flag_name=state.pause_flag_name,
             screen_state=screen_state.to_payload(),
         )
+
+
+def auto_nudge_idle_primary_sessions(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    adapter: SessionAdapter,
+    poller: SessionPoller,
+    max_nudge_count: int,
+    idle_nudge_text: str,
+    repeated_nudge_text: str,
+) -> list[SessionNudgeSnapshot]:
+    with query_session_scope(session_factory) as session:
+        logical_node_ids = [
+            row[0]
+            for row in session.execute(
+                select(NodeVersion.logical_node_id)
+                .join(Session, Session.node_version_id == NodeVersion.id)
+                .join(NodeRun, Session.node_run_id == NodeRun.id)
+                .where(
+                    Session.session_role == "primary",
+                    Session.status.in_(tuple(ACTIVE_SESSION_STATUSES)),
+                    NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")),
+                )
+                .distinct()
+            ).all()
+        ]
+
+    snapshots: list[SessionNudgeSnapshot] = []
+    for logical_node_id in logical_node_ids:
+        try:
+            screen_state = inspect_primary_session_screen_state(
+                session_factory,
+                logical_node_id=logical_node_id,
+                adapter=adapter,
+                poller=poller,
+                persist=True,
+            )
+        except (DaemonConflictError, DaemonNotFoundError):
+            continue
+        if screen_state.classification != "idle" or screen_state.reason != "unchanged_screen_past_idle_threshold":
+            continue
+        try:
+            session_snapshot = get_session_for_node(
+                session_factory,
+                logical_node_id=logical_node_id,
+                adapter=adapter,
+                poller=poller,
+            )
+        except Exception as exc:
+            _record_auto_nudge_failure(session_factory, logical_node_id=logical_node_id, phase="load_current_primary_session", exc=exc)
+            continue
+        if session_snapshot is None:
+            continue
+        reference = session_snapshot.last_heartbeat_at or session_snapshot.started_at
+        try:
+            reference_dt = _parse_iso8601(reference)
+        except Exception:
+            reference_dt = datetime.now(timezone.utc)
+        bootstrap_age_seconds = max((datetime.now(timezone.utc) - reference_dt).total_seconds(), 0.0)
+        bootstrap_grace_seconds = max(poller.idle_threshold_seconds * 2.0, 5.0)
+        if bootstrap_age_seconds < bootstrap_grace_seconds:
+            continue
+        try:
+            snapshot = nudge_primary_session(
+                session_factory,
+                logical_node_id=logical_node_id,
+                adapter=adapter,
+                poller=poller,
+                max_nudge_count=max_nudge_count,
+                idle_nudge_text=idle_nudge_text,
+                repeated_nudge_text=repeated_nudge_text,
+            )
+        except (DaemonConflictError, DaemonNotFoundError):
+            continue
+        except Exception as exc:
+            _record_auto_nudge_failure(session_factory, logical_node_id=logical_node_id, phase="nudge_primary_session", exc=exc)
+            continue
+        if snapshot.status in {"nudged", "escalated_to_pause"}:
+            snapshots.append(snapshot)
+    return snapshots
+
+
+def auto_bind_ready_child_runs(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    hierarchy_registry: HierarchyRegistry,
+    resources: ResourceCatalog,
+    adapter: SessionAdapter,
+    poller: SessionPoller,
+) -> list[AutoStartedChildSnapshot]:
+    effective_policy = resolve_effective_policy(resources, hierarchy_registry=hierarchy_registry)
+    auto_run_children_default = bool(effective_policy.defaults.get("auto_run_children", True))
+    candidate_pairs: list[tuple[UUID, UUID]] = []
+
+    with query_session_scope(session_factory) as session:
+        selectors = session.execute(select(LogicalNodeCurrentVersion)).scalars().all()
+        authoritative_node_ids_by_version = {
+            row.authoritative_node_version_id: row.logical_node_id for row in selectors
+        }
+        edges = session.execute(select(NodeChild).order_by(NodeChild.created_at)).scalars().all()
+        seen_children: set[UUID] = set()
+        for edge in edges:
+            parent_node_id = authoritative_node_ids_by_version.get(edge.parent_node_version_id)
+            child_node_id = authoritative_node_ids_by_version.get(edge.child_node_version_id)
+            if parent_node_id is None or child_node_id is None or child_node_id in seen_children:
+                continue
+            parent = session.get(HierarchyNode, parent_node_id)
+            if parent is None:
+                continue
+            parent_definition = hierarchy_registry.get(parent.kind)
+            auto_run_children = auto_run_children_default and parent_definition.policies.auto_run_children
+            if not auto_run_children:
+                continue
+            candidate_pairs.append((parent_node_id, child_node_id))
+            seen_children.add(child_node_id)
+
+    snapshots: list[AutoStartedChildSnapshot] = []
+    for parent_node_id, child_node_id in candidate_pairs:
+        readiness = check_node_dependency_readiness(session_factory, node_id=child_node_id)
+        if readiness.status != "ready":
+            snapshots.append(
+                AutoStartedChildSnapshot(
+                    parent_node_id=parent_node_id,
+                    child_node_id=child_node_id,
+                    readiness_status=readiness.status,
+                    admission_status="skipped",
+                    session_id=None,
+                    session_status=None,
+                )
+            )
+            continue
+        admission = admit_node_run(session_factory, node_id=child_node_id, trigger_reason="auto_run_child")
+        if admission.status != "admitted":
+            snapshots.append(
+                AutoStartedChildSnapshot(
+                    parent_node_id=parent_node_id,
+                    child_node_id=child_node_id,
+                    readiness_status=readiness.status,
+                    admission_status=admission.status,
+                    session_id=None,
+                    session_status=None,
+                )
+            )
+            continue
+        session_snapshot = bind_primary_session(
+            session_factory,
+            logical_node_id=child_node_id,
+            adapter=adapter,
+            poller=poller,
+        )
+        with session_scope(session_factory) as session:
+            _record_session_event(
+                session,
+                session_snapshot.session_id,
+                "auto_child_bound",
+                {
+                    "parent_node_id": str(parent_node_id),
+                    "child_node_id": str(child_node_id),
+                    "trigger_reason": "auto_run_child",
+                },
+            )
+            session.flush()
+        snapshots.append(
+            AutoStartedChildSnapshot(
+                parent_node_id=parent_node_id,
+                child_node_id=child_node_id,
+                readiness_status=readiness.status,
+                admission_status=admission.status,
+                session_id=session_snapshot.session_id,
+                session_status=session_snapshot.status,
+            )
+        )
+    return snapshots
 
 
 def get_session_for_node(
@@ -1042,6 +1270,28 @@ def _nudge_event_count(session: OrmSession, session_id: UUID) -> int:
     return int(count)
 
 
+def _current_subtask_has_registered_summary(
+    session: OrmSession,
+    node_run_id: UUID,
+    compiled_subtask_id: UUID | None,
+) -> bool:
+    if compiled_subtask_id is None:
+        return False
+    latest_attempt = session.execute(
+        select(SubtaskAttempt)
+        .where(
+            SubtaskAttempt.node_run_id == node_run_id,
+            SubtaskAttempt.compiled_subtask_id == compiled_subtask_id,
+        )
+        .order_by(SubtaskAttempt.attempt_number.desc())
+    ).scalars().first()
+    if latest_attempt is None:
+        return False
+    output_json = dict(latest_attempt.output_json or {})
+    registrations = output_json.get("registered_summaries")
+    return isinstance(registrations, list) and len(registrations) > 0
+
+
 def _require_run_state(session: OrmSession, node_run_id: UUID) -> NodeRunState:
     state = session.get(NodeRunState, node_run_id)
     if state is None:
@@ -1055,8 +1305,82 @@ def _invalidate_session(session: OrmSession, record: Session, *, status: str, re
     _record_session_event(session, record.id, "invalidated", {"reason": reason, "status": status})
 
 
+def _accept_codex_workspace_trust_prompt(
+    session: OrmSession,
+    *,
+    durable_id: UUID,
+    adapter: SessionAdapter,
+    session_name: str,
+) -> None:
+    if adapter.backend_name != "tmux" or not adapter.session_exists(session_name):
+        return
+    deadline = time.time() + 12.0
+    while time.time() < deadline:
+        pane_text = adapter.capture_pane(session_name, include_alt_screen=True)
+        if CODEX_WORKSPACE_TRUST_PROMPT not in pane_text or CODEX_WORKSPACE_TRUST_ACCEPT_MARKER not in pane_text:
+            time.sleep(0.25)
+            continue
+        adapter.send_input(session_name, "1", press_enter=True)
+        _record_session_event(
+            session,
+            durable_id,
+            "workspace_trust_prompt_accepted",
+            {
+                "tmux_session_name": session_name,
+                "prompt_text": CODEX_WORKSPACE_TRUST_PROMPT,
+            },
+        )
+        return
+
+
 def _record_session_event(session: OrmSession, session_id: UUID, event_type: str, payload: dict[str, object]) -> None:
     session.add(SessionEvent(id=uuid4(), session_id=session_id, event_type=event_type, payload_json=payload))
+
+
+def _record_auto_nudge_failure(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    phase: str,
+    exc: Exception,
+) -> None:
+    with session_scope(session_factory) as session:
+        try:
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+            current = _active_primary_session(session, run.id)
+        except (DaemonConflictError, DaemonNotFoundError):
+            return
+        if current is None:
+            return
+        _record_session_event(
+            session,
+            current.id,
+            "auto_nudge_failed",
+            {
+                "phase": phase,
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
+        session.flush()
+
+
+def _pane_active_work_marker(pane_text: str) -> str | None:
+    for marker in _ACTIVE_WORK_MARKERS:
+        if marker in pane_text:
+            return marker
+    return None
+
+
+def _render_recovery_prompt(template_text: str, *, logical_node_id: UUID) -> str:
+    context = build_render_context(
+        scopes={
+            "node": {"id": str(logical_node_id)},
+            "compat": {"node_id": str(logical_node_id)},
+        }
+    )
+    return render_text(template_text, context=context, field_name="prompt").rendered_text
 
 
 def _classify_session_screen_state(
@@ -1078,9 +1402,10 @@ def _classify_session_screen_state(
     if previous is not None:
         comparison_window = max((datetime.now(timezone.utc) - _parse_iso8601(previous.get("sampled_at"))).total_seconds(), 0.0)
     pane_changed = previous_pane_hash is None or previous_pane_hash != pane_hash
-    if poll_result.snapshot.in_alt_screen:
-        classification = "quiet"
-        reason = "alt_screen_active"
+    active_work_marker = _pane_active_work_marker(pane_text)
+    if active_work_marker is not None:
+        classification = "active"
+        reason = "active_work_indicator_present"
     elif pane_changed:
         if previous_pane_hash is None and poll_result.is_idle:
             classification = "idle"
@@ -1106,7 +1431,10 @@ def _classify_session_screen_state(
         comparison_window_seconds=comparison_window,
     )
     if persist:
-        _record_session_event(session, record.id, "screen_polled", snapshot.to_payload())
+        payload = snapshot.to_payload()
+        if active_work_marker is not None:
+            payload["active_work_marker"] = active_work_marker
+        _record_session_event(session, record.id, "screen_polled", payload)
     return snapshot
 
 

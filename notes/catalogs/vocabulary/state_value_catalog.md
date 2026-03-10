@@ -23,7 +23,7 @@ Related documents:
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/specs/cli/cli_surface_spec_v2.md`
 - `notes/contracts/parent_child/parent_failure_decision_spec.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 
 ---
 

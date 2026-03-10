@@ -8,6 +8,8 @@ from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
 from aicoding.daemon.session_records import (
+    CODEX_WORKSPACE_TRUST_ACCEPT_MARKER,
+    CODEX_WORKSPACE_TRUST_PROMPT,
     attach_primary_session,
     bind_primary_session,
     inspect_primary_session_screen_state,
@@ -75,6 +77,30 @@ def test_bind_attach_resume_and_list_sessions(db_session_factory, migrated_publi
     assert [item.event_type for item in events][:4] == ["bound", "attached", "recovery_attempted", "recovery_resumed_existing"]
     assert "launch_command" in events[0].payload_json
     assert events[0].payload_json["tmux_session_name"] == bound.tmux_session_name
+
+
+def test_bind_primary_session_accepts_codex_workspace_trust_prompt(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now, backend_name="tmux")
+    original_create_session = adapter.create_session
+
+    def create_session_with_trust_prompt(session_name: str, command: str, working_directory: str, environment=None):
+        snapshot = original_create_session(session_name, command, working_directory, environment)
+        adapter._sessions[session_name].pane_text = (
+            f"{CODEX_WORKSPACE_TRUST_PROMPT}\n\n{CODEX_WORKSPACE_TRUST_ACCEPT_MARKER}\n"
+        )
+        return snapshot
+
+    adapter.create_session = create_session_with_trust_prompt  # type: ignore[method-assign]
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    events = list_session_events(db_session_factory, session_id=bound.session_id)
+    pane_text = adapter.capture_pane(bound.tmux_session_name or "")
+
+    assert [item.event_type for item in events][:2] == ["bound", "workspace_trust_prompt_accepted"]
+    assert "1\n" in pane_text
 
 
 def test_show_current_primary_session_reports_binding_metadata_and_stale_recovery(
@@ -260,8 +286,8 @@ def test_screen_classifier_distinguishes_active_quiet_and_idle(db_session_factor
     assert quiet.reason == "unchanged_screen_within_threshold"
     assert idle.classification == "idle"
     assert idle.reason == "unchanged_screen_past_idle_threshold"
-    assert alt_screen.classification == "quiet"
-    assert alt_screen.reason == "alt_screen_active"
+    assert alt_screen.classification == "idle"
+    assert alt_screen.reason == "unchanged_screen_past_idle_threshold"
     assert [item.event_type for item in events if item.event_type == "screen_polled"] == ["screen_polled"] * 4
 
 
@@ -283,7 +309,9 @@ def test_recover_primary_session_rejects_non_resumable_run(db_session_factory, m
     assert decision.session is None
 
 
-def test_nudge_primary_session_skips_recent_or_alt_screen_sessions(db_session_factory, migrated_public_schema) -> None:
+def test_nudge_primary_session_skips_recent_sessions_and_allows_idle_alt_screen_sessions(
+    db_session_factory, migrated_public_schema
+) -> None:
     clock = FakeClock()
     adapter = FakeSessionAdapter(now=clock.now)
     poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
@@ -301,7 +329,7 @@ def test_nudge_primary_session_skips_recent_or_alt_screen_sessions(db_session_fa
     )
     adapter.set_alt_screen(bound.tmux_session_name or "", True)
     adapter.advance_idle(bound.tmux_session_name or "", seconds=30.0)
-    alt_screen = nudge_primary_session(
+    alt_screen_idle = nudge_primary_session(
         db_session_factory,
         logical_node_id=node.node_id,
         adapter=adapter,
@@ -315,10 +343,11 @@ def test_nudge_primary_session_skips_recent_or_alt_screen_sessions(db_session_fa
     assert recent.action == "none"
     assert recent.screen_state is not None
     assert recent.screen_state["classification"] in {"active", "quiet"}
-    assert alt_screen.status == "suppressed_alt_screen"
-    assert alt_screen.in_alt_screen is True
-    assert alt_screen.screen_state is not None
-    assert alt_screen.screen_state["reason"] == "alt_screen_active"
+    assert alt_screen_idle.status == "nudged"
+    assert alt_screen_idle.in_alt_screen is True
+    assert alt_screen_idle.screen_state is not None
+    assert alt_screen_idle.screen_state["classification"] == "idle"
+    assert alt_screen_idle.screen_state["reason"] == "unchanged_screen_past_idle_threshold"
 
 
 def test_nudge_primary_session_uses_repeated_prompt_then_escalates(db_session_factory, migrated_public_schema) -> None:

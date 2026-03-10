@@ -1,0 +1,54 @@
+kind: layout_definition
+id: plan_execution_to_tasks
+name: Execution Plan To Tasks
+description: Break an execution plan into implementation and verification tasks.
+profile: plan.execution
+compatible_workflow_profiles:
+  - plan.execution
+layout_tags:
+  - execution
+  - implementation
+children:
+  - id: implement
+    role: implement
+    workflow_profile: task.implementation
+    kind: task
+    tier: 3
+    name: Implement Slice
+    goal: Apply the concrete repository changes owned by the plan.
+    rationale: The main execution work should remain distinct from the proving pass.
+    artifact_targets:
+      - target code and config
+      - touched support artifacts
+    required_updates:
+      - checklist
+      - development_log
+    verification_commands:
+      - bounded verification commands for the implementation slice
+    estimated_points: 5
+    dependencies: []
+    acceptance:
+      - The intended implementation exists and is ready for proof.
+    ordinal: 1
+  - id: verify
+    role: verify
+    workflow_profile: task.verification
+    kind: task
+    tier: 3
+    name: Verify Slice
+    goal: Run the bounded proof and assess whether the implementation satisfies the declared contract.
+    rationale: Execution should close with proof rather than a code-only claim.
+    artifact_targets:
+      - verification commands
+      - resulting evidence
+    required_updates:
+      - checklist
+      - development_log
+    verification_commands:
+      - canonical bounded verification commands
+    estimated_points: 2
+    dependencies:
+      - implement
+    acceptance:
+      - The bounded proof passes or the residual failure is stated explicitly.
+    ordinal: 2

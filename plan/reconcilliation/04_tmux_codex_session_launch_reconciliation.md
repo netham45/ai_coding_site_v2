@@ -42,7 +42,7 @@ Read these note files before implementing or revising this phase:
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/specs/architecture/code_vs_yaml_delineation.md`
 - `notes/specs/prompts/prompt_library_plan.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/checklists/e2e_execution_policy.md`
 - `notes/planning/implementation/full_real_end_to_end_flow_hardening_plan.md`
@@ -101,24 +101,24 @@ Likely supporting files:
 Potential new helper surface:
 
 - a small Python bootstrap helper under `src/aicoding/daemon/` or `src/aicoding/runtime/` that:
-  - runs the canonical CLI prompt-export command for the bound node
-  - writes the prompt file under `./prompt_logs/<project_name>/...`
-  - executes the effective `codex --yolo "Please read the prompt from <path> and run the prompt"` command
+  - resolves the exact CLI command Codex should be instructed to run for the bound node
+  - writes the prompt file under `./prompt_logs/<project_name>/...` as a separate audit artifact
+  - executes the effective `codex --yolo "Please read the prompt from <cli command to run the tool to retrieve the prompt for the current stage> and run the prompt"` command
 
 ## Design Approach
 
-Use a code-owned bootstrap helper rather than embedding the full prompt-export and file-write logic directly into one shell-quoted tmux command string.
+Use a code-owned bootstrap helper rather than embedding the full CLI-command assembly and file-write logic directly into one shell-quoted tmux command string.
 
 The fresh-session path should become:
 
 1. daemon admits or reuses the active run
 2. daemon builds a launch plan that targets the bootstrap helper instead of `default_interactive_shell_command()`
 3. the bootstrap helper resolves the session working directory and project name
-4. the bootstrap helper calls the canonical CLI prompt export path for the current node and stage
-5. the bootstrap helper writes the prompt file under `./prompt_logs/<project_name>/...`
+4. the bootstrap helper derives the exact CLI command Codex should run to retrieve the current-stage prompt for the bound node
+5. the bootstrap helper writes the prompt file under `./prompt_logs/<project_name>/...` as an audit log of the prompt that same CLI command returns
 6. the bootstrap helper executes:
-   - `codex --yolo "Please read the prompt from <prompt_log_path> and run the prompt"`
-7. durable session state records the effective prompt-log path and Codex launch metadata
+   - `codex --yolo "Please read the prompt from <cli command to run the tool to retrieve the prompt for the current stage> and run the prompt"`
+7. durable session state records the effective prompt-log path, CLI retrieval command, and Codex launch metadata
 
 The dead-session resume path should become:
 
@@ -132,16 +132,15 @@ The dead-session resume path should become:
 
 The plan should not rely on tmux startup code scraping API JSON manually.
 
-Use one explicit CLI contract for current-stage prompt retrieval. Two acceptable implementation options are:
+Use one explicit CLI contract for current-stage prompt retrieval. The Codex instruction should reference that command directly, not the prompt-log path.
 
-- extend `subtask prompt --node <node_id>` with an export mode such as:
-  - `python3 -m aicoding.cli.main subtask prompt --node <node_id> --write-file <path>`
-- or add a dedicated export command such as:
-  - `python3 -m aicoding.cli.main subtask prompt-export --node <node_id> --output <path>`
+- keep `subtask prompt --node <node_id>` as the retrieval command Codex is instructed to run, while the bootstrap helper separately writes that command's output to disk
+- or extend `subtask prompt --node <node_id>` with a `--write-file <path>` option while still keeping the retrieval command itself as the thing Codex is told to run
 
 The implementation should prefer the option that:
 
 - avoids shell-redirection fragility
+- preserves the exact command contract the user specified for Codex
 - writes exactly the prompt payload intended for the current stage
 - is easy to assert in unit, integration, and E2E tests
 
@@ -175,6 +174,7 @@ At minimum the implementation should ensure that current session history can exp
 - the effective tmux session name
 - the effective working directory
 - the effective launch command
+- the exact CLI retrieval command referenced in the Codex instruction
 - the prompt-log path used for fresh launch, if applicable
 - the node, run, and compiled subtask identity associated with that launch
 
@@ -182,7 +182,7 @@ This can likely be satisfied by extending the existing `session_events` payload 
 
 ## Failure Handling Requirements
 
-- if prompt export fails, the session launch must fail explicitly and durably rather than dropping into an empty shell
+- if the CLI retrieval command cannot produce the current-stage prompt, the session launch must fail explicitly and durably rather than dropping into an empty shell
 - if prompt-log file creation fails, the session launch must fail explicitly and durably
 - if `codex` is unavailable on the host path, the bind or replacement operation must fail with an inspectable launch error
 - if `codex --yolo resume --last` fails, the system must preserve enough durable recovery evidence for an operator to diagnose the failed resume path
@@ -193,11 +193,12 @@ This can likely be satisfied by extending the existing `session_events` payload 
 - unit proof for fresh-session launch-plan construction
 - unit proof for dead-session resume-plan construction
 - unit proof for prompt-log path derivation and project-name derivation
-- integration proof for CLI prompt export or prompt-write command
+- integration proof for the CLI retrieval command and any `--write-file` support added to it
 - integration proof that session bind records launch metadata durably
 - real tmux E2E proof that the pane contains a Codex launch rather than `/bin/bash`
 - real E2E proof that the prompt file exists under `./prompt_logs/<project_name>/`
 - real E2E proof that the prompt file content matches the current-stage prompt surface
+- real E2E proof that the Codex launch instruction references the CLI retrieval command rather than the prompt-log path
 - real E2E proof that a dead tmux session results in a replacement launch using `codex --yolo resume --last`
 - real E2E follow-on proof in `test_e2e_full_epic_tree_runtime_real.py` that live Codex launch is now the decomposition boundary instead of a shell placeholder
 
@@ -233,25 +234,26 @@ Exit criteria:
 
 - the code-owned launch-plan contract is explicit and no longer shell-default
 
-### Phase 2: Add canonical prompt export
+### Phase 2: Add canonical prompt retrieval and logging
 
-- add or extend a CLI command that writes the exact current-stage prompt to a specified file path
+- keep one canonical CLI command for current-stage prompt retrieval and ensure the Codex launch instruction references that command directly
+- add or extend file-writing support so the same prompt is also written to a specified file path
 - ensure the command uses the authoritative current compiled subtask, not ad hoc recomposition
 - keep the exported payload aligned with the existing `subtask prompt --node <node_id>` surface
 
 Exit criteria:
 
-- one canonical CLI path can export the exact current-stage prompt to disk deterministically
+- one canonical CLI path can retrieve the exact current-stage prompt for Codex and write the same prompt to disk deterministically
 
 ### Phase 3: Add the Codex bootstrap helper
 
-- implement the helper that writes prompt logs and launches Codex for fresh sessions
+- implement the helper that assembles the CLI retrieval command, writes prompt logs, and launches Codex for fresh sessions
 - derive `project_name` deterministically from the working directory or another documented project identity
-- record prompt-log metadata durably during launch
+- record prompt-log metadata and CLI retrieval command metadata durably during launch
 
 Exit criteria:
 
-- a fresh tmux bind can create a prompt-log file and launch Codex with the intended instruction
+- a fresh tmux bind can create a prompt-log file and launch Codex with the intended CLI-based instruction
 
 ### Phase 4: Add the dead-session resume path
 
@@ -287,10 +289,11 @@ This phase is complete only when:
 
 1. fresh tmux session launch targets Codex rather than an interactive shell
 2. fresh launch writes the current-stage prompt under `./prompt_logs/<project_name>/`
-3. dead-session recovery uses `codex --yolo resume --last`
-4. launch and recovery metadata are durably inspectable
-5. bounded, integration, and real E2E tests prove the new behavior honestly
-6. the runtime and recovery notes no longer describe shell-only tmux launch as the intended model
+3. fresh launch instructs Codex to read the prompt from the CLI retrieval command rather than from the prompt-log path
+4. dead-session recovery uses `codex --yolo resume --last`
+5. launch and recovery metadata are durably inspectable
+6. bounded, integration, and real E2E tests prove the new behavior honestly
+7. the runtime and recovery notes no longer describe shell-only tmux launch as the intended model
 
 ## Initial Status
 

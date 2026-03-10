@@ -1,0 +1,88 @@
+kind: layout_definition
+id: phase_review_to_plans
+name: Review Phase To Plans
+description: Break a review phase into evidence, findings, and handoff plans.
+profile: phase.review
+compatible_workflow_profiles:
+  - phase.review
+layout_tags:
+  - review
+  - evidence
+  - findings
+children:
+  - id: evidence
+    role: evidence
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: Evidence Collection
+    goal: Inspect the declared surfaces and gather the raw proof needed for judgments.
+    rationale: Review quality depends on concrete evidence before conclusions are written.
+    expected_outputs:
+      - command results
+      - evidence notes
+    artifact_targets:
+      - inspected surfaces
+      - command outputs
+    required_updates:
+      - notes
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 2
+    dependencies: []
+    acceptance:
+      - The review boundary has enough evidence to support explicit findings.
+    ordinal: 1
+  - id: findings
+    role: findings
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Findings Authoring
+    goal: Turn the gathered evidence into explicit findings and severity-ordered conclusions.
+    rationale: Review output should be inspectable rather than implied by raw command logs.
+    expected_outputs:
+      - findings note
+      - gap list
+    artifact_targets:
+      - review notes
+      - finding inventory
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies:
+      - evidence
+    acceptance:
+      - Findings are explicit, evidence-backed, and ready for remediation planning.
+    ordinal: 2
+  - id: handoff
+    role: handoff
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Remediation Handoff
+    goal: Translate accepted findings into a remediation-ready taskable handoff.
+    rationale: Downstream remediation should not need to rediscover the review intent.
+    expected_outputs:
+      - remediation handoff
+      - scope update
+    artifact_targets:
+      - handoff note
+      - checklist updates
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 1
+    dependencies:
+      - findings
+    acceptance:
+      - Downstream remediation can proceed without repeating the review pass.
+    ordinal: 3

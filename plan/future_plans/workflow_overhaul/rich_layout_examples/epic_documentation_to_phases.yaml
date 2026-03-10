@@ -1,0 +1,104 @@
+kind: layout_definition
+id: epic_documentation_to_phases
+name: Documentation Epic To Phases
+description: Documentation-oriented epic breakdown for inventory, authoring, verification, and remediation.
+profile: epic.documentation
+compatible_workflow_profiles:
+  - epic.documentation
+layout_tags:
+  - documentation
+  - inventory
+  - remediation
+children:
+  - id: inventory
+    role: inventory
+    workflow_profile: phase.discovery
+    kind: phase
+    tier: 1
+    name: Inventory
+    goal: Identify the document families, gaps, and stale surfaces in scope.
+    rationale: Documentation remediation should begin from an explicit inventory.
+    expected_outputs:
+      - inventory note
+      - gap list
+    required_updates:
+      - notes
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies: []
+    acceptance:
+      - The documentation surface in scope is enumerated with key gaps.
+    ordinal: 1
+  - id: authoring
+    role: authoring
+    workflow_profile: phase.documentation
+    kind: phase
+    tier: 1
+    name: Authoring
+    goal: Add or revise the target docs.
+    rationale: Writing should stay distinct from the inventory pass and the proving pass.
+    expected_outputs:
+      - note updates
+      - command updates
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 4
+    dependencies:
+      - inventory
+    acceptance:
+      - Target docs are updated to match intended behavior and vocabulary.
+    ordinal: 2
+  - id: verification
+    role: verification
+    workflow_profile: phase.documentation
+    kind: phase
+    tier: 1
+    name: Verification
+    goal: Run the relevant document-schema and consistency surfaces.
+    rationale: Authoritative docs should be proven, not trusted by prose quality alone.
+    expected_outputs:
+      - verification results
+      - status updates
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies:
+      - authoring
+    acceptance:
+      - Canonical doc-consistency commands pass for the changed scope.
+    ordinal: 3
+  - id: remediation
+    role: remediation
+    workflow_profile: phase.remediation
+    kind: phase
+    tier: 1
+    name: Remediation
+    goal: Resolve mismatches discovered by verification or review.
+    rationale: Documentation work often exposes follow-on fixes that need a distinct closure pass.
+    expected_outputs:
+      - corrected docs
+      - corrected status surfaces
+    artifact_targets:
+      - changed docs
+      - status surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies:
+      - verification
+    acceptance:
+      - Newly found mismatches are resolved or deferred explicitly.
+    ordinal: 4

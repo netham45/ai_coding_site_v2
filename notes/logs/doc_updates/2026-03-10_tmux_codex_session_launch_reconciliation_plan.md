@@ -45,3 +45,20 @@
   - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py -q`
 - Result: The new planning artifacts were added and the task-plan/document-schema checks passed for the affected document families.
 - Next step: Implement the Codex-aware launch-plan builder, prompt-export helper, durable prompt-log metadata, and the `resume --last` recovery path described in the reconciliation plan.
+
+## Entry 3
+
+- Timestamp: 2026-03-10
+- Task ID: tmux_codex_session_launch_reconciliation
+- Task title: Tmux Codex session launch reconciliation plan
+- Status: changed_plan
+- Affected systems: database, CLI, daemon, YAML, prompts, tests, notes, development logs
+- Summary: Corrected the reconciliation plan after discovering it had drifted from the explicit requested launch contract by telling Codex to read the prompt from the prompt-log path instead of from the CLI command.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-10_tmux_codex_session_launch_reconciliation.md`
+  - `plan/reconcilliation/04_tmux_codex_session_launch_reconciliation.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `rg -n "prompt_log_path|Please read the prompt from <prompt_log_path>|prompt export|prompt-export|write the prompt to" plan/reconcilliation/04_tmux_codex_session_launch_reconciliation.md plan/tasks/2026-03-10_tmux_codex_session_launch_reconciliation.md notes/logs/doc_updates/2026-03-10_tmux_codex_session_launch_reconciliation_plan.md -S`
+- Result: The plan now preserves the requested command contract: Codex should be told to read the prompt from the CLI retrieval command, while prompt-file writing remains a separate audit/logging side effect under `./prompt_logs/<project_name>/`.
+- Next step: Continue implementation against the corrected plan and re-run the affected document and session tests.

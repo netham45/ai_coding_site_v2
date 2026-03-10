@@ -1,0 +1,121 @@
+kind: layout_definition
+id: epic_feature_to_phases
+name: Feature Epic To Phases
+description: Standard feature-delivery epic breakdown.
+profile: epic.feature
+compatible_workflow_profiles:
+  - epic.feature
+layout_tags:
+  - implementation_heavy
+  - requires_docs_band
+  - requires_real_e2e_band
+children:
+  - id: discovery
+    role: discovery
+    workflow_profile: phase.discovery
+    kind: phase
+    tier: 1
+    name: Discovery And Scope
+    goal: Converge requirements, invariants, risks, and implementation boundaries.
+    rationale: Implementation should not begin before the feature contract is explicit.
+    expected_outputs:
+      - notes updates
+      - task plan
+      - checklist update
+    artifact_targets:
+      - notes
+      - plan
+      - checklist
+    required_updates:
+      - notes
+      - plan
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 3
+    dependencies: []
+    acceptance:
+      - Required notes are updated for new constraints or ambiguities.
+      - The implementation boundary is explicit enough to hand off to execution plans.
+    ordinal: 1
+  - id: implementation
+    role: implementation
+    workflow_profile: phase.implementation
+    kind: phase
+    tier: 1
+    name: Implementation
+    goal: Deliver the code and bounded proof.
+    rationale: Runtime work should stay distinct from discovery and proving.
+    expected_outputs:
+      - code changes
+      - bounded tests
+    artifact_targets:
+      - code
+      - bounded proof surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 8
+    dependencies:
+      - discovery
+    acceptance:
+      - The feature is implemented with bounded proof.
+    ordinal: 2
+  - id: docs
+    role: documentation
+    workflow_profile: phase.documentation
+    kind: phase
+    tier: 1
+    name: Documentation Alignment
+    goal: Bring notes, commands, and checklists in line with implemented behavior.
+    rationale: The repository forbids undocumented behavior drift.
+    expected_outputs:
+      - notes updates
+      - checklist updates
+      - command updates
+    artifact_targets:
+      - notes
+      - checklist
+      - command surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 3
+    dependencies:
+      - implementation
+    acceptance:
+      - Notes and checklists match actual behavior.
+    ordinal: 3
+  - id: e2e
+    role: e2e
+    workflow_profile: phase.e2e
+    kind: phase
+    tier: 1
+    name: Real E2E Verification
+    goal: Prove the feature through the intended runtime boundaries.
+    rationale: Implemented is not complete without real E2E proof.
+    expected_outputs:
+      - e2e tests
+      - verification results
+    artifact_targets:
+      - e2e coverage surfaces
+      - runtime evidence
+    required_updates:
+      - checklist
+      - development_log
+      - e2e_mapping
+    verification_targets:
+      - real_e2e
+    estimated_points: 5
+    dependencies:
+      - implementation
+      - docs
+    acceptance:
+      - Canonical E2E commands pass for the intended scope.
+    ordinal: 4

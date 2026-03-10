@@ -16,7 +16,7 @@ This note is the missing prompt-layer counterpart to:
 - `notes/catalogs/inventory/default_yaml_library_plan.md`
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/planning/expansion/review_testing_docs_yaml_plan.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#prompt-bootstrap-and-prompt-log-contract`
 - `notes/contracts/parent_child/parent_failure_decision_spec.md`
 
 Implementation staging note:
@@ -35,6 +35,7 @@ Implementation staging note:
 - compile-time prompt rendering now uses a shared daemon renderer with deterministic scope precedence; rendered prompt text is frozen into compiled subtasks and durable prompt history, while prompt-template source lineage remains separate for auditability
 - the frozen render stage is now inspectable directly through `workflow rendering`, so prompt-pack debugging does not require opening the full compiled workflow payload
 - prompt-reference YAML is now schema-validated as its own rigid family: keys must use dotted identifiers, values must be prompt-pack-relative markdown paths, and referenced prompt assets must exist in the packaged prompt roots
+- the execution prompt now treats an explicit node-authored wait-for-nudge instruction as higher priority than the default leaf-task CLI workflow, and it forbids replacing that wait with shell activity such as `sleep`, slash commands, polling, or background terminals; the only allowed pre-nudge output is at most one short visible operator-facing wait-status line that is not durably registered as a summary
 
 ---
 
@@ -500,6 +501,7 @@ Implementation staging note:
 - `ai-tool session show-current` now returns the durable node binding (`logical_node_id`, `node_kind`, `node_title`, `run_status`) plus `recovery_classification`, so bootstrap prompts can tell whether the session is healthy or stale before fetching stage work
 - `ai-tool subtask prompt --node <node_id>` and `ai-tool subtask context --node <node_id>` now both expose `stage_context_json`, which carries durable startup metadata, current compiled-stage metadata, dependency summaries/blockers, recent prompt/summary history, and cursor-carried child/reconcile context for prompt consumers
 - `ai-tool subtask context --node <node_id>` also mirrors that same bundle under `input_context_json.stage_context_json` so prompts or helper layers that already read context payloads do not need a separate bootstrap fetch path
+- the shipped execution prompt now renders the original node request directly into the compiled prompt body through `{{node.prompt}}`, so a live tmux/Codex session receives the user/task request even before it decides whether to fetch extra context
 
 When finished successfully:
 - register any required summary with `ai-tool summary register ...` if needed
@@ -508,9 +510,11 @@ When finished successfully:
 Implementation staging note:
 
 - `summary register` is now a real durable command and now writes a dedicated `summaries` history row
+- shipped execution prompts must stay within the bounded durable summary taxonomy; implementation-stage summaries currently register as `subtask`, not a separate `implementation` type
 - the active attempt still mirrors registered summary metadata for compatibility with existing runtime and validation flows
 - in the current implementation, completion records the attempt result but does not itself move the cursor
 - the next stage becomes active only after `ai-tool workflow advance --node <node_id>`
+- `--result-file` on `subtask complete` and `subtask fail` is for structured execution-result payloads, so prompt examples should only point it at valid JSON files
 
 Prompt-delivery note:
 

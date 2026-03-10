@@ -2,7 +2,7 @@
 
 ## Goal
 
-Create the initial real end-to-end skeleton for the full epic-tree runtime narrative so one test can start from an epic, materialize down through phase, plan, and task nodes, execute a leaf task through the real runtime path, and then fail honestly at the still-missing mergeback and rectification stages.
+Create the initial real end-to-end runtime suite for the full epic-tree narrative so one test can start from an epic, materialize down through phase, plan, and task nodes, execute a leaf task through the live tmux/Codex runtime path in a real workspace, and leave mergeback and rectification expansion as the next follow-on stage.
 
 ## Rationale
 
@@ -42,7 +42,7 @@ Read these note files before implementing or revising this phase:
 - Daemon: verify real API responses alongside CLI results for node, workflow, child, and current-subtask surfaces.
 - YAML: exercise the shipped built-in hierarchy and default layouts for `epic`, `phase`, `plan`, and `task`.
 - Prompts: verify prompt delivery and context retrieval through the task runtime path.
-- Tests: add `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` as an expected-failing narrative skeleton.
+- Tests: add and harden `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` as the real leaf-runtime narrative target before later mergeback/rectification expansion.
 - Performance: not a proving target for this task; keep the skeleton diagnostically small and bounded enough to iterate on.
 - Notes: update the E2E target matrix, checklist backfill, command catalog, and development logs so the new suite is tracked honestly.
 
@@ -53,7 +53,7 @@ Read these note files before implementing or revising this phase:
 
 ## Exit Criteria
 
-- `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` exists and reaches real epic -> phase -> plan -> task interactions before failing honestly at the unfinished mergeback/rectification portion.
+- `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` passes through real epic -> phase -> plan -> task interactions and real leaf-task tmux/Codex execution in a workspace-backed runtime slice.
 - The skeleton contains explicit CLI, daemon, and direct database assertions instead of proving only one system surface.
 - The new suite is mapped in the authoritative E2E planning and checklist notes.
-- A development log records the task start and the resulting stop point or partial status.
+- A development log records the task start, the runtime blockers discovered during bring-up, and the resulting partial status for the still-unfinished mergeback/rectification expansion.

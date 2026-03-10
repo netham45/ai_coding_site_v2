@@ -1,0 +1,60 @@
+kind: layout_definition
+id: phase_implementation_to_plans
+name: Implementation Phase To Plans
+description: Break an implementation phase into execution and verification plans.
+profile: phase.implementation
+compatible_workflow_profiles:
+  - phase.implementation
+layout_tags:
+  - implementation
+  - bounded_proof
+children:
+  - id: execution
+    role: execution
+    workflow_profile: plan.execution
+    kind: plan
+    tier: 2
+    name: Execution
+    goal: Deliver the intended code or runtime behavior change.
+    rationale: The main implementation work should stay distinct from the proving pass.
+    expected_outputs:
+      - code changes
+      - runtime behavior changes
+    artifact_targets:
+      - code
+      - runtime behavior surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 5
+    dependencies: []
+    acceptance:
+      - The intended implementation exists.
+    ordinal: 1
+  - id: verification
+    role: verification
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: Verification
+    goal: Prove the implementation through the named bounded surfaces.
+    rationale: Implementation is not credibly done without proof.
+    expected_outputs:
+      - test results
+      - status update
+    artifact_targets:
+      - bounded test outputs
+      - status surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 2
+    dependencies:
+      - execution
+    acceptance:
+      - The canonical bounded verification commands pass.
+    ordinal: 2

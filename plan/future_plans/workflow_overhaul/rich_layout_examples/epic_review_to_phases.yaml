@@ -1,0 +1,110 @@
+kind: layout_definition
+id: epic_review_to_phases
+name: Review Epic To Phases
+description: Review-oriented epic breakdown for scope freeze, review, remediation, and re-review.
+profile: epic.review
+compatible_workflow_profiles:
+  - epic.review
+layout_tags:
+  - review
+  - remediation
+  - re_review
+children:
+  - id: scope_freeze
+    role: scope_freeze
+    workflow_profile: phase.review
+    kind: phase
+    tier: 1
+    name: Scope Freeze
+    goal: Fix the review scope, assumptions, and evidence surface before findings begin.
+    rationale: Review quality collapses when the target keeps changing mid-pass.
+    expected_outputs:
+      - review scope note
+      - target inventory
+    required_updates:
+      - notes
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 2
+    dependencies: []
+    acceptance:
+      - The review target and assumptions are explicit.
+    ordinal: 1
+  - id: review
+    role: review
+    workflow_profile: phase.discovery
+    kind: phase
+    tier: 1
+    name: Review
+    goal: Gather findings, risks, regressions, and proving gaps.
+    rationale: Evidence should be gathered before remediation starts.
+    expected_outputs:
+      - findings
+      - gap list
+    artifact_targets:
+      - review target surfaces
+      - finding inventory
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 4
+    dependencies:
+      - scope_freeze
+    acceptance:
+      - Findings are explicit and severity-ordered.
+    ordinal: 2
+  - id: remediation
+    role: remediation
+    workflow_profile: phase.remediation
+    kind: phase
+    tier: 1
+    name: Remediation
+    goal: Resolve the accepted findings.
+    rationale: Fixes should remain distinct from the review pass that discovered them.
+    expected_outputs:
+      - code changes
+      - note updates
+    artifact_targets:
+      - remediated surfaces
+      - status notes
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 5
+    dependencies:
+      - review
+    acceptance:
+      - Accepted findings are remediated with proof.
+    ordinal: 3
+  - id: re_review
+    role: re_review
+    workflow_profile: phase.review
+    kind: phase
+    tier: 1
+    name: Re-Review
+    goal: Confirm the remediation and update the final review state honestly.
+    rationale: Review loops should close explicitly rather than assuming fixes are sufficient.
+    expected_outputs:
+      - re-review result
+      - checklist update
+    artifact_targets:
+      - re-review evidence
+      - checklist surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - bounded_tests
+    estimated_points: 2
+    dependencies:
+      - remediation
+    acceptance:
+      - The remediated scope is re-checked and remaining gaps are stated explicitly.
+    ordinal: 4

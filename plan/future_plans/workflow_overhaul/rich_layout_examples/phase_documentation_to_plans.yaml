@@ -1,0 +1,61 @@
+kind: layout_definition
+id: phase_documentation_to_plans
+name: Documentation Phase To Plans
+description: Break a documentation phase into authoring and verification plans.
+profile: phase.documentation
+compatible_workflow_profiles:
+  - phase.documentation
+layout_tags:
+  - documentation
+  - alignment
+children:
+  - id: authoring
+    role: authoring
+    workflow_profile: plan.authoring
+    kind: plan
+    tier: 2
+    name: Documentation Authoring
+    goal: Update notes, commands, and checklists to match reality.
+    rationale: Documentation alignment starts with explicit authorship work.
+    expected_outputs:
+      - note updates
+      - checklist updates
+    artifact_targets:
+      - notes
+      - checklist surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 3
+    dependencies: []
+    acceptance:
+      - The changed documentation reflects actual intended behavior.
+    ordinal: 1
+  - id: verification
+    role: verification
+    workflow_profile: plan.verification
+    kind: plan
+    tier: 2
+    name: Documentation Verification
+    goal: Prove the changed documentation surface through the relevant checks.
+    rationale: Authoritative docs should be tested after change.
+    expected_outputs:
+      - verification results
+      - status updates
+    artifact_targets:
+      - verification outputs
+      - status surfaces
+    required_updates:
+      - checklist
+      - development_log
+    verification_targets:
+      - document_schema
+    estimated_points: 1
+    dependencies:
+      - authoring
+    acceptance:
+      - The canonical document checks pass for the changed scope.
+    ordinal: 2

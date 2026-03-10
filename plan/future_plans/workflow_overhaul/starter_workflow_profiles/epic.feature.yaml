@@ -1,0 +1,50 @@
+kind: workflow_profile_definition
+id: epic.feature
+name: Feature Epic
+description: Deliver a feature through discovery, implementation, docs alignment, and real proof.
+applies_to_kind: epic
+profile_family: epic
+status: draft
+main_prompt_ref: prompts/epic/feature.md
+default_child_layout: layouts/epic_feature_to_phases.yaml
+compatible_layouts:
+  - layouts/epic_feature_to_phases.yaml
+layout_tags:
+  - feature_delivery
+  - requires_docs_band
+  - requires_real_e2e_band
+child_generation:
+  allowed_child_kinds: [phase]
+  required_child_roles:
+    - discovery
+    - implementation
+    - documentation
+    - e2e
+  allow_extra_roles: true
+  min_children: 4
+  max_children: 8
+  balance_strategy: estimated_points
+  max_point_skew_percent: 35
+child_profile_defaults:
+  discovery: phase.discovery
+  implementation: phase.implementation
+  documentation: phase.documentation
+  e2e: phase.e2e
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+  - real_e2e
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - complete
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/epic/global_brief.md
+metadata:
+  intent: feature_delivery
+  maturity: starter_builtin

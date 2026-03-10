@@ -4,6 +4,14 @@
 
 This document defines the recovery model for interrupted node runs and their sessions.
 
+Authoritative tmux lifecycle and recovery doctrine now lives in:
+
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#replacement-and-resume-contract`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#durable-records-and-audit-surface`
+
+This appendix is retained as legacy supporting detail and historical context.
+
 The system already assumes:
 
 - one active run per node version
@@ -23,6 +31,7 @@ This appendix makes the recovery model explicit enough to support:
 
 Related documents:
 
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md`
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
 - `notes/specs/runtime/node_lifecycle_spec_v2.md`
 - `notes/specs/database/database_schema_spec_v2.md`

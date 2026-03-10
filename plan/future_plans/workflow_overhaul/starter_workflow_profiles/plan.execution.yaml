@@ -1,0 +1,46 @@
+kind: workflow_profile_definition
+id: plan.execution
+name: Execution Plan
+description: Deliver one concrete implementation slice through bounded task work packets.
+applies_to_kind: plan
+profile_family: plan
+status: draft
+main_prompt_ref: prompts/plan/execution.md
+default_child_layout: layouts/plan_execution_to_tasks.yaml
+compatible_layouts:
+  - layouts/plan_execution_to_tasks.yaml
+layout_tags:
+  - execution
+  - implementation
+child_generation:
+  allowed_child_kinds: [task]
+  required_child_roles:
+    - implement
+    - verify
+  allow_extra_roles: true
+  min_children: 1
+  max_children: 6
+  balance_strategy: estimated_points
+  max_point_skew_percent: 45
+child_profile_defaults:
+  implement: task.implementation
+  verify: task.verification
+required_repository_updates:
+  - checklist
+  - development_log
+required_verification:
+  - bounded_tests
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/plan/global_brief.md
+  include_node_tier_prompt: true
+  include_profile_prompt: true
+  include_recommended_child_profiles: true
+  include_cli_discovery_note: true
+metadata:
+  intent: execution
+  maturity: starter_builtin

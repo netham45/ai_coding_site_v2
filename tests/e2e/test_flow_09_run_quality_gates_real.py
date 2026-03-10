@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
+
+
+def _tmux_capture(session_name: str) -> str:
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"[tmux capture failed] {result.stderr.strip()}"
+    return result.stdout
 
 
 def _write_workspace_quality_inputs(workspace_root) -> None:
@@ -83,6 +98,8 @@ def _write_workspace_quality_inputs(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
     _write_workspace_quality_inputs(real_daemon_harness.workspace_root)
 
@@ -99,39 +116,37 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     assert start_result.exit_code == 0, start_result.stderr
     start_payload = start_result.json()
     node_id = str(start_payload["node"]["node_id"])
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    bind_payload = bind_result.json()
+    session_name = str(bind_payload["session_name"])
 
-    while True:
-        current_result = real_daemon_harness.cli("subtask", "current", "--node", node_id)
-        assert current_result.exit_code == 0, current_result.stderr
-        current_payload = current_result.json()
-        current_subtask = current_payload["current_subtask"]
-        if current_subtask["subtask_type"] == "validate":
+    quality_chain_payload = None
+    last_run_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
+        run_show_result = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        quality_chain_result = real_daemon_harness.cli("node", "quality-chain", "--node", node_id)
+        assert run_show_result.exit_code == 0, run_show_result.stderr
+        assert quality_chain_result.exit_code == 0, quality_chain_result.stderr
+        last_run_payload = run_show_result.json()
+        quality_chain_payload = quality_chain_result.json()
+        last_pane_text = _tmux_capture(session_name)
+        if quality_chain_payload["run_status"] == "COMPLETE":
             break
-        compiled_subtask_id = str(current_payload["state"]["current_compiled_subtask_id"])
-        start_subtask_result = real_daemon_harness.cli(
-            "subtask",
-            "start",
-            "--node",
-            node_id,
-            "--compiled-subtask",
-            compiled_subtask_id,
-        )
-        complete_result = real_daemon_harness.cli(
-            "subtask",
-            "complete",
-            "--node",
-            node_id,
-            "--compiled-subtask",
-            compiled_subtask_id,
-            "--summary",
-            "advance to quality gate",
-        )
-        advance_result = real_daemon_harness.cli("workflow", "advance", "--node", node_id)
-        assert start_subtask_result.exit_code == 0, start_subtask_result.stderr
-        assert complete_result.exit_code == 0, complete_result.stderr
-        assert advance_result.exit_code == 0, advance_result.stderr
+        time.sleep(2.0)
 
-    quality_chain_result = real_daemon_harness.cli("node", "quality-chain", "--node", node_id)
+    assert quality_chain_payload is not None
+    assert last_run_payload is not None
+    assert quality_chain_payload["run_status"] == "COMPLETE", (
+        "Expected the real primary tmux/Codex session to drive the node through the quality chain without manual "
+        "subtask completion or workflow advancement from the test.\n"
+        f"session_name={session_name}\n"
+        f"final_run_status={last_run_payload['run']['run_status']}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
+
     validation_result = real_daemon_harness.cli("validation", "show", "--node", node_id)
     review_result = real_daemon_harness.cli("review", "show", "--node", node_id)
     testing_result = real_daemon_harness.cli("testing", "show", "--node", node_id)
@@ -140,7 +155,6 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     rationale_result = real_daemon_harness.cli("rationale", "show", "--node", node_id)
     audit_result = real_daemon_harness.cli("node", "audit", "--node", node_id)
 
-    assert quality_chain_result.exit_code == 0, quality_chain_result.stderr
     assert validation_result.exit_code == 0, validation_result.stderr
     assert review_result.exit_code == 0, review_result.stderr
     assert testing_result.exit_code == 0, testing_result.stderr
@@ -149,7 +163,6 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     assert rationale_result.exit_code == 0, rationale_result.stderr
     assert audit_result.exit_code == 0, audit_result.stderr
 
-    quality_chain_payload = quality_chain_result.json()
     validation_payload = validation_result.json()
     review_payload = review_result.json()
     testing_payload = testing_result.json()
@@ -158,6 +171,8 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     rationale_payload = rationale_result.json()
     audit_payload = audit_result.json()
 
+    assert bind_payload["logical_node_id"] == node_id
+    assert bind_payload["tmux_session_exists"] is True
     assert quality_chain_payload["run_status"] == "COMPLETE"
     assert quality_chain_payload["executed_stage_types"] == ["validate", "review", "run_tests"]
     assert quality_chain_payload["validation"]["status"] == "passed"

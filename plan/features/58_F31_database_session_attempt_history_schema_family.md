@@ -26,7 +26,7 @@ Read these note files before implementing or revising this phase:
 - `notes/specs/database/database_schema_spec_v2.md`
 - `notes/planning/expansion/database_schema_v2_expansion.md`
 - `notes/specs/runtime/runtime_command_loop_spec_v2.md`
-- `notes/contracts/runtime/session_recovery_appendix.md`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
 - `notes/contracts/persistence/pause_workflow_event_persistence.md`
 
 ## Scope

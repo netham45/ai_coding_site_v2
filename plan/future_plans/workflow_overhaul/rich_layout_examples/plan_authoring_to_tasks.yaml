@@ -1,0 +1,78 @@
+kind: layout_definition
+id: plan_authoring_to_tasks
+name: Authoring Plan To Tasks
+description: Break an authoring plan into author, review, and finalize tasks.
+profile: plan.authoring
+compatible_workflow_profiles:
+  - plan.authoring
+layout_tags:
+  - authoring
+  - documentation
+children:
+  - id: author
+    role: author
+    workflow_profile: task.docs
+    kind: task
+    tier: 3
+    name: Author Content
+    goal: Make the primary note, plan, or checklist edits owned by the plan.
+    rationale: The main authorship work should stay distinct from later review and polish.
+    artifact_targets:
+      - target docs
+      - supporting notes
+    required_updates:
+      - notes
+      - plan
+      - development_log
+    verification_commands:
+      - document-schema checks for the touched artifact family
+    estimated_points: 3
+    dependencies: []
+    acceptance:
+      - The primary authored artifacts exist in reviewable form.
+    ordinal: 1
+  - id: review
+    role: review
+    workflow_profile: task.review
+    kind: task
+    tier: 3
+    name: Review Authored Result
+    goal: Inspect the authored artifacts for contradictions, omissions, and command drift.
+    rationale: Authoring quality should be checked before the plan claims completion.
+    artifact_targets:
+      - authored docs
+      - referenced commands
+    required_updates:
+      - checklist
+      - development_log
+    verification_commands:
+      - document-schema checks for the touched artifact family
+    estimated_points: 1
+    dependencies:
+      - author
+    acceptance:
+      - Contradictions and missing updates are either fixed or explicitly handed back.
+    ordinal: 2
+  - id: finalize
+    role: finalize
+    workflow_profile: task.docs
+    kind: task
+    tier: 3
+    name: Finalize Authored Surfaces
+    goal: Apply any required follow-up edits and leave the final authored state honest and complete.
+    rationale: Authoring plans often need a distinct final pass after review feedback.
+    artifact_targets:
+      - final docs
+      - checklist surfaces
+    required_updates:
+      - notes
+      - checklist
+      - development_log
+    verification_commands:
+      - document-schema checks for the touched artifact family
+    estimated_points: 1
+    dependencies:
+      - review
+    acceptance:
+      - The authored surfaces and their status tracking are aligned.
+    ordinal: 3

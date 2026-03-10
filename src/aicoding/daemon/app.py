@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
+import logging
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
@@ -87,6 +89,7 @@ from aicoding.daemon.validation_runtime import (
     load_validation_summary_for_node,
     load_validation_summary_for_run,
 )
+from aicoding.daemon.session_records import auto_nudge_idle_primary_sessions
 from aicoding.daemon.models import (
     ApiErrorResponse,
     AuthContextResponse,
@@ -272,6 +275,7 @@ from aicoding.daemon.run_orchestration import (
 from aicoding.daemon.session_harness import SessionPoller, build_session_adapter
 from aicoding.daemon.session_records import (
     attach_primary_session,
+    auto_bind_ready_child_runs,
     bind_primary_session,
     get_session_by_id,
     get_session_for_node,
@@ -340,6 +344,8 @@ from aicoding.resources import load_resource_catalog
 from aicoding.source_lineage import capture_node_version_source_lineage, load_node_version_source_lineage
 from aicoding.yaml_schemas import persist_yaml_validation_report, schema_family_descriptors, validate_yaml_document
 
+logger = logging.getLogger(__name__)
+
 
 def _session_state_response(snapshot) -> SessionStateResponse:
     return SessionStateResponse.model_validate(
@@ -373,6 +379,41 @@ def _session_state_response(snapshot) -> SessionStateResponse:
     )
 
 
+async def _run_idle_nudge_background_loop(app: FastAPI) -> None:
+    settings = app.state.settings
+    idle_nudge_prompt = app.state.resource_catalog.load_text("prompt_pack_default", "recovery/idle_nudge.md").content
+    repeated_nudge_prompt = app.state.resource_catalog.load_text("prompt_pack_default", "recovery/repeated_missed_step.md").content
+    while True:
+        try:
+            auto_nudge_idle_primary_sessions(
+                app.state.db_session_factory,
+                adapter=app.state.session_adapter,
+                poller=app.state.session_poller,
+                max_nudge_count=settings.session.max_nudge_count,
+                idle_nudge_text=idle_nudge_prompt,
+                repeated_nudge_text=repeated_nudge_prompt,
+            )
+        except Exception:
+            logger.exception("Idle nudge background loop iteration failed.")
+        await asyncio.sleep(settings.session.poll_interval_seconds)
+
+
+async def _run_child_auto_start_background_loop(app: FastAPI) -> None:
+    settings = app.state.settings
+    while True:
+        try:
+            auto_bind_ready_child_runs(
+                app.state.db_session_factory,
+                hierarchy_registry=app.state.hierarchy_registry,
+                resources=app.state.resource_catalog,
+                adapter=app.state.session_adapter,
+                poller=app.state.session_poller,
+            )
+        except Exception:
+            logger.exception("Child auto-start background loop iteration failed.")
+        await asyncio.sleep(settings.session.poll_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -394,12 +435,21 @@ async def lifespan(app: FastAPI):
     app.state.background_registry.register_placeholder("session_recovery")
     app.state.background_registry.register_placeholder("idle_screen_polling")
     app.state.background_registry.register_placeholder("idle_nudge")
+    app.state.background_registry.register_placeholder("child_auto_run")
     schema_status = migration_status(engine)
     if schema_status["compatible"] and inspect(engine).has_table("node_hierarchy_definitions"):
         sync_hierarchy_definitions(app.state.db_session_factory, app.state.hierarchy_registry)
+    idle_nudge_task = asyncio.create_task(_run_idle_nudge_background_loop(app), name="aicoding-idle-nudge-loop")
+    child_auto_start_task = asyncio.create_task(_run_child_auto_start_background_loop(app), name="aicoding-child-auto-start-loop")
     try:
         yield
     finally:
+        child_auto_start_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await child_auto_start_task
+        idle_nudge_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await idle_nudge_task
         engine.dispose()
 
 

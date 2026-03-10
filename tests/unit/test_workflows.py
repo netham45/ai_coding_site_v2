@@ -625,13 +625,14 @@ def test_compile_task_workflow_renders_canonical_variables_and_invoker_context(
     assert "execute_node" in execute_subtask.prompt_text
     assert "compile" in execute_subtask.prompt_text
     assert str(task.node_id) in execute_subtask.prompt_text
+    assert "boot" in execute_subtask.prompt_text
     assert execute_subtask.command_text == "printf 'compile task'"
     rendering = next(
         item
         for item in result.compiled_workflow.resolved_yaml["rendering"]["compiled_subtasks"]
         if item["source_subtask_key"] == execute_subtask.source_subtask_key
     )
-    assert rendering["rendered_fields"][0]["variables_used"] == ["mode", "node.title", "node_id", "task.key"]
+    assert rendering["rendered_fields"][0]["variables_used"] == ["mode", "node.prompt", "node.title", "node_id", "task.key"]
     assert rendering["rendered_fields"][1]["field"] == "command"
 
 

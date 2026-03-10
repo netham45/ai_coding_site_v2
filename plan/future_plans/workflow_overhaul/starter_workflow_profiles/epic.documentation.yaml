@@ -1,0 +1,48 @@
+kind: workflow_profile_definition
+id: epic.documentation
+name: Documentation Epic
+description: Inventory, author, verify, and repair authoritative docs.
+applies_to_kind: epic
+profile_family: epic
+status: draft
+main_prompt_ref: prompts/epic/documentation.md
+default_child_layout: layouts/epic_documentation_to_phases.yaml
+compatible_layouts:
+  - layouts/epic_documentation_to_phases.yaml
+layout_tags:
+  - documentation
+  - inventory
+  - remediation
+child_generation:
+  allowed_child_kinds: [phase]
+  required_child_roles:
+    - inventory
+    - authoring
+    - verification
+    - remediation
+  allow_extra_roles: true
+  min_children: 4
+  max_children: 6
+  balance_strategy: estimated_points
+  max_point_skew_percent: 25
+child_profile_defaults:
+  inventory: phase.discovery
+  authoring: phase.documentation
+  verification: phase.documentation
+  remediation: phase.remediation
+required_repository_updates:
+  - notes
+  - checklist
+  - development_log
+required_verification:
+  - document_schema
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - flow_complete
+    - release_ready
+brief_generation:
+  require_compiler_generated_brief: true
+  brief_prompt_ref: prompts/epic/global_brief.md
+metadata:
+  intent: documentation_alignment
+  maturity: starter_builtin

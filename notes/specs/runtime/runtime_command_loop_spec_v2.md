@@ -127,6 +127,12 @@ Rule:
 
 ## 3. tmux model
 
+Detailed tmux lifecycle doctrine now lives in:
+
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#tmux-session-model`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#primary-session-lifecycle`
+- `notes/specs/runtime/tmux_session_lifecycle_spec_v1.md#recovery-classification-and-actions`
+
 Sessions run inside tmux.
 
 Each primary node session should record:
@@ -151,7 +157,7 @@ Implementation note:
 - tmux access should be isolated behind an adapter abstraction so fake-session-backed tests can exercise bind, attach, capture, idle, and recovery behavior deterministically
 - the current implementation now adds a concrete session-manager layer on top of that adapter
 - primary tmux session names are now derived from durable run/session identity rather than a generic node-only label
-- primary and pushed-child sessions now launch long-lived interactive shell commands instead of placeholder one-shot commands, so real tmux-backed sessions stay attachable after bind
+- primary sessions now target a Codex bootstrap path that retrieves the current-stage prompt through the CLI and logs it under `./prompt_logs/<project_name>/...`; pushed-child sessions are still a separate lifecycle surface and may lag behind the primary-session posture
 - session inspection surfaces now expose the persisted working directory, provider session id, tmux existence, and attach command when the backend is real tmux
 
 ---
@@ -222,6 +228,7 @@ Implementation staging note:
   - cursor-carried pause, child-session, and parent-reconcile context
 - `subtask context --node <id>` now also mirrors the same `stage_context_json` under `input_context_json.stage_context_json` so existing context consumers can adopt the richer startup contract incrementally
 - the startup portion currently includes the user-supplied node prompt, node title, node kind, run number, trigger reason, and compiled workflow id
+- the shipped execution prompt now renders the user-supplied node prompt directly into the compiled prompt body, so the bootstrap path can carry the original request without requiring a separate context fetch before the session begins work
 - the stage portion currently includes compiled task/subtask ids, source subtask key, subtask type, title, and frozen environment request metadata
 - compile-time rendering now freezes prompt and command text before runtime stage execution begins; stage startup consumes that frozen rendered payload plus `stage_context_json` rather than rerendering templates at prompt-fetch time
 - `subtask environment --node <id>` now exposes the current compiled subtask's frozen environment request so the session can tell whether the next step is host, delegated-profile, or best-effort isolation work before starting the attempt
@@ -240,6 +247,7 @@ Implementation staging note:
 - `subtask heartbeat` now persists the latest heartbeat timestamp on both the active attempt output payload and the run cursor metadata; dedicated heartbeat history remains deferred
 - `subtask start` now resolves and persists `execution_environment_json` on the attempt before work proceeds
 - unsupported mandatory isolation requests fail immediately at start time, while unsupported non-mandatory requests are recorded as explicit host fallbacks rather than silently proceeding
+- `--result-file` on `subtask complete` and `subtask fail` is reserved for explicit `execution_result_json` payloads, so the referenced file must be valid JSON rather than a Markdown summary artifact
 
 ### Summary and artifact registration
 
@@ -250,6 +258,7 @@ Implementation staging note:
 
 - `subtask prompt --node <id>` now records a durable prompt-delivery artifact each time the current prompt is fetched
 - `summary register --node <id> --file <path> --type <type>` now records a durable summary-history row in addition to the active-attempt compatibility mirror
+- shipped prompts and examples must keep `summary_type` within the bounded orchestration taxonomy; implementation-stage summaries currently register as `subtask`
 - validation checks that require a written summary now consult the durable summary history as well as the mirrored attempt payload
 
 ### Cursor control
@@ -280,7 +289,7 @@ Implementation staging note:
 - `session show --node <id>`, `session show --session <id>`, and `session show-current` now also expose the same `recommended_action` when the selected row is the active primary session, so session-control clients can decide whether to attach or resume from the ordinary session read path
 - the current staged classifier distinguishes `healthy`, `detached`, `stale_but_recoverable`, `lost`, `missing`, `ambiguous`, and `non_resumable`
 - the current provider-aware enhancement is intentionally bounded: it only performs direct rebind when the durable provider identity matches the active backend and that provider session still exists
-- `session nudge --node <id>` now performs bounded idle inspection against the active primary session, suppresses false positives while alt-screen content is active, records durable nudge audit events, and escalates to `PAUSED_FOR_USER` when the configured nudge budget is exhausted
+- `session nudge --node <id>` now performs bounded idle inspection against the active primary session, evaluates the captured pane content even when the provider UI is in alt-screen, records durable nudge audit events, and escalates to `PAUSED_FOR_USER` when the configured nudge budget is exhausted
 
 The command names may evolve, but the behavior must exist.
 
@@ -507,6 +516,7 @@ Implementation staging note:
 - heartbeat persistence currently updates active-attempt and run-cursor metadata only
 - summary registration currently attaches durable summary payloads to the active subtask attempt ahead of the later dedicated summary-history phases
 - stage startup now depends on daemon-assembled durable context rather than prior terminal output; restarting a session and refetching `subtask prompt` or `subtask context` should yield the same startup categories for the active stage
+- when a rendered execution prompt explicitly instructs a session to wait for a daemon idle nudge before beginning work, that wait gate overrides the generic leaf-task CLI workflow; the session must remain genuinely idle rather than substituting shell wait commands, background terminals, slash commands, or ad hoc polling
 
 ### Default missed-step payload
 
@@ -651,10 +661,12 @@ Child-node work is different from pushed child sessions.
 
 Implementation staging note:
 
-- the current implementation materializes default built-in layouts through a daemon-owned `node materialize-children --node <id>` path
+- the current implementation materializes children through a daemon-owned `node materialize-children --node <id>` path
+- that path now resolves the effective layout from `layouts/generated_layout.yaml` under the configured workspace root when present, and otherwise falls back to the packaged built-in layout for the parent kind
 - materialization creates child hierarchy rows, authoritative child versions, compiled workflows, ready lifecycle state, and sibling dependency edges in durable storage
 - parent-visible scheduling is currently exposed as derived classifications (`ready`, `blocked`, `invalid`, `impossible_wait`) rather than a separate schedule snapshot table
-- automatic child run start remains deferred; this phase only materializes and classifies child readiness
+- the daemon now runs a background child auto-start loop that admits `ready` child nodes with trigger reason `auto_run_child` and binds their primary sessions without an operator `node run start` or `session bind`
+- dependency-blocked siblings remain unstarted until readiness changes
 
 ### Scheduling rule
 
@@ -793,11 +805,12 @@ Implementation staging note:
 
 - the current implementation derives idle state from tmux/fake-session polling rather than a dedicated heartbeat-history table
 - idle audit is currently recorded through `session_events` using `nudged`, `nudge_skipped`, `nudge_suppressed`, and `nudge_escalated`
-- alt-screen sessions are treated as a false-positive suppression case and are not nudged automatically
+- stable alt-screen sessions are classified from their captured pane content and may be nudged automatically once they remain unchanged past the idle threshold; alt-screen only blocks nudging when the captured content still shows active-work markers
 - the staged escalation path pauses the run with `pause_flag_name = "idle_nudge_limit_exceeded"` after the configured max nudge count is exceeded
 - the current classifier now also records `screen_polled` evidence with pane-hash comparison metadata and classifies the screen as `active`, `quiet`, or `idle`
-- first-sample polling may still classify as `idle` when the idle threshold is already exceeded, so a missing earlier sample does not block bounded nudge behavior
+- first-sample polling may still classify as `idle` when the idle threshold is already exceeded, but the daemon's autonomous background loop now waits for later `unchanged_screen_past_idle_threshold` evidence before emitting the first timeout-driven nudge
 - daemon-originated nudge text is treated as non-progress for subsequent idle checks so repeated nudge/escalation decisions do not reset themselves accidentally
+- once the active compiled subtask has durably registered a summary, later idle sweeps suppress further nudges for that session attempt with `nudge_skipped(reason=summary_already_registered)` so end-of-flow output generation is treated as done-enough progress rather than a reason to nag again
 
 Recommended workflow-event scope for first implementation:
 

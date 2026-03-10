@@ -188,14 +188,14 @@ in-process catalog injection.
 What is still not complete:
 
 - live git working-tree ownership is still not yet rooted in the same product-owned workspace contract
-- session cwd ownership is not yet unified around that workspace root
+- live Codex task execution still needs stronger runtime guidance so the session records durable task progress through the intended CLI/runtime contract rather than drifting into generic repo or CLI exploration
 
 ## Consequence for later phases
 
 Later real E2E flows that depend on:
 
 - live git working trees
-- session cwd ownership
+- live Codex task execution through the intended CLI/runtime contract
 - AI-produced filesystem artifacts
 
 should not be marked complete until the remaining workspace-root consumers are

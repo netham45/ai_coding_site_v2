@@ -104,7 +104,7 @@ Should expose:
 Implementation staging note:
 
 - `node child-materialization --node <id>` is now implemented as a daemon-backed read of the current layout-materialization state
-- `node materialize-children --node <id>` is now the explicit mutation path for default built-in layout materialization
+- `node materialize-children --node <id>` is now the explicit mutation path for effective layout materialization, preferring `layouts/generated_layout.yaml` under the configured workspace root when present and otherwise falling back to the packaged built-in layout for the parent kind
 - `node child-reconciliation --node <id>` now exposes the current manual/layout authority mode, available reconciliation decisions, and child-origin counts
 - `node reconcile-children --node <id> --decision preserve_manual` now performs the currently supported explicit hybrid-reconciliation mutation
 - `node child-results --node <id>` now exposes authoritative child finals, deterministic merge order, and blocked-child classification for the current parent version
@@ -871,7 +871,7 @@ Implementation staging note:
 - if the run is marked non-resumable, recovery is rejected without creating a new session
 - if duplicate active primary sessions are detected, recovery pauses for user instead of guessing ownership
 - `session bind --node <id>` and `session attach --node <id>` now also reject duplicate active primary-session rows instead of silently reusing an arbitrary record
-- idle nudges are suppressed while alt-screen content is active and escalate into `node pause-state` visibility when the nudge budget is exhausted
+- idle nudges inspect the captured pane content even while the provider UI is in alt-screen; stable alt-screen sessions can be nudged, while visible active-work markers still suppress false positives and the nudge budget still escalates into `node pause-state` visibility when exhausted
 - if idle escalation pauses the run, the same durable pause-state and pause-event surfaces are used as for manual and gated pauses
 
 ### Push/pop child sessions

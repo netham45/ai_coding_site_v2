@@ -1,0 +1,20 @@
+kind: workflow_profile_definition
+id: task.e2e
+name: E2E Task
+description: Prove one runtime flow through real boundaries and record the result honestly.
+applies_to_kind: task
+profile_family: task
+status: draft
+main_prompt_ref: prompts/task/e2e.md
+required_repository_updates:
+  - checklist
+  - development_log
+  - e2e_mapping
+required_verification:
+  - real_e2e
+completion_restrictions:
+  forbidden_statuses_until_requirements_met:
+    - release_ready
+metadata:
+  intent: real_runtime_proof
+  maturity: starter_builtin

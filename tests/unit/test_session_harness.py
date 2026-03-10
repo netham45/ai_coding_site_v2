@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
+import time
 from uuid import uuid4
 
 from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller, TmuxSessionAdapter
@@ -55,3 +58,28 @@ def test_tmux_session_adapter_smoke_lifecycle() -> None:
         assert "ready" in captured
     finally:
         adapter.kill_session(session_name)
+
+
+def test_tmux_session_adapter_injects_environment_over_existing_tmux_server() -> None:
+    adapter = TmuxSessionAdapter()
+    server_session_name = f"aicoding-server-{uuid4().hex[:8]}"
+    session_name = f"aicoding-env-{uuid4().hex[:8]}"
+    output_path = Path(tempfile.gettempdir()) / f"{session_name}.txt"
+    command = f"bash -lc 'printf %s \"$AICODING_TMP_TEST_VAR\" > {output_path}'"
+    try:
+        adapter.create_session(server_session_name, "bash", ".")
+        adapter.create_session(
+            session_name,
+            command,
+            ".",
+            environment={"AICODING_TMP_TEST_VAR": "expected-from-plan"},
+        )
+        for _ in range(20):
+            if output_path.exists() and output_path.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.1)
+        assert output_path.read_text(encoding="utf-8") == "expected-from-plan"
+    finally:
+        adapter.kill_session(session_name)
+        adapter.kill_session(server_session_name)
+        output_path.unlink(missing_ok=True)

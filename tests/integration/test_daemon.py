@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import time
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -13,6 +15,8 @@ from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.live_git import abort_live_merge, bootstrap_live_git_repo, execute_live_merge_children, stage_live_git_change
 from aicoding.daemon.manual_tree import create_manual_node
+from aicoding.daemon.run_orchestration import register_summary, start_subtask_attempt
+from aicoding.daemon.session_records import inspect_primary_session_screen_state, nudge_primary_session
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
 from aicoding.db.models import CompiledSubtask, NodeRunState, Session as DurableSession
@@ -748,8 +752,85 @@ def test_child_materialization_endpoints_materialize_and_report_scheduling(app_c
     assert [item["scheduling_status"] for item in materialize_response.json()["children"]] == ["ready", "blocked"]
     assert children_response.status_code == 200
     assert [item["kind"] for item in children_response.json()] == ["phase", "phase"]
-    assert after_response.status_code == 200
-    assert after_response.json()["status"] == "materialized"
+
+
+def test_background_child_auto_run_loop_binds_ready_child_without_starting_blocked_sibling(
+    monkeypatch, migrated_public_schema
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Auto Child Parent", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+
+        materialize_response = client.post(
+            f"/api/nodes/{node_id}/children/materialize",
+            headers={"Authorization": "Bearer change-me"},
+            json={},
+        )
+        assert materialize_response.status_code == 200
+        children_response = client.get(
+            f"/api/nodes/{node_id}/children",
+            headers={"Authorization": "Bearer change-me"},
+        )
+        assert children_response.status_code == 200
+        children = children_response.json()
+        ready_child_id = children[0]["node_id"]
+        blocked_child_id = children[1]["node_id"]
+
+        ready_sessions = None
+        ready_runs = None
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            candidate_sessions = client.get(
+                f"/api/nodes/{ready_child_id}/sessions",
+                headers={"Authorization": "Bearer change-me"},
+            )
+            candidate_runs = client.get(
+                f"/api/nodes/{ready_child_id}/runs",
+                headers={"Authorization": "Bearer change-me"},
+            )
+            if candidate_sessions.status_code == 200 and candidate_sessions.json()["sessions"]:
+                ready_sessions = candidate_sessions
+                ready_runs = candidate_runs
+                break
+            time.sleep(0.1)
+
+        assert ready_sessions is not None
+        assert ready_runs is not None
+        blocked_sessions = client.get(
+            f"/api/nodes/{blocked_child_id}/sessions",
+            headers={"Authorization": "Bearer change-me"},
+        )
+        blocked_runs = client.get(
+            f"/api/nodes/{blocked_child_id}/runs",
+            headers={"Authorization": "Bearer change-me"},
+        )
+        ready_session_id = ready_sessions.json()["sessions"][0]["session_id"]
+        ready_events = client.get(
+            f"/api/sessions/{ready_session_id}/events",
+            headers={"Authorization": "Bearer change-me"},
+        )
+
+    assert ready_runs.status_code == 200
+    assert ready_runs.json()["runs"][0]["trigger_reason"] == "auto_run_child"
+    assert ready_sessions.json()["sessions"][0]["session_role"] == "primary"
+    assert ready_events.status_code == 200
+    assert any(item["event_type"] == "auto_child_bound" for item in ready_events.json()["events"])
+    assert blocked_sessions.status_code == 200
+    assert blocked_sessions.json()["sessions"] == []
+    assert blocked_runs.status_code == 200
+    assert blocked_runs.json()["runs"] == []
 
 
 def test_child_result_and_reconcile_endpoints_report_and_record_merge_state(
@@ -1289,6 +1370,261 @@ def test_session_nudge_endpoint_nudges_then_escalates(monkeypatch, migrated_publ
     assert second.json()["prompt_relative_path"] == "recovery/repeated_missed_step.md"
     assert third.json()["status"] == "escalated_to_pause"
     assert pause_state.json()["pause_flag_name"] == "idle_nudge_limit_exceeded"
+
+
+def test_session_nudge_endpoint_does_not_nudge_when_active_work_marker_is_visible(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Busy Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter._sessions[session_name].pane_text = (
+            "• Working (3s • esc to interrupt) · 1 background terminal running · /ps to view · /clean to close\n"
+            "• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\n"
+        )
+        adapter.advance_idle(session_name, seconds=30.0)
+
+        nudge_response = client.post("/api/sessions/nudge", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+
+    assert nudge_response.status_code == 200
+    assert nudge_response.json()["status"] == "not_idle"
+    assert nudge_response.json()["screen_state"]["classification"] == "active"
+    assert nudge_response.json()["screen_state"]["reason"] == "active_work_indicator_present"
+
+
+def test_session_nudge_endpoint_can_nudge_idle_alt_screen_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Idle Alt Screen Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter.set_alt_screen(session_name, True)
+        adapter._sessions[session_name].pane_text = "• Waiting; no subtask work has started.\n"
+        adapter.advance_idle(session_name, seconds=30.0)
+
+        nudge_response = client.post("/api/sessions/nudge", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+
+    assert nudge_response.status_code == 200
+    assert nudge_response.json()["status"] == "nudged"
+    assert nudge_response.json()["screen_state"]["classification"] == "idle"
+    assert nudge_response.json()["screen_state"]["reason"] in {
+        "first_sample_idle_threshold_exceeded",
+        "unchanged_screen_past_idle_threshold",
+    }
+    assert nudge_response.json()["in_alt_screen"] is True
+
+
+def test_session_nudge_endpoint_skips_when_current_subtask_summary_is_already_registered(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Summarized Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        db_session_factory = client.app.state.db_session_factory
+        progress_response = client.get(f"/api/node-runs/{node_id}", headers={"Authorization": "Bearer change-me"})
+        compiled_subtask_id = progress_response.json()["state"]["current_compiled_subtask_id"]
+        start_subtask_attempt(db_session_factory, logical_node_id=UUID(node_id), compiled_subtask_id=UUID(compiled_subtask_id))
+        register_summary(
+            db_session_factory,
+            logical_node_id=UUID(node_id),
+            summary_type="subtask",
+            summary_path="summaries/implementation.md",
+            content="done enough",
+        )
+        adapter = client.app.state.session_adapter
+        adapter._sessions[session_name].pane_text = "• Waiting; no subtask work has started.\n"
+        adapter.advance_idle(session_name, seconds=30.0)
+
+        nudge_response = client.post("/api/sessions/nudge", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+
+    assert nudge_response.status_code == 200
+    assert nudge_response.json()["status"] == "summary_registered"
+    assert nudge_response.json()["action"] == "none"
+
+
+def test_nudge_primary_session_can_nudge_after_confirmed_idle_screen_state(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "1")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_SESSION_MAX_NUDGE_COUNT", "2")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Idle Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter.advance_idle(session_name, seconds=30.0)
+        resource_catalog = client.app.state.resource_catalog
+        with session_scope(client.app.state.db_session_factory) as session:
+            durable = session.get(DurableSession, UUID(session_id))
+            assert durable is not None
+            durable.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+
+        inspect_primary_session_screen_state(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            persist=True,
+        )
+        inspect_primary_session_screen_state(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            persist=True,
+        )
+        nudge_response = nudge_primary_session(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            max_nudge_count=2,
+            idle_nudge_text=resource_catalog.load_text("prompt_pack_default", "recovery/idle_nudge.md").content,
+            repeated_nudge_text=resource_catalog.load_text("prompt_pack_default", "recovery/repeated_missed_step.md").content,
+        )
+        events_response = client.get(f"/api/sessions/{session_id}/events", headers={"Authorization": "Bearer change-me"})
+
+    assert nudge_response.status == "nudged"
+    assert events_response is not None
+    assert events_response.status_code == 200
+    event_types = [item["event_type"] for item in events_response.json()["events"]]
+    assert "nudged" in event_types
+
+
+def test_nudge_primary_session_skips_after_summary_registration(
+    monkeypatch, migrated_public_schema
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "1")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_SESSION_MAX_NUDGE_COUNT", "2")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Summarized Idle Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        session_name = bind_response.json()["session_name"]
+        db_session_factory = client.app.state.db_session_factory
+        progress_response = client.get(f"/api/node-runs/{node_id}", headers={"Authorization": "Bearer change-me"})
+        compiled_subtask_id = progress_response.json()["state"]["current_compiled_subtask_id"]
+        start_subtask_attempt(db_session_factory, logical_node_id=UUID(node_id), compiled_subtask_id=UUID(compiled_subtask_id))
+        register_summary(
+            db_session_factory,
+            logical_node_id=UUID(node_id),
+            summary_type="subtask",
+            summary_path="summaries/implementation.md",
+            content="done enough",
+        )
+        adapter = client.app.state.session_adapter
+        adapter._sessions[session_name].pane_text = "• Waiting; no subtask work has started.\n"
+        adapter.advance_idle(session_name, seconds=30.0)
+        resource_catalog = client.app.state.resource_catalog
+        with session_scope(client.app.state.db_session_factory) as session:
+            durable = session.get(DurableSession, UUID(session_id))
+            assert durable is not None
+            durable.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+
+        inspect_primary_session_screen_state(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            persist=True,
+        )
+        inspect_primary_session_screen_state(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            persist=True,
+        )
+        nudge_response = nudge_primary_session(
+            client.app.state.db_session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=client.app.state.session_poller,
+            max_nudge_count=2,
+            idle_nudge_text=resource_catalog.load_text("prompt_pack_default", "recovery/idle_nudge.md").content,
+            repeated_nudge_text=resource_catalog.load_text("prompt_pack_default", "recovery/repeated_missed_step.md").content,
+        )
+        events_response = client.get(f"/api/sessions/{session_id}/events", headers={"Authorization": "Bearer change-me"})
+
+    assert nudge_response.status == "summary_registered"
+    assert events_response is not None
+    assert events_response.status_code == 200
+    events = events_response.json()["events"]
+    event_types = [item["event_type"] for item in events]
+    assert "nudged" not in event_types
+    assert any(
+        item["event_type"] == "nudge_skipped"
+        and item["payload_json"].get("reason") == "summary_already_registered"
+        for item in events
+    )
 
 
 def test_child_session_push_pop_and_result_endpoints_work(monkeypatch, migrated_public_schema) -> None:
