@@ -40,6 +40,10 @@ Supporting:
 Optional inputs:
 
 - explicit operator compile request
+- compile target context:
+  - authoritative
+  - candidate
+  - rebuild candidate
 - prior compile failure records
 - default built-in library version/hash
 
@@ -87,6 +91,7 @@ Success path should write at least:
 - compiled subtask rows
 - hook insertion lineage metadata where applicable
 - workflow hash and compile timestamp
+- frozen compile context for the targeted node version
 - node-version readiness or compile-success state transition
 
 Failure path should write at least:

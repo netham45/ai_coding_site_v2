@@ -4,7 +4,9 @@ Bootstrap scaffold for the spec-driven orchestration system described in `notes/
 
 ## Current scope
 
-This repository currently implements the setup contract from `plan/setup/00_project_bootstrap.md`:
+This repository includes the setup foundation from `plan/setup/00_project_bootstrap.md` and a substantial partial implementation of the feature-plan surface under `plan/features/`.
+
+Current repo posture:
 
 - Python project packaging
 - CLI entrypoint skeleton
@@ -13,6 +15,18 @@ This repository currently implements the setup contract from `plan/setup/00_proj
 - Pydantic settings and environment loading
 - built-in YAML and prompt asset directories
 - pytest, fixture, factory, and performance harness scaffolding
+- implementation modules, migrations, and tests for many feature families described in `notes/` and `plan/features/`
+
+The canonical feature implementation-status surface is:
+
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
+- `notes/catalogs/checklists/e2e_execution_policy.md`
+
+The architectural inventory remains in:
+
+- `notes/catalogs/inventory/major_feature_inventory.md`
 
 ## Environment
 
@@ -30,10 +44,10 @@ Local default posture:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-pytest
-python -m aicoding.cli.main doctor
-python -m aicoding.cli.main db ping
-python -m aicoding.cli.main db upgrade
+python3 -m pytest tests/unit
+python3 -m aicoding.cli.main doctor
+python3 -m aicoding.cli.main admin db ping
+python3 -m aicoding.cli.main admin db upgrade
 uvicorn aicoding.daemon.app:create_app --factory --reload
 ```
 
@@ -48,8 +62,15 @@ python3 -m aicoding.cli.main admin db ping
 python3 -m aicoding.cli.main admin db heads
 python3 -m aicoding.cli.main admin db upgrade
 python3 -m aicoding.cli.main admin db check-schema
-python3 -m pytest
+python3 -m pytest tests/unit
+python3 -m pytest tests/integration
+python3 -m pytest tests/integration/test_flow_contract_suite.py -q
 ```
+
+Real E2E checkpoints are tracked separately from bounded and integration proof.
+
+Use `notes/catalogs/checklists/verification_command_catalog.md` for the current canonical command families.
+Use `notes/catalogs/checklists/e2e_execution_policy.md` for the current local, CI, gated/manual, and release-readiness execution expectations.
 
 CI should provide a PostgreSQL service and inject `AICODING_DATABASE_URL` explicitly.
 

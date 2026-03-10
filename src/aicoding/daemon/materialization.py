@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 from uuid import UUID
 
@@ -29,6 +30,8 @@ class MaterializedChildSnapshot:
     title: str
     lifecycle_state: str
     scheduling_status: str
+    scheduling_reason: str | None
+    blockers: list[dict[str, object]]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -39,6 +42,8 @@ class MaterializedChildSnapshot:
             "title": self.title,
             "lifecycle_state": self.lifecycle_state,
             "scheduling_status": self.scheduling_status,
+            "scheduling_reason": self.scheduling_reason,
+            "blockers": self.blockers,
         }
 
 
@@ -68,6 +73,34 @@ class MaterializationResultSnapshot:
             "created_count": self.created_count,
             "ready_child_count": self.ready_child_count,
             "blocked_child_count": self.blocked_child_count,
+            "children": [item.to_payload() for item in self.children],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ChildReconciliationInspectionSnapshot:
+    parent_node_id: UUID
+    parent_node_version_id: UUID
+    authority_mode: str
+    materialization_status: str
+    available_decisions: list[str]
+    manual_child_count: int
+    layout_generated_child_count: int
+    layout_relative_path: str
+    layout_hash: str
+    children: list[MaterializedChildSnapshot]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "parent_node_id": str(self.parent_node_id),
+            "parent_node_version_id": str(self.parent_node_version_id),
+            "authority_mode": self.authority_mode,
+            "materialization_status": self.materialization_status,
+            "available_decisions": self.available_decisions,
+            "manual_child_count": self.manual_child_count,
+            "layout_generated_child_count": self.layout_generated_child_count,
+            "layout_relative_path": self.layout_relative_path,
+            "layout_hash": self.layout_hash,
             "children": [item.to_payload() for item in self.children],
         }
 
@@ -165,6 +198,8 @@ def materialize_layout_children(
                     title=created.title,
                     lifecycle_state="READY",
                     scheduling_status="ready",
+                    scheduling_reason=None,
+                    blockers=[],
                 )
             )
 
@@ -206,7 +241,8 @@ def _existing_materialization_snapshot(
         for edge, version, node in edges:
             lifecycle = load_node_lifecycle(session_factory, str(node.node_id))
             readiness = check_node_dependency_readiness(session_factory, node_id=node.node_id)
-            scheduling_status = "ready" if readiness.status == "ready" else readiness.status
+            scheduling_status = _child_scheduling_status(lifecycle_state=lifecycle.lifecycle_state, run_status=lifecycle.run_status, readiness_status=readiness.status, blockers=readiness.blockers)
+            scheduling_reason = None if not readiness.blockers else readiness.blockers[0].blocker_kind
             if scheduling_status == "ready":
                 ready_count += 1
             else:
@@ -220,6 +256,8 @@ def _existing_materialization_snapshot(
                     title=node.title,
                     lifecycle_state=lifecycle.lifecycle_state,
                     scheduling_status=scheduling_status,
+                    scheduling_reason=scheduling_reason,
+                    blockers=[item.to_payload() for item in readiness.blockers],
                 )
             )
         return MaterializationResultSnapshot(
@@ -235,6 +273,36 @@ def _existing_materialization_snapshot(
             blocked_child_count=blocked_count,
             children=children,
         )
+
+
+def _child_scheduling_status(
+    *,
+    lifecycle_state: str,
+    run_status: str | None,
+    readiness_status: str,
+    blockers,
+) -> str:
+    if lifecycle_state == "COMPLETE":
+        return "complete"
+    if lifecycle_state == "SUPERSEDED":
+        return "superseded"
+    if lifecycle_state == "FAILED_TO_PARENT":
+        return "failed"
+    if run_status in {"PENDING", "RUNNING"}:
+        return "already_running"
+    if run_status == "PAUSED":
+        return "paused_for_user"
+    if readiness_status == "impossible_wait":
+        return "failed"
+    if blockers:
+        blocker_kind = blockers[0].blocker_kind
+        if blocker_kind == "blocked_on_dependency":
+            return "blocked_on_dependency"
+        if blocker_kind in {"pause_gate_active", "user_gate_required"}:
+            return "paused_for_user"
+    if lifecycle_state != "READY":
+        return "not_compiled"
+    return "ready"
 
 
 def _default_layout_for_kind(kind: str) -> str | None:
@@ -333,6 +401,75 @@ def inspect_materialized_children(
             status=status,
             authority_mode=authority.authority_mode,
         )
+
+
+def inspect_child_reconciliation(
+    session_factory: sessionmaker[Session],
+    resources: ResourceCatalog,
+    *,
+    logical_node_id: UUID,
+) -> ChildReconciliationInspectionSnapshot:
+    materialization = inspect_materialized_children(session_factory, resources, logical_node_id=logical_node_id)
+    manual_child_count = sum(1 for child in materialization.children if child.layout_child_id.startswith("manual-"))
+    layout_generated_child_count = materialization.child_count - manual_child_count
+    available_decisions: list[str] = []
+    if materialization.authority_mode == "hybrid":
+        available_decisions.append("preserve_manual")
+    elif materialization.authority_mode == "manual" and materialization.status == "manual":
+        available_decisions.append("preserve_manual")
+    return ChildReconciliationInspectionSnapshot(
+        parent_node_id=materialization.parent_node_id,
+        parent_node_version_id=materialization.parent_node_version_id,
+        authority_mode=materialization.authority_mode,
+        materialization_status=materialization.status,
+        available_decisions=available_decisions,
+        manual_child_count=manual_child_count,
+        layout_generated_child_count=layout_generated_child_count,
+        layout_relative_path=materialization.layout_relative_path,
+        layout_hash=materialization.layout_hash,
+        children=materialization.children,
+    )
+
+
+def reconcile_child_authority(
+    session_factory: sessionmaker[Session],
+    resources: ResourceCatalog,
+    *,
+    logical_node_id: UUID,
+    decision: str,
+) -> ChildReconciliationInspectionSnapshot:
+    if decision != "preserve_manual":
+        raise DaemonConflictError(f"unsupported reconciliation decision '{decision}'")
+    with session_scope(session_factory) as session:
+        parent_node = session.get(HierarchyNode, logical_node_id)
+        if parent_node is None:
+            raise DaemonNotFoundError("parent node not found")
+        selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+        if selector is None:
+            raise DaemonNotFoundError("parent node version selector not found")
+        parent_version = session.get(NodeVersion, selector.authoritative_node_version_id)
+        if parent_version is None:
+            raise DaemonNotFoundError("parent node version not found")
+        authority = session.get(ParentChildAuthority, parent_version.id)
+        if authority is None:
+            raise DaemonConflictError("parent has no child authority record to reconcile")
+        edges = session.execute(
+            select(NodeChild).where(NodeChild.parent_node_version_id == parent_version.id).order_by(NodeChild.ordinal)
+        ).scalars().all()
+        if not edges:
+            raise DaemonConflictError("parent has no child structure to reconcile")
+        if authority.authority_mode not in {"hybrid", "manual"}:
+            raise DaemonConflictError("preserve_manual is only valid for manual or hybrid child authority")
+
+        for edge in edges:
+            edge.origin_type = "manual"
+            edge.layout_child_id = f"manual-{edge.child_node_version_id}"
+        authority.authority_mode = "manual"
+        authority.authoritative_layout_hash = None
+        authority.last_reconciled_at = datetime.now(timezone.utc)
+        session.flush()
+
+    return inspect_child_reconciliation(session_factory, resources, logical_node_id=logical_node_id)
 
 
 def _ensure_acyclic_dependencies(adjacency: dict[str, list[str]]) -> None:

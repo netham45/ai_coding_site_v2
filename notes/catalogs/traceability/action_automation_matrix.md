@@ -251,3 +251,9 @@ This action automation pass should be considered complete when:
 - missing audit and persistence needs are identified
 
 At that point, the “everything user-can-do is automatable” goal becomes concrete enough to evaluate during v2 rewrite.
+
+Interpretation rule:
+
+- this exit criterion is about planning and traceability completeness for the matrix itself
+- it does not mean the repository or feature set is `verified`, `flow_complete`, or `release_ready`
+- use the checklist layer for implementation and proving claims

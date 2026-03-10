@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import httpx
 
-from aicoding.cli.daemon_client import DaemonClient, build_daemon_base_url
+from aicoding.cli.daemon_client import DaemonClient, build_daemon_base_url, build_daemon_client
 from aicoding.config import Settings
 from aicoding.errors import CommandExecutionError
 
@@ -12,6 +12,23 @@ def test_build_daemon_base_url_uses_settings() -> None:
     settings = Settings(daemon_host="127.0.0.2", daemon_port=9999)
 
     assert build_daemon_base_url(settings) == "http://127.0.0.2:9999"
+
+
+def test_build_daemon_client_uses_settings_timeout_and_token(monkeypatch) -> None:
+    settings = Settings(
+        daemon_host="127.0.0.2",
+        daemon_port=9999,
+        daemon_request_timeout_seconds=42,
+        auth_token="secret-token",
+    )
+
+    monkeypatch.setattr("aicoding.cli.daemon_client.load_auth_token", lambda settings=None: "secret-token")
+
+    client = build_daemon_client(settings)
+
+    assert client.base_url == "http://127.0.0.2:9999"
+    assert client.timeout_seconds == 42
+    assert client.token == "secret-token"
 
 
 def test_daemon_client_unavailable_raises_structured_error() -> None:

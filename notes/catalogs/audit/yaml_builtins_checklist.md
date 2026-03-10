@@ -85,6 +85,14 @@ The main unresolved issues are:
 - `[x]` means the definition is clearly required by the current reviewed docs
 - `[ ]` means the definition is not yet justified strongly enough as a built-in default, but is a plausible extension
 
+Interpretation rule:
+
+- this checklist is an audit and authoring-scope surface for built-in YAML coverage, not the canonical implementation or proving surface
+- `[x]` here means the built-in definition has an explicit required home in the note set; it does not by itself mean the family is implemented, verified, flow-complete, or release-ready
+- implementation and proving status live in:
+  - `notes/catalogs/checklists/feature_checklist_backfill.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+
 ## Scaffold Status
 
 The current repository setup phase includes a placeholder packaged scaffold under:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,7 @@ from aicoding.daemon.branches import record_final_commit, record_seed_commit
 from aicoding.daemon.errors import DaemonUnavailableError
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.live_git import abort_live_merge, bootstrap_live_git_repo, execute_live_merge_children, stage_live_git_change
 from aicoding.daemon.manual_tree import create_manual_node
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
@@ -17,6 +19,33 @@ from aicoding.db.models import CompiledSubtask, NodeRunState, Session as Durable
 from aicoding.db.session import create_session_factory, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
+
+
+def _pause_gate_catalog(tmp_path):
+    base_catalog = load_resource_catalog()
+    overrides_root = tmp_path / "overrides"
+    (overrides_root / "nodes").mkdir(parents=True)
+    (overrides_root / "nodes" / "epic_pause_gate.yaml").write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: epic",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace_list",
+                "value:",
+                "  available_tasks:",
+                "    - research_context",
+                "    - execute_node",
+                "    - pause_for_user",
+                "    - validate_node",
+                "    - review_node",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return replace(base_catalog, yaml_overrides_dir=overrides_root)
 
 
 def _transition_to_complete(db_session_factory, *, node_id: str) -> None:
@@ -95,7 +124,7 @@ def test_db_schema_compatibility_reports_revision_state(app_client, clean_public
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["expected_revision"] == "0027_provenance_docs_audit_views"
+    assert payload["expected_revision"] == "0028_subtask_execution_results"
     assert payload["status"] == "uninitialized"
     assert payload["compatible"] is False
 
@@ -108,7 +137,7 @@ def test_daemon_status_reports_background_tasks(app_client) -> None:
     assert payload["authority"] == "daemon"
     assert "session_recovery" in payload["background_tasks"]
     assert payload["write_probe"]["write_path"] == "available"
-    assert payload["schema_compatibility"]["expected_revision"] == "0027_provenance_docs_audit_views"
+    assert payload["schema_compatibility"]["expected_revision"] == "0028_subtask_execution_results"
 
 
 def test_mutation_endpoint_accepts_valid_payload(app_client, migrated_public_schema) -> None:
@@ -204,6 +233,45 @@ def test_subtask_progress_and_workflow_advance_endpoints_work(app_client, migrat
     chain_response = app_client.get(f"/api/nodes/{node_id}/workflow/chain", headers={"Authorization": "Bearer change-me"})
     assert chain_response.status_code == 200
     assert chain_response.json()["chain"][0]["derived_execution_state"] == "complete"
+
+
+def test_subtask_attempt_result_capture_and_reads_work(app_client, migrated_public_schema) -> None:
+    create_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "epic", "title": "Attempt Reads", "prompt": "boot prompt"},
+    )
+    node_id = create_response.json()["node_id"]
+    app_client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+    app_client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+    app_client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+    current_subtask_id = app_client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+    app_client.post(
+        "/api/subtasks/start",
+        headers={"Authorization": "Bearer change-me"},
+        json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+    )
+    completed = app_client.post(
+        "/api/subtasks/complete",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "node_id": node_id,
+            "compiled_subtask_id": current_subtask_id,
+            "summary": "done",
+            "execution_result_json": {"exit_code": 0, "stdout": "done"},
+        },
+    )
+    attempt_id = completed.json()["latest_attempt"]["id"]
+    attempts = app_client.get(f"/api/nodes/{node_id}/subtask-attempts", headers={"Authorization": "Bearer change-me"})
+    attempt_show = app_client.get(f"/api/subtask-attempts/{attempt_id}", headers={"Authorization": "Bearer change-me"})
+
+    assert completed.status_code == 200
+    assert completed.json()["latest_attempt"]["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
+    assert attempts.status_code == 200
+    assert attempts.json()["attempts"][0]["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
+    assert attempt_show.status_code == 200
+    assert attempt_show.json()["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
 
 
 def test_subtask_retry_and_node_cancel_endpoints_work(app_client, migrated_public_schema) -> None:
@@ -408,6 +476,8 @@ def test_parent_failure_endpoints_report_counters_and_decisions(app_client, migr
 
     assert respond.status_code == 200
     assert respond.json()["decision_type"] == "retry_child"
+    assert respond.json()["decision_reason"] == "operator override selected 'retry_child'"
+    assert respond.json()["options_considered"] == ["retry_child", "regenerate_child", "replan_parent", "pause_for_user"]
     assert counters.status_code == 200
     assert counters.json()["failure_count_from_children"] == 1
     assert counters.json()["counters"][0]["last_decision_type"] == "retry_child"
@@ -506,6 +576,53 @@ def test_pause_state_and_node_event_history_endpoints_work(app_client, migrated_
         "node.pause",
     ]
     assert [item["command"] for item in events.json()["events"] if item["event_scope"] == "pause"] == ["pause_entered"]
+
+
+def test_intervention_catalog_and_pause_apply_endpoints_work(app_client, migrated_public_schema, tmp_path) -> None:
+    app_client.app.state.resource_catalog = _pause_gate_catalog(tmp_path)
+    create_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "epic", "title": "Intervention Pause", "prompt": "boot prompt"},
+    )
+    node_id = create_response.json()["node_id"]
+    app_client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+    app_client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+    app_client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+
+    progress = app_client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()
+    while not progress["current_subtask"]["source_subtask_key"].startswith("pause_for_user."):
+        compiled_subtask_id = progress["state"]["current_compiled_subtask_id"]
+        app_client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": compiled_subtask_id},
+        )
+        app_client.post(
+            "/api/subtasks/complete",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": compiled_subtask_id},
+        )
+        app_client.post(f"/api/nodes/{node_id}/workflow/advance", headers={"Authorization": "Bearer change-me"}, json={})
+        progress = app_client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()
+
+    catalog_response = app_client.get(f"/api/nodes/{node_id}/interventions", headers={"Authorization": "Bearer change-me"})
+    apply_response = app_client.post(
+        "/api/nodes/interventions/apply",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "node_id": node_id,
+            "intervention_kind": "pause_approval",
+            "action": "approve_pause",
+            "pause_flag_name": "user_guidance_required",
+            "summary": "approved",
+        },
+    )
+
+    assert catalog_response.status_code == 200
+    assert any(item["kind"] == "pause_approval" for item in catalog_response.json()["interventions"])
+    assert apply_response.status_code == 200
+    assert apply_response.json()["result_json"]["approved"] is True
 
 
 def test_provenance_and_rationale_endpoints_work(app_client, migrated_public_schema) -> None:
@@ -652,9 +769,15 @@ def test_child_result_and_reconcile_endpoints_report_and_record_merge_state(
     transition_node_lifecycle(db_session_factory, node_id=str(parent.node_id), target_state="READY")
     admit_node_run(db_session_factory, node_id=parent.node_id)
     _transition_to_complete(db_session_factory, node_id=str(child.node.node_id))
-    record_seed_commit(db_session_factory, version_id=parent_version.id, commit_sha="abc1234")
-    record_seed_commit(db_session_factory, version_id=child_version, commit_sha="def1234")
-    record_final_commit(db_session_factory, version_id=child_version, commit_sha="def5678")
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_version, files={"shared.txt": "base\n"}, replace_existing=True)
+    child_status = stage_live_git_change(
+        db_session_factory,
+        version_id=child_version,
+        files={"shared.txt": "base\nchild change\n"},
+        message="Child final",
+        record_as_final=True,
+    )
 
     child_results = app_client.get(f"/api/nodes/{parent.node_id}/child-results", headers={"Authorization": "Bearer change-me"})
     reconcile_before = app_client.get(f"/api/nodes/{parent.node_id}/reconcile", headers={"Authorization": "Bearer change-me"})
@@ -667,7 +790,7 @@ def test_child_result_and_reconcile_endpoints_report_and_record_merge_state(
     assert reconcile_before.json()["prompt_relative_path"] == "execution/reconcile_parent_after_merge.md"
     assert merge_response.status_code == 200
     assert merge_response.json()["status"] == "merged"
-    assert merge_response.json()["merge_events"][0]["child_final_commit_sha"] == "def5678"
+    assert merge_response.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
 
 
 def test_illegal_node_mutations_are_rejected(app_client, migrated_public_schema) -> None:
@@ -837,6 +960,8 @@ def test_session_bind_attach_and_resume_endpoints_work(monkeypatch, migrated_pub
         assert recovery_response.json()["recovery_classification"] in {"healthy", "stale_but_recoverable", "detached"}
         assert [item["event_type"] for item in events_response.json()["events"]][:2] == ["bound", "attached"]
         assert events_response.json()["events"][0]["payload_json"]["launch_command"]
+        assert "subtask prompt --node" in events_response.json()["events"][0]["payload_json"]["prompt_cli_command"]
+        assert "prompt_logs" in events_response.json()["events"][0]["payload_json"]["prompt_log_path"]
 
 
 def test_session_show_current_reports_binding_metadata_and_stale_recovery(monkeypatch, migrated_public_schema) -> None:
@@ -943,6 +1068,104 @@ def test_session_bind_rejects_missing_active_run(monkeypatch, migrated_public_sc
     assert response.status_code == 409
 
 
+def test_live_git_conflict_can_be_aborted_via_api(
+    app_client,
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Conflict", prompt="p")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    child_a = create_manual_node(db_session_factory, registry, kind="phase", title="Child A", prompt="a", parent_node_id=parent.node_id)
+    child_b = create_manual_node(db_session_factory, registry, kind="phase", title="Child B", prompt="b", parent_node_id=parent.node_id)
+
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_a.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_b.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    stage_live_git_change(
+        db_session_factory,
+        version_id=child_a.node_version_id,
+        files={"shared.txt": "base\nchild a\n"},
+        message="Child A final",
+        record_as_final=True,
+    )
+    stage_live_git_change(
+        db_session_factory,
+        version_id=child_b.node_version_id,
+        files={"shared.txt": "base\nchild b\n"},
+        message="Child B final",
+        record_as_final=True,
+    )
+
+    merge_response = app_client.post(f"/api/nodes/{parent.node_id}/git/merge-children", headers={"Authorization": "Bearer change-me"})
+    conflicts_response = app_client.get(f"/api/nodes/{parent.node_id}/git/merge-conflicts", headers={"Authorization": "Bearer change-me"})
+    abort_response = app_client.post(f"/api/nodes/{parent.node_id}/git/abort-merge", headers={"Authorization": "Bearer change-me"})
+
+    assert merge_response.status_code == 409
+    assert conflicts_response.status_code == 200
+    assert conflicts_response.json()["conflicts"]
+    assert abort_response.status_code == 200
+    assert abort_response.json()["working_tree_state"] == "seed_ready"
+
+
+def test_intervention_catalog_reports_merge_conflict_and_abort_action(
+    app_client,
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Intervention Conflict", prompt="p")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    child_a = create_manual_node(db_session_factory, registry, kind="phase", title="Child A", prompt="a", parent_node_id=parent.node_id)
+    child_b = create_manual_node(db_session_factory, registry, kind="phase", title="Child B", prompt="b", parent_node_id=parent.node_id)
+
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_a.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_b.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    child_a_status = stage_live_git_change(
+        db_session_factory,
+        version_id=child_a.node_version_id,
+        files={"shared.txt": "base\nchild a\n"},
+        message="Child A final",
+        record_as_final=True,
+    )
+    child_b_status = stage_live_git_change(
+        db_session_factory,
+        version_id=child_b.node_version_id,
+        files={"shared.txt": "base\nchild b\n"},
+        message="Child B final",
+        record_as_final=True,
+    )
+    execute_live_merge_children(
+        db_session_factory,
+        logical_node_id=parent.node_id,
+        ordered_child_versions=[
+            (child_a.node_version_id, child_a_status.final_commit_sha, 1),
+            (child_b.node_version_id, child_b_status.final_commit_sha, 2),
+        ],
+    )
+
+    catalog_response = app_client.get(f"/api/nodes/{parent.node_id}/interventions", headers={"Authorization": "Bearer change-me"})
+    apply_response = app_client.post(
+        "/api/nodes/interventions/apply",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "node_id": str(parent.node_id),
+            "intervention_kind": "merge_conflict",
+            "action": "abort_merge",
+        },
+    )
+
+    assert catalog_response.status_code == 200
+    assert any(item["kind"] == "merge_conflict" for item in catalog_response.json()["interventions"])
+    assert apply_response.status_code == 200
+    assert apply_response.json()["result_json"]["working_tree_state"] == "seed_ready"
+
+
 def test_recovery_status_reports_missing_session_and_non_resumable(monkeypatch, migrated_public_schema) -> None:
     monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
     factory = create_session_factory(engine=migrated_public_schema)
@@ -978,6 +1201,56 @@ def test_recovery_status_reports_missing_session_and_non_resumable(monkeypatch, 
     assert rejected_response.status_code == 200
     assert rejected_response.json()["status"] == "recovery_rejected"
     assert rejected_response.json()["recovery_status"]["recovery_classification"] == "non_resumable"
+
+
+def test_provider_recovery_status_and_provider_resume_rebind_restorable_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    factory = create_session_factory(engine=migrated_public_schema)
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Provider Recovery Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        provider_session_id = bind_response.json()["provider_session_id"]
+
+        with session_scope(factory) as session:
+            durable = session.get(DurableSession, UUID(session_id))
+            assert durable is not None
+            durable.tmux_session_name = "missing-session-name"
+
+        provider_status_response = client.get(
+            f"/api/nodes/{node_id}/recovery-provider-status",
+            headers={"Authorization": "Bearer change-me"},
+        )
+        provider_resume_response = client.post(
+            "/api/sessions/provider-resume",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id},
+        )
+        show_response = client.get(f"/api/nodes/{node_id}/sessions/current", headers={"Authorization": "Bearer change-me"})
+
+    assert provider_status_response.status_code == 200
+    assert provider_status_response.json()["provider_rebind_possible"] is True
+    assert provider_status_response.json()["provider_recommended_action"] == "rebind_provider_session"
+    assert provider_status_response.json()["provider_session_id"] == provider_session_id
+    assert provider_resume_response.status_code == 200
+    assert provider_resume_response.json()["status"] == "provider_session_rebound"
+    assert provider_resume_response.json()["session"]["session_id"] == session_id
+    assert provider_resume_response.json()["session"]["provider_session_id"] == provider_session_id
+    assert show_response.status_code == 200
+    assert show_response.json()["session_id"] == session_id
+    assert show_response.json()["session_name"] == provider_session_id
 
 
 def test_session_nudge_endpoint_nudges_then_escalates(monkeypatch, migrated_public_schema) -> None:

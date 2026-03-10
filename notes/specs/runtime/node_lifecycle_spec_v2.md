@@ -98,6 +98,12 @@ Rules:
 - parent, cousin, and more distant dependency edges are not allowed
 - any node whose dependencies are satisfied should be eligible to start
 
+Clarification:
+
+- top-ness is structural, not semantic
+- any node kind may be a top node if it is created without a parent and its hierarchy definition allows `allow_parentless: true`
+- `epic`, `phase`, `plan`, and `task` are semantic defaults, not exclusive top-level privileges
+
 Manual tree construction must be supported. A user may create a node at any tier and define children manually rather than relying only on automatic decomposition.
 
 If manual and layout-generated children coexist under one parent, the system should treat that child set as structurally hybrid rather than silently allowing one authority model to overwrite the other.
@@ -619,8 +625,9 @@ For ancestors:
 Implementation staging note:
 
 - the current implementation now supports the durable child-result collection part of rectification and the parent-local reconcile handoff
-- parent nodes can inspect authoritative child finals, blocked children, and deterministic merge order; successful staged merge execution records `merge_events` and writes a `parent_reconcile_context` snapshot into the active run cursor
-- real working-tree mutation for reset/merge/finalize remains deferred until the later git/runtime phases
+- parent nodes can inspect authoritative child finals, blocked children, and deterministic merge order
+- parent merge execution now shells out to live git fetch/merge across the per-version runtime repos, records durable `merge_events` and `merge_conflicts`, and writes the reconcile context into the active run cursor
+- finalize execution now creates a real finalize commit and records the resulting `final_commit_sha`
 
 ---
 
@@ -686,6 +693,23 @@ Remaining follow-on work still needed:
 
 - fold hybrid manual-vs-layout child-set rules into implementation-facing hierarchy metadata
 - finalize active-old-run handling during supersession
-Implementation note: subtree regeneration and upstream rectification now create durable candidate lineages plus `rebuild_events`; candidate cutover is blocked until the rebuild path marks the candidate stable.
+Implementation note: subtree regeneration and upstream rectification now create durable candidate lineages plus `rebuild_events`; candidate cutover is blocked until the rebuild path marks the candidate stable. The runtime now also exposes explicit rebuild-coordination and cutover-readiness reads so active-run and active-session conflicts are inspectable before mutation.
 Implementation note: the current default compiled workflow now includes `validate_node` as a durable gate after execution, and `workflow advance` enforces required validation success before the run can continue or complete.
 Implementation note: user-gated pauses are now persisted through both `node_run_state.execution_cursor_json.pause_context` and the narrow `workflow_events` history. `pause_entered`, `pause_cleared`, and `pause_resumed` are emitted durably, `node pause-state` reads the mirrored lifecycle row, and resume is blocked until the active pause flag is approved unless the daemon is performing a forced recovery action.
+## Implementation Note: Compile Variants
+
+- authoritative compile remains the default path used for current lifecycle admission
+- candidate versions can now be compiled explicitly as first-class operator targets
+- rebuild-created candidate versions can also be compiled explicitly and are surfaced as `rebuild_candidate` compile variants
+- compile variant is inspectable from compiled workflow and compile-failure payloads through frozen `compile_context` metadata
+- this phase does not change cutover rules by itself; rebuild-stability and merge-conflict gates still control candidate promotion
+
+## Implementation Note: Scheduling Explanation
+
+- the current child-scheduling slice still does not auto-start children
+- it now does expose richer scheduling explanation derived from current lifecycle, run, pause, and dependency state
+- blocked children can now explain whether they are:
+  - waiting on dependencies
+  - paused behind a gate
+  - already running
+  - not compiled or otherwise not ready

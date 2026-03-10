@@ -6,6 +6,7 @@ from aicoding.config import get_settings
 from tests.fixtures.cli import cli_runner
 from tests.fixtures.daemon import app_client, auth_headers, daemon_bridge_client, daemon_token, live_daemon_token
 from tests.fixtures.db import clean_public_schema, db_engine, db_session, db_session_factory, isolated_schema, migrated_public_schema
+from tests.fixtures.e2e import real_daemon_harness, real_daemon_harness_factory
 from tests.fixtures.resources import (
     builtin_system_yaml_root,
     default_prompt_pack_root,
@@ -38,6 +39,8 @@ __all__ = [
     "live_daemon_token",
     "migrated_public_schema",
     "prompt_render_context",
+    "real_daemon_harness",
+    "real_daemon_harness_factory",
     "resource_catalog",
     "yaml_compile_context",
 ]

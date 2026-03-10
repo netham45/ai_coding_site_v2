@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from uuid import UUID
 
-from aicoding.db.models import CompiledSubtask
+from aicoding.db.models import CompiledSubtask, Session as DurableSession
 from aicoding.db.session import create_session_factory, session_scope
 from aicoding.resources import load_resource_catalog
 
@@ -96,10 +97,52 @@ def test_session_attach_and_resume_commands_round_trip(cli_runner, daemon_bridge
     assert show_result.json()["session_id"] == session_id
     assert events_result.exit_code == 0
     assert [item["event_type"] for item in events_result.json()["events"]][:2] == ["bound", "attached"]
+    assert "subtask prompt --node" in events_result.json()["events"][0]["payload_json"]["prompt_cli_command"]
+    assert "prompt_logs" in events_result.json()["events"][0]["payload_json"]["prompt_log_path"]
     assert list_result.exit_code == 0
     assert len(list_result.json()["sessions"]) == 1
     assert recovery_result.exit_code == 0
     assert recovery_result.json()["recommended_action"] in {"attach_existing_session", "resume_existing_session"}
+
+
+def test_session_provider_resume_and_provider_recovery_status_round_trip(
+    cli_runner,
+    daemon_bridge_client,
+    monkeypatch,
+    migrated_public_schema,
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Provider CLI", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    bind_result = cli_runner(["session", "bind", "--node", node_id])
+    session_id = bind_result.json()["session_id"]
+    provider_session_id = bind_result.json()["provider_session_id"]
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    with session_scope(factory) as session:
+        durable = session.get(DurableSession, UUID(session_id))
+        assert durable is not None
+        durable.tmux_session_name = "missing-session-name"
+
+    provider_status_result = cli_runner(["node", "recovery-provider-status", "--node", node_id])
+    provider_resume_result = cli_runner(["session", "provider-resume", "--node", node_id])
+    show_result = cli_runner(["session", "show", "--node", node_id])
+
+    assert provider_status_result.exit_code == 0
+    assert provider_status_result.json()["provider_rebind_possible"] is True
+    assert provider_status_result.json()["provider_recommended_action"] == "rebind_provider_session"
+    assert provider_status_result.json()["provider_session_id"] == provider_session_id
+    assert provider_resume_result.exit_code == 0
+    assert provider_resume_result.json()["status"] == "provider_session_rebound"
+    assert provider_resume_result.json()["session"]["session_id"] == session_id
+    assert show_result.exit_code == 0
+    assert show_result.json()["session_name"] == provider_session_id
 
 
 def test_cli_subtask_prompt_and_context_include_stage_start_context(cli_runner, daemon_bridge_client, monkeypatch, migrated_public_schema) -> None:
@@ -115,6 +158,7 @@ def test_cli_subtask_prompt_and_context_include_stage_start_context(cli_runner, 
     assert prompt_result.exit_code == 0
     assert prompt_result.json()["stage_context_json"]["startup"]["node_id"] == node_id
     assert prompt_result.json()["stage_context_json"]["startup"]["trigger_reason"] == "workflow_start"
+    assert prompt_result.json()["prompt_text"]
 
     assert context_result.exit_code == 0
     assert context_result.json()["stage_context_json"]["startup"]["node_prompt"] == "boot prompt"
@@ -341,6 +385,51 @@ def test_workflow_rendering_command_returns_frozen_payloads(
     assert rendering_result.json()["compiled_subtasks"][0]["rendered_fields"]
 
 
+def test_workflow_version_target_commands_support_candidate_compile_variants(
+    cli_runner, migrated_public_schema, daemon_bridge_client, monkeypatch
+) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Candidate Variant", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    supersede_result = cli_runner(["node", "supersede", "--node", node_id, "--title", "Candidate Variant v2"])
+    version_id = supersede_result.json()["id"]
+
+    compile_result = cli_runner(["workflow", "compile", "--version", version_id])
+    show_result = cli_runner(["workflow", "show", "--version", version_id])
+    discovery_result = cli_runner(["workflow", "source-discovery", "--version", version_id])
+
+    assert compile_result.exit_code == 0
+    assert compile_result.json()["compile_context"]["compile_variant"] == "candidate"
+    assert show_result.exit_code == 0
+    assert show_result.json()["compile_context"]["compile_variant"] == "candidate"
+    assert discovery_result.exit_code == 0
+    assert discovery_result.json()["compile_context"]["compile_variant"] == "candidate"
+
+
+def test_workflow_version_target_commands_support_rebuild_compile_variants(
+    cli_runner, migrated_public_schema, daemon_bridge_client, monkeypatch
+) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Rebuild Variant", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    regenerate_result = cli_runner(["node", "regenerate", "--node", node_id])
+    rebuild_version_id = regenerate_result.json()["created_candidate_version_ids"][0]
+
+    compile_result = cli_runner(["workflow", "compile", "--version", rebuild_version_id])
+    rendering_result = cli_runner(["workflow", "rendering", "--version", rebuild_version_id])
+    failures_result = cli_runner(["workflow", "compile-failures", "--version", rebuild_version_id])
+
+    assert compile_result.exit_code == 0
+    assert compile_result.json()["compile_context"]["compile_variant"] == "rebuild_candidate"
+    assert compile_result.json()["compile_context"]["rebuild_context"]["scope"] == "subtree"
+    assert rendering_result.exit_code == 0
+    assert rendering_result.json()["compile_context"]["compile_variant"] == "rebuild_candidate"
+    assert failures_result.exit_code == 0
+    assert failures_result.json()["failures"] == []
+
+
 def test_cli_subtask_progress_and_workflow_advance_round_trip(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:
     monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
 
@@ -365,6 +454,55 @@ def test_cli_subtask_progress_and_workflow_advance_round_trip(cli_runner, daemon
     assert complete_result.exit_code == 0
     assert complete_result.json()["latest_attempt"]["status"] == "COMPLETE"
     assert advance_result.exit_code == 0
+
+
+def test_cli_subtask_result_capture_and_attempt_reads_round_trip(
+    cli_runner,
+    daemon_bridge_client,
+    migrated_public_schema,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Result Node", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    current_result = cli_runner(["subtask", "current", "--node", node_id])
+    compiled_subtask_id = current_result.json()["state"]["current_compiled_subtask_id"]
+    assert cli_runner(["subtask", "start", "--node", node_id, "--compiled-subtask", compiled_subtask_id]).exit_code == 0
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text('{"exit_code": 0, "stdout": "done"}', encoding="utf-8")
+    complete_result = cli_runner(
+        [
+            "subtask",
+            "complete",
+            "--node",
+            node_id,
+            "--compiled-subtask",
+            compiled_subtask_id,
+            "--summary",
+            "done",
+            "--result-file",
+            str(result_file),
+        ]
+    )
+    attempts_result = cli_runner(["subtask", "attempts", "--node", node_id])
+    attempt_id = complete_result.json()["latest_attempt"]["id"]
+    attempt_show_result = cli_runner(["subtask", "attempt-show", "--attempt", attempt_id])
+
+    assert complete_result.exit_code == 0
+    assert complete_result.json()["latest_attempt"]["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
+    assert complete_result.json()["latest_attempt"]["output_json"]["exit_code"] == 0
+    assert attempts_result.exit_code == 0
+    assert attempts_result.json()["attempts"][0]["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
+    assert attempt_show_result.exit_code == 0
+    assert attempt_show_result.json()["execution_result_json"] == {"exit_code": 0, "stdout": "done"}
 
 
 def test_ai_facing_cli_prompt_context_heartbeat_and_summary_round_trip(
@@ -567,6 +705,38 @@ def test_cli_regenerate_and_rebuild_history_round_trip(cli_runner, daemon_bridge
     assert {event["scope"] for event in history_result.json()["events"]} >= {"subtree", "upstream"}
     assert rebuild_show_result.exit_code == 0
     assert rebuild_show_result.json() == history_result.json()
+
+
+def test_cli_rebuild_coordination_and_cutover_readiness_round_trip(
+    cli_runner,
+    daemon_bridge_client,
+    db_session_factory,
+    migrated_public_schema,
+    monkeypatch,
+) -> None:
+    from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+    from aicoding.daemon.orchestration import apply_authority_mutation
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "CLI Coordination", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    supersede_result = cli_runner(["node", "supersede", "--node", node_id, "--title", "CLI Coordination v2"])
+    candidate_version_id = supersede_result.json()["id"]
+
+    seed_node_lifecycle(db_session_factory, node_id=node_id, initial_state="DRAFT")
+    transition_node_lifecycle(db_session_factory, node_id=node_id, target_state="COMPILED")
+    transition_node_lifecycle(db_session_factory, node_id=node_id, target_state="READY")
+    apply_authority_mutation(db_session_factory, node_id=node_id, command="node.run.start")
+
+    coordination_result = cli_runner(["node", "rebuild-coordination", "--node", node_id, "--scope", "subtree"])
+    readiness_result = cli_runner(["node", "version", "cutover-readiness", "--version", candidate_version_id])
+
+    assert coordination_result.exit_code == 0
+    assert coordination_result.json()["status"] == "blocked"
+    assert readiness_result.exit_code == 0
+    assert readiness_result.json()["status"] == "blocked"
+    assert any(item["blocker_type"] == "authoritative_active_run" for item in readiness_result.json()["blockers"])
 
 
 def test_cli_node_and_run_audit_round_trip(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch, tmp_path) -> None:
@@ -987,6 +1157,51 @@ def test_cli_testing_run_show_and_results_round_trip(
     }
 
 
+def test_cli_quality_chain_runs_turnkey_flow(
+    cli_runner,
+    daemon_bridge_client,
+    app_client,
+    migrated_public_schema,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+    app_client.app.state.resource_catalog = _testing_catalog(tmp_path)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Quality Chain CLI", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    current_payload = cli_runner(["subtask", "current", "--node", node_id]).json()
+    while current_payload["current_subtask"]["subtask_type"] != "validate":
+        current_subtask = current_payload["state"]["current_compiled_subtask_id"]
+        assert cli_runner(["subtask", "start", "--node", node_id, "--compiled-subtask", current_subtask]).exit_code == 0
+        assert cli_runner(["subtask", "complete", "--node", node_id, "--compiled-subtask", current_subtask, "--summary", "done"]).exit_code == 0
+        assert cli_runner(["workflow", "advance", "--node", node_id]).exit_code == 0
+        current_payload = cli_runner(["subtask", "current", "--node", node_id]).json()
+
+    chain_result = cli_runner(["node", "quality-chain", "--node", node_id])
+    validation_result = cli_runner(["validation", "show", "--node", node_id])
+    review_result = cli_runner(["review", "show", "--node", node_id])
+    testing_result = cli_runner(["testing", "show", "--node", node_id])
+    docs_result = cli_runner(["docs", "list", "--node", node_id])
+    summaries_result = cli_runner(["summary", "history", "--node", node_id])
+
+    assert chain_result.exit_code == 0
+    assert chain_result.json()["executed_stage_types"] == ["validate", "review", "run_tests"]
+    assert chain_result.json()["run_status"] == "COMPLETE"
+    assert chain_result.json()["provenance"]["entity_count"] > 0
+    assert chain_result.json()["docs"]
+    assert chain_result.json()["final_summary"]["summary_path"] == "summaries/final.md"
+    assert validation_result.json()["status"] == "passed"
+    assert review_result.json()["status"] == "passed"
+    assert testing_result.json()["status"] == "passed"
+    assert docs_result.json()["documents"]
+    assert any(item["summary_type"] == "node" and item["summary_path"] == "summaries/final.md" for item in summaries_result.json()["summaries"])
+
+
 def test_cli_pause_approval_and_resume_flow(
     cli_runner,
     daemon_bridge_client,
@@ -1014,14 +1229,32 @@ def test_cli_pause_approval_and_resume_flow(
         progress = cli_runner(["node", "run", "show", "--node", node_id]).json()
 
     assert paused_result is not None
+    interventions_result = cli_runner(["node", "interventions", "--node", node_id])
     pause_state_result = cli_runner(["node", "pause-state", "--node", node_id])
     blocked_resume = cli_runner(["workflow", "resume", "--node", node_id])
-    approve_result = cli_runner(["workflow", "approve", "--node", node_id, "--pause-flag", "user_guidance_required", "--summary", "approved"])
+    approve_result = cli_runner(
+        [
+            "node",
+            "intervention-apply",
+            "--node",
+            node_id,
+            "--kind",
+            "pause_approval",
+            "--action",
+            "approve_pause",
+            "--pause-flag",
+            "user_guidance_required",
+            "--summary",
+            "approved",
+        ]
+    )
     approved_pause_state = cli_runner(["node", "pause-state", "--node", node_id])
     resume_result = cli_runner(["workflow", "resume", "--node", node_id])
     events_result = cli_runner(["node", "events", "--node", node_id])
 
     assert paused_result.exit_code == 0
+    assert interventions_result.exit_code == 0
+    assert any(item["kind"] == "pause_approval" for item in interventions_result.json()["interventions"])
     assert paused_result.json()["run"]["run_status"] == "PAUSED"
     assert pause_state_result.exit_code == 0
     assert pause_state_result.json()["pause_flag_name"] == "user_guidance_required"
@@ -1030,7 +1263,7 @@ def test_cli_pause_approval_and_resume_flow(
     assert blocked_resume.stderr_json()["error"] == "daemon_conflict"
     assert "requires explicit approval" in blocked_resume.stderr_json()["details"]["response"]["detail"]
     assert approve_result.exit_code == 0
-    assert approve_result.json()["approved"] is True
+    assert approve_result.json()["result_json"]["approved"] is True
     assert approved_pause_state.json()["approved"] is True
     assert resume_result.exit_code == 0
     assert resume_result.json()["status"] == "accepted"
@@ -1056,8 +1289,29 @@ def test_cli_child_materialization_round_trip(cli_runner, daemon_bridge_client, 
     assert materialize_result.exit_code == 0
     assert materialize_result.json()["status"] == "created"
     assert [item["layout_child_id"] for item in materialize_result.json()["children"]] == ["discovery", "implementation"]
+    assert all("scheduling_reason" in item for item in materialize_result.json()["children"])
+    assert all("blockers" in item for item in materialize_result.json()["children"])
     assert after_result.exit_code == 0
     assert after_result.json()["status"] == "materialized"
+
+
+def test_cli_child_materialization_reports_dependency_blocked_children(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "CLI Blocked Parent", "--prompt", "top prompt"])
+    node_id = create_result.json()["node_id"]
+    materialize_result = cli_runner(["node", "materialize-children", "--node", node_id])
+    children = materialize_result.json()["children"]
+    implementation_child = next(item for item in children if item["layout_child_id"] == "implementation")
+    tree_result = cli_runner(["tree", "show", "--node", node_id, "--full"])
+
+    assert materialize_result.exit_code == 0
+    assert implementation_child["scheduling_status"] == "blocked_on_dependency"
+    assert implementation_child["scheduling_reason"] == "blocked_on_dependency"
+    assert implementation_child["blockers"]
+    implementation_tree_row = next(item for item in tree_result.json()["nodes"] if item["node_id"] == implementation_child["node_id"])
+    assert implementation_tree_row["scheduling_status"] == "blocked"
+    assert implementation_tree_row["blocker_count"] >= 1
 
 
 def test_cli_manual_child_create_round_trip_updates_manual_authority(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:
@@ -1073,6 +1327,37 @@ def test_cli_manual_child_create_round_trip_updates_manual_authority(cli_runner,
 
     assert child_result.exit_code == 0
     assert child_result.json()["parent_node_id"] == parent_id
+    assert materialization_result.exit_code == 0
+    assert materialization_result.json()["authority_mode"] == "manual"
+    assert materialization_result.json()["status"] == "manual"
+
+
+def test_cli_child_reconciliation_round_trip_preserves_manual_structure(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "CLI Hybrid Parent", "--prompt", "top prompt"])
+    parent_id = create_result.json()["node_id"]
+
+    materialize_result = cli_runner(["node", "materialize-children", "--node", parent_id])
+    assert materialize_result.exit_code == 0
+
+    child_result = cli_runner(
+        ["node", "child", "create", "--parent", parent_id, "--kind", "phase", "--title", "Manual Child", "--prompt", "child prompt"]
+    )
+    assert child_result.exit_code == 0
+
+    inspection_result = cli_runner(["node", "child-reconciliation", "--node", parent_id])
+    reconcile_result = cli_runner(["node", "reconcile-children", "--node", parent_id, "--decision", "preserve_manual"])
+    materialization_result = cli_runner(["node", "child-materialization", "--node", parent_id])
+
+    assert inspection_result.exit_code == 0
+    assert inspection_result.json()["authority_mode"] == "hybrid"
+    assert inspection_result.json()["available_decisions"] == ["preserve_manual"]
+    assert reconcile_result.exit_code == 0
+    assert reconcile_result.json()["authority_mode"] == "manual"
+    assert reconcile_result.json()["materialization_status"] == "manual"
+    assert reconcile_result.json()["manual_child_count"] == 3
+    assert reconcile_result.json()["layout_generated_child_count"] == 0
     assert materialization_result.exit_code == 0
     assert materialization_result.json()["authority_mode"] == "manual"
     assert materialization_result.json()["status"] == "manual"
@@ -1098,22 +1383,39 @@ def test_cli_child_results_and_reconcile_round_trip(cli_runner, daemon_bridge_cl
     assert cli_runner(["node", "lifecycle", "transition", "--node", child_id, "--state", "RUNNING"]).exit_code == 0
     assert cli_runner(["node", "lifecycle", "transition", "--node", child_id, "--state", "COMPLETE"]).exit_code == 0
 
-    daemon_bridge_client.request("POST", f"/api/node-versions/{parent_version_id}/git/seed", json_payload={"commit_sha": "abc1234"})
-    daemon_bridge_client.request("POST", f"/api/node-versions/{child_version_id}/git/seed", json_payload={"commit_sha": "def1234"})
-    daemon_bridge_client.request("POST", f"/api/node-versions/{child_version_id}/git/final", json_payload={"commit_sha": "def5678"})
+    from uuid import UUID
+
+    from aicoding.daemon.live_git import bootstrap_live_git_repo, stage_live_git_change
+
+    factory = daemon_bridge_client.client.app.state.db_session_factory
+    bootstrap_live_git_repo(factory, version_id=UUID(parent_version_id), files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(factory, version_id=UUID(child_version_id), files={"shared.txt": "base\n"}, replace_existing=True)
+    child_status = stage_live_git_change(
+        factory,
+        version_id=UUID(child_version_id),
+        files={"shared.txt": "base\nchild change\n"},
+        message="Child final",
+        record_as_final=True,
+    )
 
     child_results = cli_runner(["node", "child-results", "--node", parent_id])
     reconcile_result = cli_runner(["node", "reconcile", "--node", parent_id])
     merge_result = cli_runner(["git", "merge-children", "--node", parent_id])
+    finalize_result = cli_runner(["git", "finalize-node", "--node", parent_id])
+    status_result = cli_runner(["git", "status", "show", "--version", parent_version_id])
 
     assert child_results.exit_code == 0
     assert child_results.json()["status"] == "ready_for_reconcile"
-    assert child_results.json()["children"][0]["final_commit_sha"] == "def5678"
+    assert child_results.json()["children"][0]["final_commit_sha"] == child_status.final_commit_sha
     assert reconcile_result.exit_code == 0
     assert reconcile_result.json()["prompt_relative_path"] == "execution/reconcile_parent_after_merge.md"
     assert merge_result.exit_code == 0
     assert merge_result.json()["status"] == "merged"
-    assert merge_result.json()["merge_events"][0]["child_final_commit_sha"] == "def5678"
+    assert merge_result.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
+    assert finalize_result.exit_code == 0
+    assert finalize_result.json()["status"] == "finalized"
+    assert status_result.exit_code == 0
+    assert status_result.json()["working_tree_state"] == "finalized_clean"
 
 
 def test_cli_merge_conflict_round_trip_blocks_then_allows_cutover(

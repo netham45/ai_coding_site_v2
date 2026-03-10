@@ -25,6 +25,7 @@ Implementation staging note:
 - those prompts now carry explicit stage and recovery contracts instead of placeholder prose, and the packaged default system validates that built-in YAML prompt bindings resolve to real renderable assets
 - the current implementation now also validates the packaged runtime/hook/policy layer as one operational-library contract, so required built-in prompt assets and prompt-reference keys fail compile-time integrity checks before workflow compilation if they drift
 - the packaged `testing/interpret_test_results.md` prompt is now a daemon-exposed inspection surface for explicit testing stages, while the broader default node ladder still stages testing behind explicit task/policy/override selection instead of silently enabling `test_node` everywhere
+- the current turnkey `node quality-chain` path reuses the existing built-in review/testing/docs/provenance prompt assets and does not introduce a separate prompt family for late-chain orchestration
 - project policy now also controls prompt-pack selection at compile time, with the current implementation supporting safe selection between the packaged `default` and `project` prompt roots
 - child-node spawning currently reuses those existing layout-generation prompts and the authored built-in layout YAMLs; no separate prompt family was required just to materialize default children durably
 - manual tree construction currently does not introduce a new prompt family; explicit reconciliation guidance prompts remain deferred until the later remove/replace/reconcile phases

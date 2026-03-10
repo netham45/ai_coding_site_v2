@@ -1,0 +1,41 @@
+id: 22_dependency_blocked_sibling_wait_flow
+name: Dependency Blocked Sibling Wait Flow
+purpose: Make the canonical sibling-dependency wait path a standalone admission and blocker contract.
+simulation_sources:
+  - simulations2/01_dependency_blocked_sibling_flow.md
+covers:
+  - create two sibling child nodes under the same parent
+  - add a sibling dependency edge requiring one child to complete before the other can start
+  - verify the dependent sibling stays blocked while the dependency is incomplete
+  - verify the dependent sibling becomes runnable after the dependency reaches COMPLETE
+entry_conditions:
+  - a parent node can own at least two child nodes of the same allowed kind
+  - both sibling nodes can be compiled and transitioned to READY
+task_flow:
+  - create a parent node and two child siblings
+  - compile both siblings and transition them to READY
+  - add a sibling dependency from the second child to the first
+  - inspect dependency validation, readiness, and blockers
+  - verify start is blocked for the dependent sibling
+  - complete the dependency sibling
+  - verify the dependent sibling becomes ready and can start
+required_subtasks:
+  - create_parent_and_sibling_nodes
+  - compile_sibling_workflows
+  - add_sibling_dependency
+  - inspect_dependency_status_and_blockers
+  - verify_blocked_start
+  - complete_dependency_sibling
+  - verify_unblocked_start
+required_capabilities:
+  - workflow compile
+  - node lifecycle transition
+  - node dependency-add
+  - node dependency-validate
+  - node dependency-status
+  - node blockers
+  - node run start
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[22]
+known_limitations:
+  - the current contract covers explicit sibling dependency edges rather than the older simulation's full layout-generation path

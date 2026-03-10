@@ -6,13 +6,17 @@ import pytest
 
 from aicoding.cli.context import build_cli_context
 from aicoding.cli.handlers import (
+    handle_git_bootstrap_node,
     handle_node_children,
     handle_node_respond_to_child_failure,
     handle_subtask_retry,
     handle_subtask_list,
     handle_task_current,
     handle_task_list,
+    handle_workflow_compile,
+    handle_workflow_compile_failures,
     handle_workflow_hook_policy,
+    handle_workflow_show,
     handle_workflow_override_resolution,
     handle_workflow_rendering,
     handle_workflow_schema_validation,
@@ -129,6 +133,16 @@ def test_node_audit_argument_parsing_sets_handler() -> None:
 
     assert args.command == "node"
     assert args.node_command == "audit"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_node_quality_chain_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "quality-chain", "--node", "node-123"])
+
+    assert args.command == "node"
+    assert args.node_command == "quality-chain"
     assert args.node == "node-123"
     assert args.handler
 
@@ -349,6 +363,27 @@ def test_node_child_materialization_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_node_child_reconciliation_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "child-reconciliation", "--node", "node-123"])
+
+    assert args.command == "node"
+    assert args.node_command == "child-reconciliation"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_node_reconcile_children_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "reconcile-children", "--node", "node-123", "--decision", "preserve_manual"])
+
+    assert args.command == "node"
+    assert args.node_command == "reconcile-children"
+    assert args.node == "node-123"
+    assert args.decision == "preserve_manual"
+    assert args.handler
+
+
 def test_node_child_results_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["node", "child-results", "--node", "node-123"])
@@ -541,6 +576,45 @@ def test_node_approve_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_node_interventions_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "interventions", "--node", "node-123"])
+
+    assert args.command == "node"
+    assert args.node_command == "interventions"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_node_intervention_apply_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "node",
+            "intervention-apply",
+            "--node",
+            "node-123",
+            "--kind",
+            "pause_approval",
+            "--action",
+            "approve_pause",
+            "--pause-flag",
+            "user_guidance_required",
+            "--summary",
+            "approved",
+        ]
+    )
+
+    assert args.command == "node"
+    assert args.node_command == "intervention-apply"
+    assert args.node == "node-123"
+    assert args.kind == "pause_approval"
+    assert args.action == "approve_pause"
+    assert args.pause_flag == "user_guidance_required"
+    assert args.summary == "approved"
+    assert args.handler
+
+
 def test_workflow_approve_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["workflow", "approve", "--node", "node-123"])
@@ -594,6 +668,28 @@ def test_rebuild_show_argument_parsing_sets_handler() -> None:
     assert args.command == "rebuild"
     assert args.rebuild_command == "show"
     assert args.node == "node-123"
+    assert args.handler
+
+
+def test_node_rebuild_coordination_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "rebuild-coordination", "--node", "node-123", "--scope", "upstream"])
+
+    assert args.command == "node"
+    assert args.node_command == "rebuild-coordination"
+    assert args.node == "node-123"
+    assert args.scope == "upstream"
+    assert args.handler
+
+
+def test_node_version_cutover_readiness_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "version", "cutover-readiness", "--version", "version-123"])
+
+    assert args.command == "node"
+    assert args.node_command == "version"
+    assert args.node_version_command == "cutover-readiness"
+    assert args.version == "version-123"
     assert args.handler
 
 
@@ -791,6 +887,22 @@ def test_workflow_source_discovery_handler_uses_daemon_backed_workflow_stage(mon
     assert calls == [("GET", "/api/nodes/node-123/workflow/source-discovery", None)]
 
 
+def test_workflow_source_discovery_handler_supports_version_target(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class StubClient:
+        def request(self, method: str, path: str, json_payload: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, path, json_payload))
+            return {"compiled_workflow_id": "workflow-1", "discovery_order": []}
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: StubClient())
+
+    payload = handle_workflow_source_discovery(Namespace(node=None, version="version-123", workflow=None), build_cli_context())
+
+    assert payload["compiled_workflow_id"] == "workflow-1"
+    assert calls == [("GET", "/api/node-versions/version-123/workflow/source-discovery", None)]
+
+
 def test_workflow_schema_validation_handler_uses_daemon_backed_workflow_stage(monkeypatch) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
 
@@ -858,6 +970,86 @@ def test_workflow_rendering_handler_uses_daemon_backed_workflow_stage(monkeypatc
     assert calls == [("GET", "/api/nodes/node-123/workflow/rendering", None)]
 
 
+def test_workflow_show_handler_supports_version_target(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class StubClient:
+        def request(self, method: str, path: str, json_payload: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, path, json_payload))
+            return {"id": "workflow-1", "node_version_id": "version-123", "logical_node_id": "node-123"}
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: StubClient())
+
+    payload = handle_workflow_show(Namespace(node=None, version="version-123", workflow=None, run=None), build_cli_context())
+
+    assert payload["id"] == "workflow-1"
+    assert calls == [("GET", "/api/node-versions/version-123/workflow/current", None)]
+
+
+def test_workflow_compile_handler_supports_version_target(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class StubClient:
+        def request(self, method: str, path: str, json_payload: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, path, json_payload))
+            return {"status": "compiled", "node_version_id": "version-123"}
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: StubClient())
+
+    payload = handle_workflow_compile(Namespace(node=None, version="version-123"), build_cli_context())
+
+    assert payload["status"] == "compiled"
+    assert calls == [("POST", "/api/node-versions/version-123/workflow/compile", {})]
+
+
+def test_workflow_compile_failures_handler_supports_version_target(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class StubClient:
+        def request(self, method: str, path: str, json_payload: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, path, json_payload))
+            return {"failures": []}
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: StubClient())
+
+    payload = handle_workflow_compile_failures(Namespace(node=None, version="version-123", workflow=None, run=None), build_cli_context())
+
+    assert payload["failures"] == []
+    assert calls == [("GET", "/api/node-versions/version-123/workflow/compile-failures", None)]
+
+
+def test_git_bootstrap_node_handler_uses_daemon_backed_bootstrap(monkeypatch, tmp_path) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    files_path = tmp_path / "files.json"
+    files_path.write_text('{"shared.txt": "base\\n"}', encoding="utf-8")
+
+    class StubClient:
+        def request(self, method: str, path: str, json_payload: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, path, json_payload))
+            return {"node_version_id": "version-123", "repo_path": "/tmp/repo", "working_tree_state": "seed_ready"}
+
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: StubClient())
+
+    payload = handle_git_bootstrap_node(
+        Namespace(version="version-123", base_version="version-000", files_file=str(files_path), replace_existing=True),
+        build_cli_context(),
+    )
+
+    assert payload["node_version_id"] == "version-123"
+    assert calls == [
+        (
+            "POST",
+            "/api/node-versions/version-123/git/bootstrap",
+            {
+                "version_id": "version-123",
+                "base_version_id": "version-000",
+                "replace_existing": True,
+                "files_json": {"shared.txt": "base\n"},
+            },
+        )
+    ]
+
+
 def test_git_merge_events_show_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["git", "merge-events", "show", "--node", "node-123"])
@@ -869,6 +1061,31 @@ def test_git_merge_events_show_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_git_bootstrap_node_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "git",
+            "bootstrap-node",
+            "--version",
+            "version-123",
+            "--base-version",
+            "version-000",
+            "--files-file",
+            "files.json",
+            "--replace-existing",
+        ]
+    )
+
+    assert args.command == "git"
+    assert args.git_command == "bootstrap-node"
+    assert args.version == "version-123"
+    assert args.base_version == "version-000"
+    assert args.files_file == "files.json"
+    assert args.replace_existing is True
+    assert args.handler
+
+
 def test_git_merge_children_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["git", "merge-children", "--node", "node-123"])
@@ -876,6 +1093,37 @@ def test_git_merge_children_argument_parsing_sets_handler() -> None:
     assert args.command == "git"
     assert args.git_command == "merge-children"
     assert args.node == "node-123"
+    assert args.handler
+
+
+def test_git_abort_merge_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["git", "abort-merge", "--node", "node-123"])
+
+    assert args.command == "git"
+    assert args.git_command == "abort-merge"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_git_finalize_node_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["git", "finalize-node", "--node", "node-123"])
+
+    assert args.command == "git"
+    assert args.git_command == "finalize-node"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_git_status_show_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["git", "status", "show", "--version", "version-123"])
+
+    assert args.command == "git"
+    assert args.git_command == "status"
+    assert args.git_status_command == "show"
+    assert args.version == "version-123"
     assert args.handler
 
 
@@ -929,6 +1177,56 @@ def test_node_children_versions_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_subtask_attempts_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["subtask", "attempts", "--node", "node-123"])
+
+    assert args.command == "subtask"
+    assert args.subtask_command == "attempts"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_subtask_attempt_show_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["subtask", "attempt-show", "--attempt", "attempt-123"])
+
+    assert args.command == "subtask"
+    assert args.subtask_command == "attempt-show"
+    assert args.attempt == "attempt-123"
+    assert args.handler
+
+
+def test_subtask_complete_argument_parsing_supports_result_file() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["subtask", "complete", "--node", "node-123", "--compiled-subtask", "subtask-1", "--result-file", "result.json"])
+
+    assert args.command == "subtask"
+    assert args.subtask_command == "complete"
+    assert args.result_file == "result.json"
+    assert args.handler
+
+
+def test_node_recovery_provider_status_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["node", "recovery-provider-status", "--node", "node-123"])
+
+    assert args.command == "node"
+    assert args.node_command == "recovery-provider-status"
+    assert args.node == "node-123"
+    assert args.handler
+
+
+def test_session_provider_resume_argument_parsing_sets_handler() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["session", "provider-resume", "--node", "node-123"])
+
+    assert args.command == "session"
+    assert args.session_command == "provider-resume"
+    assert args.node == "node-123"
+    assert args.handler
+
+
 def test_node_ancestors_to_root_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["node", "ancestors", "--node", "node-123", "--to-root"])
@@ -969,6 +1267,16 @@ def test_workflow_source_discovery_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_workflow_source_discovery_argument_parsing_supports_version_target() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["workflow", "source-discovery", "--version", "version-123"])
+
+    assert args.command == "workflow"
+    assert args.workflow_command == "source-discovery"
+    assert args.version == "version-123"
+    assert args.handler
+
+
 def test_workflow_schema_validation_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["workflow", "schema-validation", "--node", "node-123"])
@@ -1006,6 +1314,16 @@ def test_workflow_rendering_argument_parsing_sets_handler() -> None:
     assert args.command == "workflow"
     assert args.workflow_command == "rendering"
     assert args.node == "node-123"
+    assert args.handler
+
+
+def test_workflow_compile_argument_parsing_supports_version_target() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["workflow", "compile", "--version", "version-123"])
+
+    assert args.command == "workflow"
+    assert args.workflow_command == "compile"
+    assert args.version == "version-123"
     assert args.handler
 
 

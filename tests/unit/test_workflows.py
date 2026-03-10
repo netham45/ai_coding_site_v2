@@ -6,10 +6,13 @@ from sqlalchemy import select
 
 from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle
-from aicoding.daemon.versioning import initialize_node_version, load_node_version
+from aicoding.daemon.regeneration import regenerate_node_and_descendants
+from aicoding.daemon.versioning import create_superseding_node_version, initialize_node_version, load_node_version
 from aicoding.daemon.workflows import (
     compile_node_workflow,
+    compile_node_version_workflow,
     list_compile_failures_for_node,
+    load_node_version_workflow,
     load_current_workflow,
     load_workflow_hooks_for_node,
     load_workflow_chain_for_node,
@@ -80,6 +83,48 @@ def test_compile_node_workflow_persists_linear_snapshot(db_session_factory, migr
     assert lifecycle.lifecycle_state == "COMPILED"
     assert current.resolved_yaml["rendering"]["canonical_syntax"] == "{{variable}}"
     assert current.resolved_yaml["rendering"]["compiled_subtasks"][0]["rendered_fields"][0]["field"] == "prompt"
+
+
+def test_compile_node_version_workflow_marks_candidate_variant_context(db_session_factory, migrated_public_schema) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Candidate Compile", prompt="ship it")
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+    candidate = create_superseding_node_version(db_session_factory, logical_node_id=node.node_id, title="Candidate Compile v2")
+
+    result = compile_node_version_workflow(db_session_factory, version_id=candidate.id, catalog=catalog)
+    current_candidate = load_node_version_workflow(db_session_factory, version_id=candidate.id)
+
+    assert result.status == "compiled"
+    assert result.compile_context["compile_variant"] == "candidate"
+    assert result.compile_context["version_status"] == "candidate"
+    assert result.compile_context["rebuild_context"] is None
+    assert current_candidate.compile_context["compile_variant"] == "candidate"
+    assert current_candidate.resolved_yaml["compile_context"]["compile_variant"] == "candidate"
+
+
+def test_compile_node_version_workflow_marks_rebuild_candidate_context(db_session_factory, migrated_public_schema) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Rebuild Compile", prompt="ship it")
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+
+    regeneration = regenerate_node_and_descendants(db_session_factory, logical_node_id=node.node_id, catalog=catalog)
+    rebuild_version_id = regeneration.created_candidate_version_ids[0]
+
+    result = compile_node_version_workflow(db_session_factory, version_id=rebuild_version_id, catalog=catalog)
+    rebuilt = load_node_version_workflow(db_session_factory, version_id=rebuild_version_id)
+
+    assert result.status == "compiled"
+    assert result.compile_context["compile_variant"] == "rebuild_candidate"
+    assert result.compile_context["version_status"] == "candidate"
+    assert result.compile_context["rebuild_context"]["scope"] == "subtree"
+    assert rebuilt.compile_context["compile_variant"] == "rebuild_candidate"
+    assert rebuilt.resolved_yaml["compile_context"]["rebuild_context"]["event_kind"] in {"candidate_created", "workflow_compiled", "rectified"}
 
 
 def test_compile_node_workflow_records_failure_and_clears_binding(db_session_factory, migrated_public_schema) -> None:

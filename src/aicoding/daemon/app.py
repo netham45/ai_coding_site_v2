@@ -27,9 +27,17 @@ from aicoding.daemon.branches import (
     record_final_commit,
     record_seed_commit,
 )
-from aicoding.daemon.child_reconcile import collect_child_results, execute_child_merge_pipeline, inspect_parent_reconcile
+from aicoding.daemon.child_reconcile import collect_child_results, inspect_parent_reconcile
 from aicoding.daemon.child_sessions import load_child_session_result, pop_child_session, push_child_session
 from aicoding.daemon.history import get_prompt_record, get_summary_record, list_prompt_history, list_summary_history
+from aicoding.daemon.interventions import apply_node_intervention, list_node_interventions
+from aicoding.daemon.live_git import (
+    abort_live_merge,
+    bootstrap_live_git_repo,
+    execute_live_merge_children,
+    finalize_live_git_state,
+    show_live_git_status,
+)
 from aicoding.daemon.database import durable_write_probe
 from aicoding.daemon.docs_runtime import build_node_docs, build_tree_docs, list_docs_for_node, show_docs_for_node
 from aicoding.daemon.environments import load_attempt_environment, load_current_subtask_environment, list_environment_policies
@@ -58,6 +66,8 @@ from aicoding.daemon.regeneration import (
     rectify_upstream,
     regenerate_node_and_descendants,
 )
+from aicoding.daemon.quality_chain import run_turnkey_quality_chain
+from aicoding.daemon.rebuild_coordination import inspect_cutover_readiness, inspect_rebuild_coordination
 from aicoding.daemon.reproducibility import load_node_audit_snapshot, load_run_audit_snapshot
 from aicoding.daemon.review_runtime import (
     list_review_results_for_node,
@@ -84,6 +94,8 @@ from aicoding.daemon.models import (
     ChildSessionPushRequest,
     ChildSessionResponse,
     ChildSessionResultResponse,
+    ChildReconciliationRequest,
+    ChildReconciliationResponse,
     ChildResultCollectionResponse,
     ChildFailureCounterCatalogResponse,
     CommitRecordRequest,
@@ -110,6 +122,12 @@ from aicoding.daemon.models import (
     GitBranchResponse,
     HealthResponse,
     HierarchyNodeResponse,
+    InterventionActionResponse,
+    InterventionApplyRequest,
+    InterventionCatalogResponse,
+    LiveGitFinalizeResponse,
+    LiveGitBootstrapRequest,
+    LiveGitStatusResponse,
     MaterializationResponse,
     MergeConflictCatalogResponse,
     MergeConflictRecordRequest,
@@ -152,6 +170,8 @@ from aicoding.daemon.models import (
     ParentReconcileResponse,
     PromptHistoryCatalogResponse,
     PromptHistoryRecordResponse,
+    QualityChainResponse,
+    RebuildCoordinationResponse,
     ProvenanceRefreshResponse,
     RationaleResponse,
     RunProgressResponse,
@@ -160,6 +180,7 @@ from aicoding.daemon.models import (
     ProjectPolicyCatalogResponse,
     ProjectPolicyResponse,
     RebuildHistoryResponse,
+    CutoverReadinessResponse,
     RebuildEventResponse,
     RegenerationResponse,
     ReviewResultCatalogResponse,
@@ -167,6 +188,8 @@ from aicoding.daemon.models import (
     ReviewSummaryResponse,
     ResolvedYamlCatalogResponse,
     SchemaCompatibilityResponse,
+    ProviderSessionRecoveryActionResponse,
+    ProviderSessionRecoveryStatusResponse,
     SessionNudgeResponse,
     SessionRecoveryActionResponse,
     SessionRecoveryStatusResponse,
@@ -175,6 +198,8 @@ from aicoding.daemon.models import (
     SessionAuditResponse,
     SessionEventCatalogResponse,
     SessionEventResponse,
+    SubtaskAttemptCatalogResponse,
+    SubtaskAttemptResponse,
     SubtaskContextResponse,
     SubtaskMutationRequest,
     SubtaskPromptResponse,
@@ -203,7 +228,12 @@ from aicoding.project_policies import list_project_policies, policy_impact_for_n
 from aicoding.daemon.hierarchy import get_hierarchy_node, list_ancestors, list_children, sync_hierarchy_definitions
 from aicoding.daemon.lifecycle import load_node_lifecycle, transition_node_lifecycle, update_node_cursor
 from aicoding.daemon.manual_tree import create_manual_node
-from aicoding.daemon.materialization import inspect_materialized_children, materialize_layout_children
+from aicoding.daemon.materialization import (
+    inspect_child_reconciliation,
+    inspect_materialized_children,
+    materialize_layout_children,
+    reconcile_child_authority,
+)
 from aicoding.daemon.orchestration import apply_authority_mutation, load_authority_state
 from aicoding.daemon.parent_failures import handle_child_failure_at_parent, list_child_failure_counters, list_parent_decision_history
 from aicoding.daemon.provenance import (
@@ -228,9 +258,11 @@ from aicoding.daemon.run_orchestration import (
     fail_current_subtask,
     heartbeat_current_subtask,
     list_node_runs,
+    list_subtask_attempts_for_node,
     load_current_subtask_context,
     load_current_subtask_prompt,
     load_current_run_progress,
+    load_subtask_attempt,
     register_summary,
     retry_current_subtask,
     start_subtask_attempt,
@@ -245,8 +277,10 @@ from aicoding.daemon.session_records import (
     get_session_for_node,
     list_session_events,
     list_sessions_for_node,
+    load_provider_recovery_status,
     load_recovery_status,
     nudge_primary_session,
+    recover_primary_session_provider_specific,
     recover_primary_session,
     resume_primary_session,
     show_current_primary_session,
@@ -260,30 +294,42 @@ from aicoding.daemon.versioning import (
 )
 from aicoding.daemon.workflows import (
     compile_node_workflow,
+    compile_node_version_workflow,
     list_compile_failures_for_node,
+    list_compile_failures_for_version,
     list_compile_failures_for_workflow,
     load_current_workflow,
+    load_node_version_workflow,
     load_workflow_hook_policy,
     load_workflow_hook_policy_for_node,
+    load_workflow_hook_policy_for_version,
     load_override_chain,
     load_override_chain_for_node,
     load_workflow_override_resolution,
     load_workflow_override_resolution_for_node,
+    load_workflow_override_resolution_for_version,
     load_resolved_yaml,
     load_resolved_yaml_for_node,
+    load_resolved_yaml_for_version,
     load_workflow,
     load_workflow_chain,
     load_workflow_chain_for_node,
+    load_workflow_chain_for_version,
     load_workflow_hooks,
     load_workflow_hooks_for_node,
+    load_workflow_hooks_for_version,
     load_workflow_source_discovery,
     load_workflow_source_discovery_for_node,
+    load_workflow_source_discovery_for_version,
     load_workflow_schema_validation,
     load_workflow_schema_validation_for_node,
+    load_workflow_schema_validation_for_version,
     load_workflow_sources,
     load_workflow_sources_for_node,
+    load_workflow_sources_for_version,
     load_workflow_rendering,
     load_workflow_rendering_for_node,
+    load_workflow_rendering_for_version,
 )
 from aicoding.db.bootstrap import database_status
 from aicoding.db.migrations import migration_status
@@ -336,7 +382,7 @@ async def lifespan(app: FastAPI):
     app.state.auth_context = initialize_auth_context(settings)
     app.state.db_engine = engine
     app.state.db_session_factory = create_session_factory(engine=engine)
-    app.state.resource_catalog = load_resource_catalog()
+    app.state.resource_catalog = load_resource_catalog(settings)
     app.state.hierarchy_registry = load_hierarchy_registry(app.state.resource_catalog)
     app.state.background_registry = BackgroundTaskRegistry()
     app.state.session_adapter = build_session_adapter(settings)
@@ -625,6 +671,32 @@ def create_app() -> FastAPI:
         )
 
     @app.post(
+        "/api/sessions/provider-resume",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ProviderSessionRecoveryActionResponse,
+    )
+    def provider_resume_session(
+        payload: MutationEnvelope,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> ProviderSessionRecoveryActionResponse:
+        decision = recover_primary_session_provider_specific(
+            session_factory,
+            logical_node_id=UUID(payload.node_id),
+            adapter=adapter,
+            poller=poller,
+        )
+        return ProviderSessionRecoveryActionResponse.model_validate(
+            {
+                "status": decision.status,
+                "provider_recovery_status": decision.provider_recovery_status.to_payload(),
+                "recovery_status": decision.recovery_status.to_payload(),
+                "session": None if decision.session is None else _session_state_response(decision.session).model_dump(),
+            }
+        )
+
+    @app.post(
         "/api/sessions/nudge",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=SessionNudgeResponse,
@@ -711,6 +783,25 @@ def create_app() -> FastAPI:
     ) -> SessionRecoveryStatusResponse:
         snapshot = load_recovery_status(session_factory, logical_node_id=UUID(node_id), adapter=adapter, poller=poller)
         return SessionRecoveryStatusResponse.model_validate(snapshot.to_payload())
+
+    @app.get(
+        "/api/nodes/{node_id}/recovery-provider-status",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ProviderSessionRecoveryStatusResponse,
+    )
+    def show_provider_recovery_status(
+        node_id: str,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> ProviderSessionRecoveryStatusResponse:
+        snapshot = load_provider_recovery_status(
+            session_factory,
+            logical_node_id=UUID(node_id),
+            adapter=adapter,
+            poller=poller,
+        )
+        return ProviderSessionRecoveryStatusResponse.model_validate(snapshot.to_payload())
 
     @app.post(
         "/api/node-runs/start",
@@ -1025,6 +1116,27 @@ def create_app() -> FastAPI:
             ).to_payload()
         )
 
+    @app.get(
+        "/api/nodes/{node_id}/subtask-attempts",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=SubtaskAttemptCatalogResponse,
+    )
+    def show_subtask_attempts_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> SubtaskAttemptCatalogResponse:
+        node_run_id, attempts = list_subtask_attempts_for_node(session_factory, logical_node_id=UUID(node_id))
+        return SubtaskAttemptCatalogResponse(
+            node_id=node_id,
+            node_run_id=str(node_run_id),
+            attempts=[SubtaskAttemptResponse.model_validate(item.to_payload()) for item in attempts],
+        )
+
+    @app.get(
+        "/api/subtask-attempts/{attempt_id}",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=SubtaskAttemptResponse,
+    )
+    def show_subtask_attempt(attempt_id: str, session_factory=Depends(get_db_session_factory)) -> SubtaskAttemptResponse:
+        return SubtaskAttemptResponse.model_validate(load_subtask_attempt(session_factory, attempt_id=UUID(attempt_id)).to_payload())
+
     @app.post(
         "/api/subtasks/complete",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
@@ -1037,6 +1149,7 @@ def create_app() -> FastAPI:
                 logical_node_id=UUID(payload.node_id),
                 compiled_subtask_id=UUID(payload.compiled_subtask_id),
                 output_json=payload.output_json,
+                execution_result_json=payload.execution_result_json,
                 summary=payload.summary,
             ).to_payload()
         )
@@ -1053,6 +1166,7 @@ def create_app() -> FastAPI:
                 logical_node_id=UUID(payload.node_id),
                 compiled_subtask_id=UUID(payload.compiled_subtask_id),
                 summary=payload.summary or "subtask failed",
+                execution_result_json=payload.execution_result_json,
             ).to_payload()
         )
 
@@ -1427,6 +1541,24 @@ def create_app() -> FastAPI:
             evaluate_testing_subtask(session_factory, logical_node_id=UUID(node_id), catalog=resource_catalog).to_payload()
         )
 
+    @app.post(
+        "/api/nodes/{node_id}/quality-chain/run",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=QualityChainResponse,
+    )
+    def run_quality_chain_for_node(
+        node_id: str,
+        session_factory=Depends(get_db_session_factory),
+        resource_catalog=Depends(get_resource_catalog),
+    ) -> QualityChainResponse:
+        return QualityChainResponse.model_validate(
+            run_turnkey_quality_chain(
+                session_factory,
+                logical_node_id=UUID(node_id),
+                catalog=resource_catalog,
+            ).to_payload()
+        )
+
     @app.get("/api/node-kinds", dependencies=[Depends(require_bearer_token)], response_model=NodeKindCatalogResponse)
     def list_node_kinds(hierarchy_registry=Depends(get_hierarchy_registry)) -> NodeKindCatalogResponse:
         definitions = [
@@ -1626,6 +1758,20 @@ def create_app() -> FastAPI:
             ).to_payload()
         )
 
+    @app.post(
+        "/api/node-versions/{version_id}/workflow/compile",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=WorkflowCompileAttemptResponse,
+    )
+    def compile_workflow_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> WorkflowCompileAttemptResponse:
+        return WorkflowCompileAttemptResponse.model_validate(
+            compile_node_version_workflow(
+                session_factory,
+                version_id=UUID(version_id),
+                catalog=app.state.resource_catalog,
+            ).to_payload()
+        )
+
     @app.get(
         "/api/nodes/{node_id}/workflow/current",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
@@ -1633,6 +1779,14 @@ def create_app() -> FastAPI:
     )
     def show_current_workflow(node_id: str, session_factory=Depends(get_db_session_factory)) -> CompiledWorkflowResponse:
         return CompiledWorkflowResponse.model_validate(load_current_workflow(session_factory, logical_node_id=UUID(node_id)).to_payload())
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/current",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=CompiledWorkflowResponse,
+    )
+    def show_workflow_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> CompiledWorkflowResponse:
+        return CompiledWorkflowResponse.model_validate(load_node_version_workflow(session_factory, version_id=UUID(version_id)).to_payload())
 
     @app.get(
         "/api/workflows/{workflow_id}",
@@ -1649,6 +1803,14 @@ def create_app() -> FastAPI:
     )
     def show_workflow_chain_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> WorkflowChainResponse:
         return WorkflowChainResponse.model_validate(load_workflow_chain_for_node(session_factory, logical_node_id=UUID(node_id)).to_payload())
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/chain",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=WorkflowChainResponse,
+    )
+    def show_workflow_chain_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> WorkflowChainResponse:
+        return WorkflowChainResponse.model_validate(load_workflow_chain_for_version(session_factory, version_id=UUID(version_id)).to_payload())
 
     @app.get(
         "/api/workflows/{workflow_id}/chain",
@@ -1673,6 +1835,13 @@ def create_app() -> FastAPI:
         return load_workflow_sources_for_node(session_factory, logical_node_id=UUID(node_id))
 
     @app.get(
+        "/api/node-versions/{version_id}/workflow/sources",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_sources_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_sources_for_version(session_factory, version_id=UUID(version_id))
+
+    @app.get(
         "/api/workflows/{workflow_id}/source-discovery",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
     )
@@ -1685,6 +1854,13 @@ def create_app() -> FastAPI:
     )
     def show_workflow_source_discovery_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
         return load_workflow_source_discovery_for_node(session_factory, logical_node_id=UUID(node_id))
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/source-discovery",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_source_discovery_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_source_discovery_for_version(session_factory, version_id=UUID(version_id))
 
     @app.get(
         "/api/workflows/{workflow_id}/schema-validation",
@@ -1701,6 +1877,13 @@ def create_app() -> FastAPI:
         return load_workflow_schema_validation_for_node(session_factory, logical_node_id=UUID(node_id))
 
     @app.get(
+        "/api/node-versions/{version_id}/workflow/schema-validation",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_schema_validation_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_schema_validation_for_version(session_factory, version_id=UUID(version_id))
+
+    @app.get(
         "/api/workflows/{workflow_id}/override-resolution",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
     )
@@ -1713,6 +1896,13 @@ def create_app() -> FastAPI:
     )
     def show_workflow_override_resolution_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
         return load_workflow_override_resolution_for_node(session_factory, logical_node_id=UUID(node_id))
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/override-resolution",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_override_resolution_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_override_resolution_for_version(session_factory, version_id=UUID(version_id))
 
     @app.get(
         "/api/workflows/{workflow_id}/hooks",
@@ -1733,6 +1923,16 @@ def create_app() -> FastAPI:
         )
 
     @app.get(
+        "/api/node-versions/{version_id}/workflow/hooks",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=WorkflowHookCatalogResponse,
+    )
+    def show_workflow_hooks_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> WorkflowHookCatalogResponse:
+        return WorkflowHookCatalogResponse.model_validate(
+            load_workflow_hooks_for_version(session_factory, version_id=UUID(version_id))
+        )
+
+    @app.get(
         "/api/workflows/{workflow_id}/hook-policy",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
     )
@@ -1747,6 +1947,13 @@ def create_app() -> FastAPI:
         return load_workflow_hook_policy_for_node(session_factory, logical_node_id=UUID(node_id))
 
     @app.get(
+        "/api/node-versions/{version_id}/workflow/hook-policy",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_hook_policy_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_hook_policy_for_version(session_factory, version_id=UUID(version_id))
+
+    @app.get(
         "/api/workflows/{workflow_id}/rendering",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
     )
@@ -1759,6 +1966,13 @@ def create_app() -> FastAPI:
     )
     def show_workflow_rendering_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
         return load_workflow_rendering_for_node(session_factory, logical_node_id=UUID(node_id))
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/rendering",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+    )
+    def show_workflow_rendering_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> dict[str, object]:
+        return load_workflow_rendering_for_version(session_factory, version_id=UUID(version_id))
 
     @app.get(
         "/api/nodes/{node_id}/yaml/override-chain",
@@ -1799,6 +2013,26 @@ def create_app() -> FastAPI:
         )
 
     @app.get(
+        "/api/node-versions/{version_id}/yaml/resolved",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ResolvedYamlCatalogResponse,
+    )
+    def show_resolved_yaml_for_version(
+        version_id: str,
+        family: str | None = None,
+        document_id: str | None = None,
+        session_factory=Depends(get_db_session_factory),
+    ) -> ResolvedYamlCatalogResponse:
+        return ResolvedYamlCatalogResponse.model_validate(
+            load_resolved_yaml_for_version(
+                session_factory,
+                version_id=UUID(version_id),
+                target_family=family,
+                target_id=document_id,
+            )
+        )
+
+    @app.get(
         "/api/workflows/{workflow_id}/yaml/resolved",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=ResolvedYamlCatalogResponse,
@@ -1825,6 +2059,15 @@ def create_app() -> FastAPI:
     )
     def show_compile_failures_for_node(node_id: str, session_factory=Depends(get_db_session_factory)) -> CompileFailureCatalogResponse:
         failures = list_compile_failures_for_node(session_factory, logical_node_id=UUID(node_id))
+        return CompileFailureCatalogResponse(failures=[item.to_payload() for item in failures])
+
+    @app.get(
+        "/api/node-versions/{version_id}/workflow/compile-failures",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=CompileFailureCatalogResponse,
+    )
+    def show_compile_failures_for_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> CompileFailureCatalogResponse:
+        failures = list_compile_failures_for_version(session_factory, version_id=UUID(version_id))
         return CompileFailureCatalogResponse(failures=[item.to_payload() for item in failures])
 
     @app.get(
@@ -1883,6 +2126,26 @@ def create_app() -> FastAPI:
         )
 
     @app.get(
+        "/api/nodes/{node_id}/rebuild-coordination",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=RebuildCoordinationResponse,
+    )
+    def show_rebuild_coordination(node_id: str, scope: str = "subtree", session_factory=Depends(get_db_session_factory)) -> RebuildCoordinationResponse:
+        return RebuildCoordinationResponse.model_validate(
+            inspect_rebuild_coordination(session_factory, logical_node_id=UUID(node_id), scope=scope).to_payload()
+        )
+
+    @app.get(
+        "/api/node-versions/{version_id}/cutover-readiness",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=CutoverReadinessResponse,
+    )
+    def show_cutover_readiness(version_id: str, session_factory=Depends(get_db_session_factory)) -> CutoverReadinessResponse:
+        return CutoverReadinessResponse.model_validate(
+            inspect_cutover_readiness(session_factory, version_id=UUID(version_id)).to_payload()
+        )
+
+    @app.get(
         "/api/nodes/{node_id}/lifecycle",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=NodeLifecycleStateResponse,
@@ -1935,6 +2198,42 @@ def create_app() -> FastAPI:
         return MaterializationResponse.model_validate(snapshot.to_payload())
 
     @app.get(
+        "/api/nodes/{node_id}/children/reconciliation",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ChildReconciliationResponse,
+    )
+    def show_node_child_reconciliation(
+        node_id: str,
+        session_factory=Depends(get_db_session_factory),
+        resources=Depends(get_resource_catalog),
+    ) -> ChildReconciliationResponse:
+        snapshot = inspect_child_reconciliation(
+            session_factory,
+            resources,
+            logical_node_id=UUID(node_id),
+        )
+        return ChildReconciliationResponse.model_validate(snapshot.to_payload())
+
+    @app.post(
+        "/api/nodes/{node_id}/children/reconcile",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ChildReconciliationResponse,
+    )
+    def reconcile_node_children(
+        node_id: str,
+        payload: ChildReconciliationRequest,
+        session_factory=Depends(get_db_session_factory),
+        resources=Depends(get_resource_catalog),
+    ) -> ChildReconciliationResponse:
+        snapshot = reconcile_child_authority(
+            session_factory,
+            resources,
+            logical_node_id=UUID(node_id),
+            decision=payload.decision,
+        )
+        return ChildReconciliationResponse.model_validate(snapshot.to_payload())
+
+    @app.get(
         "/api/nodes/{node_id}/child-results",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=ChildResultCollectionResponse,
@@ -1957,6 +2256,27 @@ def create_app() -> FastAPI:
         return ParentReconcileResponse.model_validate(snapshot.to_payload())
 
     @app.post(
+        "/api/node-versions/{version_id}/git/bootstrap",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=LiveGitStatusResponse,
+    )
+    def bootstrap_node_version_git_state(
+        version_id: str,
+        payload: LiveGitBootstrapRequest,
+        session_factory=Depends(get_db_session_factory),
+    ) -> LiveGitStatusResponse:
+        if payload.version_id != version_id:
+            raise DaemonConflictError("bootstrap payload version_id must match the path version_id")
+        snapshot = bootstrap_live_git_repo(
+            session_factory,
+            version_id=UUID(version_id),
+            files=payload.files_json,
+            base_version_id=None if payload.base_version_id is None else UUID(payload.base_version_id),
+            replace_existing=payload.replace_existing,
+        )
+        return LiveGitStatusResponse.model_validate(snapshot.to_payload())
+
+    @app.post(
         "/api/nodes/{node_id}/git/merge-children",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=ParentReconcileResponse,
@@ -1966,8 +2286,53 @@ def create_app() -> FastAPI:
         session_factory=Depends(get_db_session_factory),
         resources=Depends(get_resource_catalog),
     ) -> ParentReconcileResponse:
-        snapshot = execute_child_merge_pipeline(session_factory, resources, logical_node_id=UUID(node_id))
-        return ParentReconcileResponse.model_validate(snapshot.to_payload())
+        reconcile = inspect_parent_reconcile(session_factory, resources, logical_node_id=UUID(node_id))
+        ordered_children = [
+            (UUID(item["child_node_version_id"]), str(item["final_commit_sha"]), int(item["merge_order"]))
+            for item in reconcile.child_results.to_payload()["children"]
+            if item["merge_order"] is not None and item["final_commit_sha"] is not None
+        ]
+        live_result = execute_live_merge_children(session_factory, logical_node_id=UUID(node_id), ordered_child_versions=ordered_children)
+        if live_result.status == "conflicted":
+            raise DaemonConflictError("live child merge encountered conflicts; inspect merge-conflicts and abort or resolve before retrying")
+        snapshot = ParentReconcileResponse.model_validate(
+            {
+                **reconcile.to_payload(),
+                "status": live_result.status,
+                "merge_events": [item.to_payload() for item in live_result.merge_events],
+                "context_json": {
+                    **reconcile.context_json,
+                    "repo_path": live_result.repo_path,
+                    "head_commit_sha": live_result.head_commit_sha,
+                    "working_tree_state": live_result.working_tree_state,
+                },
+            }
+        )
+        return snapshot
+
+    @app.post(
+        "/api/nodes/{node_id}/git/abort-merge",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=LiveGitStatusResponse,
+    )
+    def abort_node_merge(node_id: str, session_factory=Depends(get_db_session_factory)) -> LiveGitStatusResponse:
+        return LiveGitStatusResponse.model_validate(abort_live_merge(session_factory, logical_node_id=UUID(node_id)).to_payload())
+
+    @app.post(
+        "/api/nodes/{node_id}/git/finalize",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=LiveGitFinalizeResponse,
+    )
+    def finalize_node_git_state(node_id: str, session_factory=Depends(get_db_session_factory)) -> LiveGitFinalizeResponse:
+        return LiveGitFinalizeResponse.model_validate(finalize_live_git_state(session_factory, logical_node_id=UUID(node_id)).to_payload())
+
+    @app.get(
+        "/api/node-versions/{version_id}/git/status",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=LiveGitStatusResponse,
+    )
+    def show_node_version_git_status(version_id: str, session_factory=Depends(get_db_session_factory)) -> LiveGitStatusResponse:
+        return LiveGitStatusResponse.model_validate(show_live_git_status(session_factory, version_id=UUID(version_id)).to_payload())
 
     @app.get(
         "/api/nodes/{node_id}/ancestors",
@@ -1993,6 +2358,55 @@ def create_app() -> FastAPI:
     def show_tree(node_id: str, session_factory=Depends(get_db_session_factory)) -> TreeCatalogResponse:
         snapshot = load_tree_catalog(session_factory, root_node_id=UUID(node_id))
         return TreeCatalogResponse(root_node_id=str(snapshot.root_node_id), nodes=[TreeNodeResponse.model_validate(item.to_payload()) for item in snapshot.nodes])
+
+    @app.get(
+        "/api/nodes/{node_id}/interventions",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=InterventionCatalogResponse,
+    )
+    def show_node_interventions(
+        node_id: str,
+        session_factory=Depends(get_db_session_factory),
+        resources=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> InterventionCatalogResponse:
+        return InterventionCatalogResponse.model_validate(
+            list_node_interventions(
+                session_factory,
+                resources,
+                logical_node_id=UUID(node_id),
+                adapter=adapter,
+                poller=poller,
+            ).to_payload()
+        )
+
+    @app.post(
+        "/api/nodes/interventions/apply",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=InterventionActionResponse,
+    )
+    def apply_intervention(
+        payload: InterventionApplyRequest,
+        session_factory=Depends(get_db_session_factory),
+        resources=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> InterventionActionResponse:
+        return InterventionActionResponse.model_validate(
+            apply_node_intervention(
+                session_factory,
+                resources,
+                logical_node_id=UUID(payload.node_id),
+                intervention_kind=payload.intervention_kind,
+                action=payload.action,
+                summary=payload.summary,
+                conflict_id=None if payload.conflict_id is None else UUID(payload.conflict_id),
+                pause_flag_name=payload.pause_flag_name,
+                adapter=adapter,
+                poller=poller,
+            ).to_payload()
+        )
 
     @app.get(
         "/api/nodes/{node_id}/pause-state",

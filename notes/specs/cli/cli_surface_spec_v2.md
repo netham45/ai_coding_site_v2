@@ -105,6 +105,8 @@ Implementation staging note:
 
 - `node child-materialization --node <id>` is now implemented as a daemon-backed read of the current layout-materialization state
 - `node materialize-children --node <id>` is now the explicit mutation path for default built-in layout materialization
+- `node child-reconciliation --node <id>` now exposes the current manual/layout authority mode, available reconciliation decisions, and child-origin counts
+- `node reconcile-children --node <id> --decision preserve_manual` now performs the currently supported explicit hybrid-reconciliation mutation
 - `node child-results --node <id>` now exposes authoritative child finals, deterministic merge order, and blocked-child classification for the current parent version
 - `node reconcile --node <id>` now exposes the staged parent-local reconcile prompt and the current derived reconcile context
 
@@ -258,18 +260,29 @@ Implementation staging note:
 - `ai-tool node pause-state --node <id>`
 - `ai-tool node approve --node <id> --pause-flag <flag>`
 - `ai-tool workflow approve --node <id> --pause-flag <flag>`
+- `ai-tool node interventions --node <id>`
+- `ai-tool node intervention-apply --node <id> --kind <kind> --action <action>`
 
 Implementation staging note:
 
 - `node pause-state --node <id>` is now implemented as a focused view over the durable lifecycle row for the node
 - `node approve --node <id>` and `workflow approve --node <id>` now mark the active pause flag approved without resuming yet
 - `workflow resume --node <id>` still targets `/api/nodes/resume`, but resume now rejects unapproved non-manual pause flags with a structured conflict payload
+- `node interventions --node <id>` now exposes the current bounded unified intervention catalog for pause approval, child reconciliation, merge conflict, session recovery, and blocked cutover attention
+- `node intervention-apply --node <id> --kind <kind> --action <action>` now routes the currently supported intervention mutations through one explicit daemon-owned command instead of separate ad hoc paths
+- the current apply surface supports:
+  - `pause_approval -> approve_pause`
+  - `child_reconciliation -> preserve_manual`
+  - `merge_conflict -> abort_merge|resolve_conflict`
+  - `session_recovery -> resume_session`
+- blocked cutover is currently read-only on this surface and rebuild-specific intervention actions remain deferred
 
 ### Show decision history
 
 - `ai-tool node decision-history --node <id>`
 - `ai-tool node child-failures --node <id>`
 - `ai-tool node respond-to-child-failure --node <id> --child <child_id> [--action retry_child|regenerate_child|replan_parent|pause_for_user]`
+- `ai-tool node quality-chain --node <id>`
 
 ### Show node event history
 
@@ -290,6 +303,8 @@ Implementation staging note:
 - `node child-failures --node <id>` now reads the durable per-child counters for the latest parent run
 - `node decision-history --node <id>` now reads `workflow_events` filtered to `event_scope = parent_decision`
 - `node respond-to-child-failure --node <id> --child <child_id>` now applies the daemon-owned parent decision algorithm and supports explicit operator override via `--action`
+- parent failure reads now expose the expanded matrix detail, including `failure_origin`, `decision_reason`, `options_considered`, threshold triggers, and the frozen threshold policy used for the decision
+- `node quality-chain --node <id>` now runs the built-in validation, review, testing, provenance, docs, and final-summary path as one daemon-owned late-chain command once the active run has reached its quality stages
 
 ### Show audit bundle
 
@@ -458,11 +473,13 @@ Implementation staging note:
 - `ai-tool subtask attempts --node <id>`
 - `ai-tool subtask attempts --run <id>`
 - `ai-tool subtask attempts --compiled-subtask <id>`
+- `ai-tool subtask attempt-show --attempt <id>`
 
 Implementation staging note:
 
-- full subtask-attempt inspection commands remain planned
-- the current daemon-backed surfaces expose only the latest attempt for the current cursor through `subtask current` and the subtask mutation responses
+- the current implementation now supports daemon-backed attempt history by node through `subtask attempts --node <id>` and single-attempt inspection through `subtask attempt-show --attempt <id>`
+- run-targeted and compiled-subtask-targeted attempt listing remain deferred until a dedicated run-scoped attempt catalog is added
+- `subtask current` and mutation responses still mirror the latest attempt inline for compatibility, but they are no longer the only attempt-inspection surface
 
 ### Show subtask logs, context, output
 
@@ -532,12 +549,17 @@ Implementation staging note:
 - `ai-tool subtask start --compiled-subtask <id>`
 - `ai-tool subtask heartbeat --compiled-subtask <id>`
 - `ai-tool subtask complete --compiled-subtask <id>`
+- `ai-tool subtask complete --compiled-subtask <id> --result-file result.json`
 - `ai-tool subtask fail --compiled-subtask <id> --summary-file <path>`
+- `ai-tool subtask fail --compiled-subtask <id> --result-file result.json`
 
 Implementation staging note:
 
 - `subtask fail` now accepts the documented `--summary-file <path>` contract on the CLI and still allows the existing inline `--summary` compatibility path
 - the CLI reads the failure summary file locally and sends the content to the daemon as the durable failure summary
+- `subtask complete` and `subtask fail` now also accept `--result-file <path>`; the CLI reads JSON locally and sends it as the explicit execution-result payload for the attempt
+- the daemon persists that explicit payload in `execution_result_json` and mirrors it into `output_json` for compatibility with already-implemented validation, review, testing, and history logic
+- this slice still does not make ordinary shell or tool execution daemon-owned; it makes session-reported execution results explicit and durably inspectable
 - `subtask heartbeat` is now implemented as a durable update on the active attempt and run cursor metadata, not yet as a dedicated heartbeat-history table
 
 ### Summary registration
@@ -554,6 +576,7 @@ Implementation staging note:
 
 - `ai-tool session nudge --node <id>`
 - `ai-tool session resume --node <id>`
+- `ai-tool session provider-resume --node <id>`
 - `ai-tool session attach --node <id>`
 
 Rule:
@@ -719,12 +742,20 @@ This capability may be implemented differently, but a CLI-driven automation path
 - `ai-tool git reset-node-to-seed --node <id>`
 - `ai-tool git merge-current-children --node <id> --ordered`
 - `ai-tool git finalize-node --node <id>`
+- `ai-tool git bootstrap-node --version <id> [--base-version <id>] [--files-file <path>] [--replace-existing]`
 
 Implementation staging note:
 
-- the current implementation slice ships the read-side git inspection commands plus daemon-side seed/final commit registration
-- destructive git operations such as reset, merge, and finalize remain deferred to the later rectification and merge phases
-- `ai-tool git merge-children --node <id>` is now implemented as the staged metadata-backed child-merge command: it records replayable `merge_events` and durable reconcile context without yet shelling out to live git merge/reset operations
+- the current implementation slice now ships both the read-side git inspection commands and the live git mutation surfaces for bootstrap, merge, abort-merge, and finalize
+- `ai-tool git bootstrap-node --version <id>` creates or recreates the daemon-owned per-version live git repo
+- when `--base-version <id>` is supplied, bootstrap seeds the repo from that parent version's recorded seed commit
+- when `--files-file <path>` is supplied, the JSON payload must map relative file paths to file contents for the seed commit
+- `ai-tool git merge-children --node <id>` shells out to real git fetch/merge across the per-version runtime repos and records durable `merge_events` and `merge_conflicts`
+- `ai-tool git abort-merge --node <id>` restores the authoritative parent repo back to its recorded seed commit
+- `ai-tool git finalize-node --node <id>` creates a real finalize commit and records the resulting `final_commit_sha`
+- rebuild/cutover coordination is now explicitly inspectable before mutation through:
+  - `node rebuild-coordination --node <id> --scope subtree|upstream`
+  - `node version cutover-readiness --version <id>`
 
 ### Rectification
 
@@ -788,6 +819,8 @@ Implementation staging note:
 - the current CLI surface is implemented as `entity show`, `entity history`, `entity relations`, and `entity changed-by`
 - `entity changed-by` is currently the changed-only view over the same durable `node_entity_changes` history rather than a separate schema family
 - `node provenance-refresh --node <id>` is the daemon-backed mutation that refreshes durable provenance for the authoritative node version before those read surfaces are queried
+- the current multilanguage slice keeps the same CLI shape while expanding extraction to Python plus JavaScript/TypeScript implementation code
+- richer provenance entity families such as endpoints, tests, and types remain deferred, so these commands still query the current shared `module|class|function|method` model
 
 ---
 
@@ -819,17 +852,22 @@ Implementation staging note:
 - `ai-tool session attach --node <id>`
 - `ai-tool session resume --node <id>`
 - `ai-tool session recover --node <id>`
+- `ai-tool session provider-resume --node <id>`
 - `ai-tool session nudge --node <id>`
 - `ai-tool node recovery-status --node <id>`
+- `ai-tool node recovery-provider-status --node <id>`
 
 Implementation staging note:
 
 - `session attach --node <id>` still reuses the durable primary session when its harness session still exists
 - `session resume --node <id>` and `session recover --node <id>` now run the provider-agnostic recovery classifier and return a structured recovery result
+- `node recovery-provider-status --node <id>` now exposes provider-aware restoration details such as provider session existence, provider rebind possibility, and provider-specific next action
+- `session provider-resume --node <id>` now attempts provider-aware rebound first and only falls back to provider-agnostic recovery when direct provider restoration is unavailable
 - `session nudge --node <id>` now performs daemon-owned idle inspection and returns a structured nudge/escalation result
 - `node recovery-status --node <id>` now shows the daemon's current recovery classification and recommended action
 - `session show --node <id>`, `session show --session <id>`, and `session show-current` now also include the daemon's `recommended_action` whenever the row represents a primary session bound to an active run, so the control surface is directly actionable without forcing a separate recovery-status lookup
 - if the durable primary session exists but the harness session is gone, recovery preserves the old session row as `LOST` and creates a replacement durable primary session
+- if the durable tmux pointer is stale but the persisted provider session still exists on the current backend, provider-aware recovery now rebinds the existing durable session instead of creating a replacement
 - if the run is marked non-resumable, recovery is rejected without creating a new session
 - if duplicate active primary sessions are detected, recovery pauses for user instead of guessing ownership
 - `session bind --node <id>` and `session attach --node <id>` now also reject duplicate active primary-session rows instead of silently reusing an arbitrary record
@@ -984,3 +1022,21 @@ Remaining follow-on work still needed:
 - finalize which workflow-event and decision-history surfaces ship in the first implementation slice
 - align implementation slicing with this command surface
 Implementation note: the CLI now exposes `node regenerate --node <id>`, `node rectify-upstream --node <id>`, and `node rebuild-history --node <id>` against the daemon-backed rebuild history surface.
+## Implementation Note: Candidate And Rebuild Compile Variants
+
+- workflow compile and compile-stage inspection commands now support `--version <node_version_id>` in addition to the existing authoritative `--node` target
+- this makes candidate-version compile and rebuild-candidate compile explicit operator workflows instead of implicit internal-only paths
+- version-targeted workflow payloads now include `compile_context` with:
+  - `compile_variant`
+  - `version_status`
+  - rebuild metadata when the version belongs to a rebuild lineage
+- compile-stage reads remain backed by the persisted compiled workflow snapshot rather than a second transient compile pipeline
+
+## Implementation Note: Richer Child Scheduling And Blocker Explanation
+
+- `node child-materialization --node <id>` now returns richer per-child scheduling detail:
+  - `scheduling_status`
+  - `scheduling_reason`
+  - blocker payloads
+- `node blockers --node <id>` now reflects both dependency-derived and runtime-derived blockers such as pause gates, missing compiled workflows, already-running nodes, and non-ready lifecycle states
+- `tree show --node <id> --full` now includes summarized scheduling visibility on each row through `scheduling_status` and `blocker_count`

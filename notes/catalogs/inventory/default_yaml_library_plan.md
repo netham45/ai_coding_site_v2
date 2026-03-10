@@ -664,3 +664,9 @@ At that point, the system is ready to either:
 
 1. write the actual built-in YAML documents, or
 2. fold the library design into `yaml_schemas_spec_v2.md`
+
+Interpretation rule:
+
+- this exit criterion is about planning readiness for the default YAML library design
+- it does not mean the built-in YAML library is implemented, verified, or release-ready in the current repo
+- use the checklist layer for current implementation and proving status

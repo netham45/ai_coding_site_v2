@@ -41,6 +41,10 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
     "performance: performance-oriented harnesses and smoke checks",
+    "e2e_real: full real end-to-end flow tests using a real daemon process and real CLI/API boundaries",
+    "requires_git: tests that require git binaries and real repository operations",
+    "requires_tmux: tests that require tmux-backed session orchestration",
+    "requires_ai_provider: tests that require live AI-provider credentials and responses",
 ]
 
 [tool.coverage.run]

@@ -75,6 +75,10 @@ ALLOWED_NODE_TRANSITIONS = {
 
 CURSOR_MUTABLE_STATES = {"RUNNING", "PAUSED_FOR_USER"}
 
+LIFECYCLE_STATE_ALIASES = {
+    "PAUSED": "PAUSED_FOR_USER",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class NodeLifecycleSnapshot:
@@ -195,6 +199,10 @@ def _apply_transition(
     return record
 
 
+def normalize_lifecycle_state(target_state: str) -> str:
+    return LIFECYCLE_STATE_ALIASES.get(target_state, target_state)
+
+
 def seed_node_lifecycle(session_factory: sessionmaker[Session], *, node_id: str, initial_state: str = "DRAFT") -> NodeLifecycleSnapshot:
     with session_scope(session_factory) as session:
         _lock_node(session, node_id)
@@ -221,6 +229,7 @@ def transition_node_lifecycle(
     target_state: str,
     pause_flag_name: str | None = None,
 ) -> NodeLifecycleSnapshot:
+    target_state = normalize_lifecycle_state(target_state)
     with session_scope(session_factory) as session:
         _lock_node(session, node_id)
         record = session.execute(_lifecycle_query(node_id)).scalar_one_or_none()

@@ -383,6 +383,7 @@ class SubtaskAttempt(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     input_context_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     output_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    execution_result_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     execution_environment_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     changed_files_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     git_head_before: Mapped[str | None] = mapped_column(String(64), nullable=True)

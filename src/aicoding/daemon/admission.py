@@ -179,6 +179,7 @@ def check_node_dependency_readiness(
 ) -> DependencyReadinessSnapshot:
     with session_scope(session_factory) as session:
         node_version = _authoritative_version(session, node_id)
+        lifecycle = session.get(NodeLifecycleState, str(node_id))
         validation = _validate_dependency_graph(session, node_id=node_id, persist=False)
         if validation.status != "valid":
             blockers = _persist_blockers(
@@ -197,10 +198,6 @@ def check_node_dependency_readiness(
             )
 
         dependencies = _dependencies_for_version(session, node_version.id)
-        if not dependencies:
-            blockers = _persist_blockers(session, node_version_id=node_version.id, blockers=[])
-            return DependencyReadinessSnapshot(node_id=node_id, node_version_id=node_version.id, status="ready", blockers=blockers)
-
         blockers: list[DependencyBlockerSnapshot] = []
         for dependency in dependencies:
             target = _resolve_authoritative_target(session, dependency)
@@ -244,6 +241,7 @@ def check_node_dependency_readiness(
                         },
                     )
                 )
+        blockers = _runtime_blockers(node_version=node_version, lifecycle=lifecycle, blockers=blockers)
         blockers = _persist_blockers(session, node_version_id=node_version.id, blockers=blockers)
         if any(item.blocker_kind == "impossible_wait" for item in blockers):
             status = "impossible_wait"
@@ -260,14 +258,7 @@ def check_node_dependency_readiness(
 
 
 def list_node_blockers(session_factory: sessionmaker[Session], *, node_id: UUID) -> list[DependencyBlockerSnapshot]:
-    with query_session_scope(session_factory) as session:
-        node_version = _authoritative_version(session, node_id)
-        rows = session.execute(
-            select(NodeDependencyBlocker)
-            .where(NodeDependencyBlocker.node_version_id == node_version.id)
-            .order_by(NodeDependencyBlocker.created_at, NodeDependencyBlocker.id)
-        ).scalars().all()
-        return [_blocker_snapshot(row) for row in rows]
+    return check_node_dependency_readiness(session_factory, node_id=node_id).blockers
 
 
 def admit_node_run(
@@ -280,26 +271,6 @@ def admit_node_run(
     with query_session_scope(session_factory) as session:
         node_version = _authoritative_version(session, node_id)
         lifecycle = session.get(NodeLifecycleState, str(node_id))
-        if node_version.compiled_workflow_id is None:
-            return NodeRunAdmissionSnapshot(
-                node_id=node_id,
-                node_version_id=node_version.id,
-                status="blocked",
-                reason="missing_compiled_workflow",
-                current_state=lifecycle.lifecycle_state,
-                current_run_id=lifecycle.current_run_id,
-                blockers=[],
-            )
-        if lifecycle.pause_flag_name:
-            return NodeRunAdmissionSnapshot(
-                node_id=node_id,
-                node_version_id=node_version.id,
-                status="blocked",
-                reason="pause_gate_active",
-                current_state=lifecycle.lifecycle_state,
-                current_run_id=lifecycle.current_run_id,
-                blockers=[],
-            )
         try:
             authority = load_authority_state(session_factory, str(node_id))
         except DaemonNotFoundError:
@@ -312,17 +283,18 @@ def admit_node_run(
                 reason="active_run_conflict",
                 current_state=authority.current_state,
                 current_run_id=authority.current_run_id,
-                blockers=[],
-            )
-        if lifecycle is None or lifecycle.lifecycle_state != "READY":
-            return NodeRunAdmissionSnapshot(
-                node_id=node_id,
-                node_version_id=node_version.id,
-                status="blocked",
-                reason="incompatible_lifecycle_state",
-                current_state=None if lifecycle is None else lifecycle.lifecycle_state,
-                current_run_id=None if lifecycle is None else lifecycle.current_run_id,
-                blockers=[],
+                blockers=[
+                    DependencyBlockerSnapshot(
+                        blocker_kind="already_running",
+                        dependency_id=None,
+                        node_version_id=node_version.id,
+                        target_node_version_id=None,
+                        details_json={
+                            "current_run_id": None if authority.current_run_id is None else str(authority.current_run_id),
+                            "current_state": authority.current_state,
+                        },
+                    )
+                ],
             )
     if readiness.status != "ready":
         return NodeRunAdmissionSnapshot(
@@ -518,6 +490,73 @@ def _authoritative_version(session: Session, node_id: UUID) -> NodeVersion:
     if version is None:
         raise DaemonNotFoundError("node version not found")
     return version
+
+
+def _runtime_blockers(
+    *,
+    node_version: NodeVersion,
+    lifecycle: NodeLifecycleState | None,
+    blockers: list[DependencyBlockerSnapshot],
+) -> list[DependencyBlockerSnapshot]:
+    if node_version.compiled_workflow_id is None:
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="not_compiled",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={"message": "node version has no compiled workflow"},
+            )
+        )
+    if lifecycle is None:
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="lifecycle_not_ready",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={"message": "node lifecycle row is missing"},
+            )
+        )
+        return blockers
+    if lifecycle.pause_flag_name:
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="pause_gate_active",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={
+                    "pause_flag_name": lifecycle.pause_flag_name,
+                    "run_status": lifecycle.run_status,
+                    "is_resumable": lifecycle.is_resumable,
+                },
+            )
+        )
+    if lifecycle.run_status in {"PENDING", "RUNNING"}:
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="already_running",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={
+                    "run_status": lifecycle.run_status,
+                    "current_run_id": None if lifecycle.current_run_id is None else str(lifecycle.current_run_id),
+                },
+            )
+        )
+    if lifecycle.lifecycle_state not in {"READY", "RUNNING", "PAUSED_FOR_USER", "COMPLETE"}:
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="lifecycle_not_ready",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={"lifecycle_state": lifecycle.lifecycle_state},
+            )
+        )
+    return blockers
 
 
 def _dependency_snapshot(row: NodeDependency) -> NodeDependencySnapshot:

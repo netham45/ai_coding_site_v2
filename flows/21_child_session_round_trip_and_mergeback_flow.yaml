@@ -1,0 +1,42 @@
+id: 21_child_session_round_trip_and_mergeback_flow
+name: Child Session Round Trip And Merge-Back Flow
+purpose: Make delegated child work, structured return payloads, and parent-context merge-back a standalone runtime contract.
+simulation_sources:
+  - simulations/17_child_session_mergeback_flow.md
+  - simulations2/04_child_session_round_trip_flow.md
+covers:
+  - push a delegated child session from an active parent run
+  - persist a structured child-session result artifact
+  - project that result back into the parent context
+  - verify the parent remains on the same current subtask after merge-back
+entry_conditions:
+  - a node exists with a compiled workflow and an active run
+  - a primary session is bound to that run
+task_flow:
+  - create and compile a node
+  - start the run and bind the primary session
+  - push a child session for the current parent subtask
+  - pop the child session with a structured JSON result
+  - inspect the stored child result and current parent subtask context
+required_subtasks:
+  - create_parent_node
+  - compile_parent_workflow
+  - start_parent_run
+  - bind_primary_session
+  - push_child_session
+  - pop_child_session_with_result
+  - inspect_child_result
+  - inspect_parent_context_after_mergeback
+required_capabilities:
+  - workflow compile
+  - node run start
+  - session bind
+  - session push
+  - session pop
+  - session result show
+  - subtask current
+  - subtask context
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[21]
+known_limitations:
+  - the current contract covers bounded delegated child sessions on the fake session backend rather than full provider-specific child execution

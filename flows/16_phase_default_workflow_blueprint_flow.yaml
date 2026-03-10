@@ -1,0 +1,30 @@
+id: 16_phase_default_workflow_blueprint_flow
+name: Phase Default Workflow Blueprint Flow
+purpose: Make the current built-in phase workflow ladder an executable contract for compile-time inspection.
+simulation_sources:
+  - simulations/09_phase_default_flow.md
+covers:
+  - compile the built-in phase node kind
+  - inspect the default compiled task ladder for phase
+  - verify the current default ladder stays stable unless changed deliberately
+entry_conditions:
+  - the built-in phase node definition exists
+  - a phase node can be created under an epic parent and compiled
+task_flow:
+  - create the required epic parent
+  - create a phase child
+  - compile the phase workflow
+  - inspect the compiled task sequence
+required_subtasks:
+  - create_epic_parent
+  - create_phase_node
+  - compile_phase_workflow
+  - inspect_phase_task_sequence
+required_capabilities:
+  - node create
+  - workflow compile
+  - workflow current
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[16]
+known_limitations:
+  - the current built-in phase ladder is narrower than the older simulation ladder and currently compiles to research_context, execute_node, validate_node, and review_node

@@ -22,7 +22,7 @@ def test_migrated_public_schema_fixture_applies_head_revision(migrated_public_sc
     with migrated_public_schema.connect() as connection:
         revision = connection.execute(text("select version_num from alembic_version")).scalar_one()
 
-    assert revision == "0027_provenance_docs_audit_views"
+    assert revision == "0028_subtask_execution_results"
 
 
 def test_daemon_bridge_client_routes_authenticated_requests(daemon_bridge_client) -> None:

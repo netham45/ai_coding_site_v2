@@ -76,9 +76,12 @@ Recommended failure classes:
 - `review_failure`
 - `test_failure`
 - `merge_conflict_unresolved`
+- `manual_tree_conflict`
+- `rectification_failure`
 - `bad_layout_or_bad_requirements`
 - `dependency_or_context_failure`
 - `environment_failure`
+- `provider_recovery_failure`
 - `unknown_failure`
 
 These classes do not need to be exposed exactly as written, but the decision logic needs categories like them.
@@ -160,6 +163,7 @@ Implementation staging note:
 
 - the current implementation now persists per-child counters in `node_run_child_failure_counters` with the latest failure class, summary, subtask key, failed child run id, and last chosen decision
 - parent decisions are recorded in `workflow_events` with `event_scope = parent_decision` and event types `parent_retry_child`, `parent_regenerate_child`, `parent_replan`, and `parent_pause_for_user`
+- decision payloads now include explicit matrix detail: `failure_origin`, `classification_reason`, `decision_reason`, `options_considered`, `threshold_triggered`, `threshold_reason`, and the frozen threshold policy snapshot used for the decision
 - the first implementation slice deliberately reuses `pause_context` plus `workflow_events` for pause/replan summaries instead of creating a separate dedicated parent-summary table
 
 ## Step 2: Classify the failure
@@ -203,6 +207,21 @@ If true:
 - schedule child retry or rerun
 - record the decision
 - return
+
+Current retryability guidance in the shipped matrix:
+
+- `transient_execution_failure` -> prefer `retry_child` while threshold budget remains
+- `environment_failure` -> prefer `retry_child` while threshold budget remains
+- `merge_conflict_unresolved` -> prefer `regenerate_child`
+- `rectification_failure` -> prefer `regenerate_child`
+- `validation_failure` -> prefer `replan_parent`
+- `review_failure` -> prefer `replan_parent`
+- `test_failure` -> prefer `replan_parent`
+- `bad_layout_or_bad_requirements` -> prefer `replan_parent`
+- `dependency_or_context_failure` -> prefer `replan_parent`
+- `manual_tree_conflict` -> prefer `replan_parent`
+- `provider_recovery_failure` -> prefer `pause_for_user`
+- `unknown_failure` -> prefer `pause_for_user`
 
 ## Step 5: Check whether child regeneration is appropriate
 

@@ -1,0 +1,32 @@
+id: 18_task_default_workflow_blueprint_flow
+name: Task Default Workflow Blueprint Flow
+purpose: Make the current built-in task workflow ladder an executable contract for compile-time inspection.
+simulation_sources:
+  - simulations/11_task_default_flow.md
+covers:
+  - compile the built-in task node kind
+  - inspect the default compiled task ladder for task
+  - verify the current default ladder stays stable unless changed deliberately
+entry_conditions:
+  - the built-in task node definition exists
+  - a task node can be created under a plan parent and compiled
+task_flow:
+  - create the required epic, phase, and plan ancestors
+  - create a task node
+  - compile the task workflow
+  - inspect the compiled task sequence
+required_subtasks:
+  - create_epic_parent
+  - create_phase_parent
+  - create_plan_parent
+  - create_task_node
+  - compile_task_workflow
+  - inspect_task_task_sequence
+required_capabilities:
+  - node create
+  - workflow compile
+  - workflow current
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[18]
+known_limitations:
+  - the current built-in task ladder is narrower than the older simulation ladder and currently compiles to execute_node, validate_node, and review_node

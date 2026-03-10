@@ -115,7 +115,9 @@ Implementation staging note:
 - the current implementation now persists manual child creation through the same `node_children` and `parent_child_authority` records used by layout materialization
 - first manual child insertion under a parent with no structural authority record creates `authority_mode = manual`
 - manual child insertion under a `layout_authoritative` parent flips the parent to `hybrid` and clears the authoritative layout hash so later layout rematerialization cannot proceed silently
-- manual remove/reorder/replace flows are still deferred; this slice only closes manual child creation and mixed-authority detection
+- `node child-reconciliation --node <id>` now exposes whether a hybrid tree can take the currently supported `preserve_manual` decision
+- `node reconcile-children --node <id> --decision preserve_manual` now converts the current hybrid child set into a fully manual child set by rewriting child-edge origin metadata and clearing layout authority
+- manual remove/reorder/replace flows and structural layout replacement are still deferred
 
 ---
 

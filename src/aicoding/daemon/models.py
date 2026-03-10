@@ -17,6 +17,7 @@ class SubtaskMutationRequest(AICodingModel):
     node_id: str
     compiled_subtask_id: str
     output_json: dict[str, object] | None = None
+    execution_result_json: dict[str, object] | None = None
     summary: str | None = None
 
 
@@ -66,6 +67,14 @@ class NodeCursorUpdateRequest(MutationEnvelope):
 class PauseApprovalRequest(MutationEnvelope):
     pause_flag_name: str | None = None
     approval_summary: str | None = None
+
+
+class InterventionApplyRequest(MutationEnvelope):
+    intervention_kind: str
+    action: str
+    summary: str | None = None
+    conflict_id: str | None = None
+    pause_flag_name: str | None = None
 
 
 class SessionStateResponse(AICodingModel):
@@ -132,8 +141,32 @@ class SessionRecoveryStatusResponse(AICodingModel):
     duplicate_active_primary_sessions: int
 
 
+class ProviderSessionRecoveryStatusResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    node_run_id: str
+    session_id: str | None = None
+    provider: str | None = None
+    provider_session_id: str | None = None
+    provider_supported: bool
+    provider_session_exists: bool | None = None
+    tmux_session_name: str | None = None
+    tmux_session_exists: bool | None = None
+    provider_rebind_possible: bool
+    provider_recommended_action: str
+    provider_reason: str | None = None
+    recovery_status: SessionRecoveryStatusResponse
+
+
 class SessionRecoveryActionResponse(AICodingModel):
     status: str
+    recovery_status: SessionRecoveryStatusResponse
+    session: SessionStateResponse | None = None
+
+
+class ProviderSessionRecoveryActionResponse(AICodingModel):
+    status: str
+    provider_recovery_status: ProviderSessionRecoveryStatusResponse
     recovery_status: SessionRecoveryStatusResponse
     session: SessionStateResponse | None = None
 
@@ -293,6 +326,8 @@ class MaterializedChildResponse(AICodingModel):
     title: str
     lifecycle_state: str
     scheduling_status: str
+    scheduling_reason: str | None = None
+    blockers: list["DependencyBlockerResponse"] = Field(default_factory=list)
 
 
 class MaterializationResponse(AICodingModel):
@@ -306,6 +341,23 @@ class MaterializationResponse(AICodingModel):
     created_count: int
     ready_child_count: int
     blocked_child_count: int
+    children: list[MaterializedChildResponse]
+
+
+class ChildReconciliationRequest(AICodingModel):
+    decision: str
+
+
+class ChildReconciliationResponse(AICodingModel):
+    parent_node_id: str
+    parent_node_version_id: str
+    authority_mode: str
+    materialization_status: str
+    available_decisions: list[str] = Field(default_factory=list)
+    manual_child_count: int
+    layout_generated_child_count: int
+    layout_relative_path: str
+    layout_hash: str
     children: list[MaterializedChildResponse]
 
 
@@ -341,6 +393,8 @@ class TreeNodeResponse(AICodingModel):
     title: str
     lifecycle_state: str | None = None
     run_status: str | None = None
+    scheduling_status: str | None = None
+    blocker_count: int = 0
 
 
 class TreeCatalogResponse(AICodingModel):
@@ -359,6 +413,39 @@ class NodePauseStateResponse(AICodingModel):
     approval_required: bool = False
     approved: bool = False
     pause_summary_prompt: str | None = None
+
+
+class InterventionOptionResponse(AICodingModel):
+    action: str
+    requires_summary: bool
+    label: str
+
+
+class InterventionResponse(AICodingModel):
+    kind: str
+    status: str
+    subject_key: str
+    title: str
+    summary: str | None = None
+    recommended_action: str | None = None
+    available_actions: list[InterventionOptionResponse]
+    details_json: dict[str, object]
+
+
+class InterventionCatalogResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    pending_count: int
+    interventions: list[InterventionResponse]
+
+
+class InterventionActionResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    intervention_kind: str
+    action: str
+    status: str
+    result_json: dict[str, object]
 
 
 class NodeEventResponse(AICodingModel):
@@ -410,8 +497,13 @@ class ParentDecisionResponse(AICodingModel):
     child_node_version_id: str | None = None
     child_node_run_id: str | None = None
     failure_class: str | None = None
+    failure_origin: str | None = None
     decision_type: str
     decision_source: str | None = None
+    decision_reason: str | None = None
+    options_considered: list[str] = Field(default_factory=list)
+    threshold_triggered: bool = False
+    threshold_reason: str | None = None
     summary: str | None = None
     payload_json: dict[str, object]
     created_at: str
@@ -435,8 +527,14 @@ class ParentFailureDecisionResponse(AICodingModel):
     child_node_version_id: str
     child_node_run_id: str
     failure_class: str
+    failure_origin: str
     decision_type: str
     decision_source: str
+    decision_reason: str
+    options_considered: list[str]
+    threshold_triggered: bool
+    threshold_reason: str | None = None
+    policy_snapshot: dict[str, int]
     summary: str
     parent_lifecycle_state: str
     parent_run_status: str
@@ -606,6 +704,33 @@ class ParentReconcileResponse(AICodingModel):
     context_json: dict[str, object]
 
 
+class LiveGitStatusResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    repo_path: str
+    branch_name: str
+    head_commit_sha: str | None = None
+    seed_commit_sha: str | None = None
+    final_commit_sha: str | None = None
+    working_tree_state: str
+
+
+class LiveGitBootstrapRequest(AICodingModel):
+    version_id: str
+    base_version_id: str | None = None
+    replace_existing: bool = False
+    files_json: dict[str, str] = Field(default_factory=dict)
+
+
+class LiveGitFinalizeResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    status: str
+    repo_path: str
+    final_commit_sha: str
+    working_tree_state: str
+
+
 class RebuildEventResponse(AICodingModel):
     id: str
     root_logical_node_id: str
@@ -622,6 +747,42 @@ class RebuildEventResponse(AICodingModel):
 class RebuildHistoryResponse(AICodingModel):
     node_id: str
     events: list[RebuildEventResponse]
+
+
+class RebuildCoordinationBlockerResponse(AICodingModel):
+    blocker_type: str
+    node_id: str
+    node_version_id: str
+    node_kind: str
+    node_title: str
+    scope_role: str
+    lifecycle_state: str | None = None
+    run_status: str | None = None
+    current_run_id: str | None = None
+    active_primary_session_count: int
+    active_primary_session_ids: list[str]
+
+
+class RebuildCoordinationResponse(AICodingModel):
+    node_id: str
+    scope: str
+    status: str
+    blockers: list[RebuildCoordinationBlockerResponse]
+
+
+class CutoverBlockerResponse(AICodingModel):
+    blocker_type: str
+    details_json: dict[str, object]
+
+
+class CutoverReadinessResponse(AICodingModel):
+    logical_node_id: str
+    node_version_id: str
+    current_authoritative_node_version_id: str
+    status: str
+    blockers: list[CutoverBlockerResponse]
+    stable_rebuild_event_present: bool
+    unresolved_merge_conflicts: bool
 
 
 class RegenerationResponse(AICodingModel):
@@ -737,6 +898,7 @@ class SubtaskAttemptResponse(AICodingModel):
     status: str
     input_context_json: dict[str, object] | None = None
     output_json: dict[str, object] | None = None
+    execution_result_json: dict[str, object] | None = None
     execution_environment_json: dict[str, object] | None = None
     validation_json: dict[str, object] | None = None
     review_json: dict[str, object] | None = None
@@ -751,6 +913,12 @@ class RunProgressResponse(AICodingModel):
     state: NodeRunStateResponse
     current_subtask: dict[str, object] | None = None
     latest_attempt: SubtaskAttemptResponse | None = None
+
+
+class SubtaskAttemptCatalogResponse(AICodingModel):
+    node_id: str
+    node_run_id: str
+    attempts: list[SubtaskAttemptResponse]
 
 
 class SubtaskPromptResponse(AICodingModel):
@@ -893,6 +1061,21 @@ class TestingSummaryResponse(AICodingModel):
 class TestResultCatalogResponse(AICodingModel):
     node_id: str
     results: list[TestResultResponse]
+
+
+class QualityChainResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    node_run_id: str
+    run_status: str
+    executed_stage_types: list[str]
+    validation: ValidationSummaryResponse
+    review: ReviewSummaryResponse
+    testing: TestingSummaryResponse
+    provenance: dict[str, object] | None = None
+    docs: list[dict[str, object]] = Field(default_factory=list)
+    final_summary: dict[str, object] | None = None
+    progress: dict[str, object]
 
 
 class NodeRunCatalogResponse(AICodingModel):
@@ -1171,6 +1354,7 @@ class CompiledWorkflowResponse(AICodingModel):
     source_document_count: int
     task_count: int
     subtask_count: int
+    compile_context: dict[str, object]
     resolved_yaml: dict[str, object]
     tasks: list[CompiledTaskResponse]
 
@@ -1196,6 +1380,7 @@ class WorkflowChainResponse(AICodingModel):
     compiled_workflow_id: str
     node_version_id: str
     logical_node_id: str
+    compile_context: dict[str, object]
     chain: list[WorkflowChainEntryResponse]
 
 
@@ -1210,6 +1395,7 @@ class CompileFailureResponse(AICodingModel):
     source_hash: str | None = None
     target_family: str | None = None
     target_id: str | None = None
+    compile_context: dict[str, object]
     created_at: str
 
 
@@ -1221,6 +1407,7 @@ class WorkflowCompileAttemptResponse(AICodingModel):
     status: str
     node_version_id: str
     logical_node_id: str
+    compile_context: dict[str, object]
     compiled_workflow: CompiledWorkflowResponse | None = None
     compile_failure: CompileFailureResponse | None = None
 
@@ -1303,6 +1490,7 @@ class WorkflowHookCatalogResponse(AICodingModel):
     compiled_workflow_id: str
     node_version_id: str
     logical_node_id: str
+    compile_context: dict[str, object]
     selected_hooks: list[WorkflowHookResponse]
     skipped_hooks: list[WorkflowHookSkipResponse]
     expanded_steps: list[WorkflowHookStepResponse]
@@ -1369,6 +1557,7 @@ class OverrideChainResponse(AICodingModel):
     compiled_workflow_id: str
     node_version_id: str
     logical_node_id: str
+    compile_context: dict[str, object]
     applied_overrides: list[OverrideApplicationResponse]
     warnings: list[str]
 
@@ -1387,6 +1576,7 @@ class ResolvedYamlCatalogResponse(AICodingModel):
     compiled_workflow_id: str
     node_version_id: str
     logical_node_id: str
+    compile_context: dict[str, object]
     resolved_documents: list[ResolvedYamlDocumentResponse]
     warnings: list[str]
 

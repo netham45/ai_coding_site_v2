@@ -19,3 +19,8 @@ They must establish:
 - tmux/session test scaffolding
 
 Run these phases in numeric order.
+
+Document-schema references:
+
+- `notes/catalogs/checklists/document_schema_rulebook.md`
+- `notes/catalogs/checklists/document_schema_test_policy.md`

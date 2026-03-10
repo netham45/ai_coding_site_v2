@@ -28,6 +28,7 @@ Implementation note:
 - the current packaged default system now includes authored prompt assets for review, testing interpretation, and docs generation, so these families no longer rely on placeholder prompt text to be inspectable or runnable
 - the current schema layer now also validates these higher-order families with explicit field requirements and rejects broken prompt refs in review or hook documents before compile/runtime use
 - the current implementation now also exposes a built-in quality-library integrity report over the packaged validation/review/testing/docs families and fails workflow compilation early when required quality assets, task bindings, prompt refs, or canonical gate ordering are broken
+- the current runtime now also exposes a daemon-owned `node quality-chain` late-chain surface that consumes those authored review/testing/docs assets without requiring stitched operator calls between stages
 
 ---
 

@@ -37,13 +37,13 @@ def test_migrations_are_repeatable(db_engine) -> None:
 
     reset_public_schema(db_engine)
     command.upgrade(config, "head")
-    assert current_alembic_revision(db_engine) == "0027_provenance_docs_audit_views"
+    assert current_alembic_revision(db_engine) == "0028_subtask_execution_results"
 
     command.downgrade(config, "base")
     assert current_alembic_revision(db_engine) is None
 
     command.upgrade(config, "head")
-    assert current_alembic_revision(db_engine) == "0027_provenance_docs_audit_views"
+    assert current_alembic_revision(db_engine) == "0028_subtask_execution_results"
 
 
 def test_fixture_reset_clears_bootstrap_tables(db_engine) -> None:
@@ -100,7 +100,7 @@ def test_migration_status_reports_uninitialized_then_up_to_date(db_engine) -> No
     before = migration_status(db_engine, config)
     assert before == {
         "current_revision": None,
-        "expected_revision": "0027_provenance_docs_audit_views",
+        "expected_revision": "0028_subtask_execution_results",
         "status": "uninitialized",
         "compatible": False,
     }
@@ -109,8 +109,8 @@ def test_migration_status_reports_uninitialized_then_up_to_date(db_engine) -> No
 
     after = migration_status(db_engine, config)
     assert after == {
-        "current_revision": "0027_provenance_docs_audit_views",
-        "expected_revision": "0027_provenance_docs_audit_views",
+        "current_revision": "0028_subtask_execution_results",
+        "expected_revision": "0028_subtask_execution_results",
         "status": "up_to_date",
         "compatible": True,
     }

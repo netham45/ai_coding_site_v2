@@ -251,6 +251,7 @@ The runtime and schema layers must allow:
 - future custom tiers
 - multiple kinds at the same tier
 - project-defined ladders through YAML
+- parentless top nodes at any tier or kind when that node definition declares `allow_parentless: true`
 
 The default built-in library may still include:
 
@@ -312,6 +313,7 @@ node_definition:
 - `entry_task` identifies the first task in the node execution plan
 - `available_tasks` lists the task definitions the node kind may use
 - parent/child constraints define valid structural relationships, not runtime dependencies
+- `allow_parentless: true` means that node kind may be created as a top node without a parent, regardless of whether it is named `epic`, `phase`, `plan`, `task`, or a custom kind
 
 ---
 

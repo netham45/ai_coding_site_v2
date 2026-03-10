@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.daemon.session_manager import build_primary_session_plan
+from aicoding.daemon.session_manager import build_primary_session_plan, build_recovery_primary_session_plan
 from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
 from aicoding.db.models import NodeRun, NodeRunState, NodeVersion, Session, SessionEvent
 from aicoding.db.session import query_session_scope, session_scope
@@ -168,6 +168,58 @@ class RecoveryDecisionSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRecoveryStatusSnapshot:
+    node_id: UUID
+    node_version_id: UUID
+    node_run_id: UUID
+    session_id: UUID | None
+    provider: str | None
+    provider_session_id: str | None
+    provider_supported: bool
+    provider_session_exists: bool | None
+    tmux_session_name: str | None
+    tmux_session_exists: bool | None
+    provider_rebind_possible: bool
+    provider_recommended_action: str
+    provider_reason: str | None
+    recovery_status: RecoveryStatusSnapshot
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "node_id": str(self.node_id),
+            "node_version_id": str(self.node_version_id),
+            "node_run_id": str(self.node_run_id),
+            "session_id": None if self.session_id is None else str(self.session_id),
+            "provider": self.provider,
+            "provider_session_id": self.provider_session_id,
+            "provider_supported": self.provider_supported,
+            "provider_session_exists": self.provider_session_exists,
+            "tmux_session_name": self.tmux_session_name,
+            "tmux_session_exists": self.tmux_session_exists,
+            "provider_rebind_possible": self.provider_rebind_possible,
+            "provider_recommended_action": self.provider_recommended_action,
+            "provider_reason": self.provider_reason,
+            "recovery_status": self.recovery_status.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRecoveryDecisionSnapshot:
+    status: str
+    provider_recovery_status: ProviderRecoveryStatusSnapshot
+    recovery_status: RecoveryStatusSnapshot
+    session: DurableSessionSnapshot | None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "provider_recovery_status": self.provider_recovery_status.to_payload(),
+            "recovery_status": self.recovery_status.to_payload(),
+            "session": None if self.session is None else self.session.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SessionNudgeSnapshot:
     node_id: UUID
     session_id: UUID | None
@@ -252,6 +304,7 @@ def bind_primary_session(
     with session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
         run = _require_active_run(session, version.id)
+        state = _require_run_state(session, run.id)
         current = _require_single_active_primary_session(session, run.id)
         if current is not None:
             if current.tmux_session_name and adapter.session_exists(current.tmux_session_name):
@@ -274,6 +327,7 @@ def bind_primary_session(
             node_run_id=run.id,
             run_number=run.run_number,
             session_id=durable_id,
+            compiled_subtask_id=state.current_compiled_subtask_id,
         )
         adapter_snapshot = adapter.create_session(launch_plan.session_name, launch_plan.command, launch_plan.working_directory)
         durable = Session(
@@ -300,8 +354,11 @@ def bind_primary_session(
                 "node_run_id": str(run.id),
                 "tmux_session_name": launch_plan.session_name,
                 "launch_command": launch_plan.command,
+                "launch_mode": launch_plan.launch_mode,
                 "cwd": launch_plan.working_directory,
                 "attach_command": launch_plan.attach_command,
+                "prompt_cli_command": launch_plan.prompt_cli_command,
+                "prompt_log_path": launch_plan.prompt_log_path,
             },
         )
         session.flush()
@@ -486,8 +543,7 @@ def recover_primary_session(
         for record in active_sessions:
             _invalidate_session(session, record, status="LOST", reason="provider_agnostic_recovery_replacement")
         durable_id = uuid4()
-        launch_plan = build_primary_session_plan(
-            logical_node_id=logical_node_id,
+        launch_plan = build_recovery_primary_session_plan(
             node_run_id=run.id,
             run_number=run.run_number,
             session_id=durable_id,
@@ -518,8 +574,11 @@ def recover_primary_session(
                 "provider_session_id_present": status.provider_session_id_present,
                 "tmux_session_name": launch_plan.session_name,
                 "launch_command": launch_plan.command,
+                "launch_mode": launch_plan.launch_mode,
                 "cwd": launch_plan.working_directory,
                 "attach_command": launch_plan.attach_command,
+                "prompt_cli_command": launch_plan.prompt_cli_command,
+                "prompt_log_path": launch_plan.prompt_log_path,
             },
         )
         session.flush()
@@ -534,6 +593,136 @@ def recover_primary_session(
             recovery_classification=status.recovery_classification,
         )
         return RecoveryDecisionSnapshot(status="replacement_session_created", recovery_status=status, session=snapshot)
+
+
+def load_provider_recovery_status(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    adapter: SessionAdapter,
+    poller: SessionPoller,
+) -> ProviderRecoveryStatusSnapshot:
+    with query_session_scope(session_factory) as session:
+        version = _authoritative_version(session, logical_node_id)
+        run = _require_active_run(session, version.id)
+        state = _require_run_state(session, run.id)
+        active_sessions = _active_primary_sessions(session, run.id)
+        recovery_status = _recovery_status_snapshot(
+            session,
+            logical_node_id=logical_node_id,
+            version=version,
+            run=run,
+            state=state,
+            active_sessions=active_sessions,
+            adapter=adapter,
+            poller=poller,
+        )
+        current = active_sessions[0] if active_sessions else None
+        return _provider_recovery_status_snapshot(
+            current=current,
+            recovery_status=recovery_status,
+            adapter=adapter,
+        )
+
+
+def recover_primary_session_provider_specific(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    adapter: SessionAdapter,
+    poller: SessionPoller,
+) -> ProviderRecoveryDecisionSnapshot:
+    provider_status = load_provider_recovery_status(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        poller=poller,
+    )
+    if provider_status.provider_rebind_possible and provider_status.session_id is not None and provider_status.provider_session_id is not None:
+        with session_scope(session_factory) as session:
+            current = session.get(Session, provider_status.session_id)
+            if current is None:
+                raise DaemonNotFoundError("primary session not found")
+            _record_session_event(
+                session,
+                current.id,
+                "provider_recovery_attempted",
+                {
+                    "node_id": str(logical_node_id),
+                    "provider": current.provider,
+                    "provider_session_id": provider_status.provider_session_id,
+                    "provider_action": provider_status.provider_recommended_action,
+                },
+            )
+            poll_result = poller.poll(provider_status.provider_session_id)
+            current.tmux_session_name = provider_status.provider_session_id
+            current.status = "RESUMED"
+            current.last_heartbeat_at = poll_result.snapshot.last_activity_at
+            _record_session_event(
+                session,
+                current.id,
+                "provider_recovery_rebound",
+                {
+                    "node_id": str(logical_node_id),
+                    "provider": current.provider,
+                    "provider_session_id": provider_status.provider_session_id,
+                    "idle_seconds": poll_result.idle_seconds,
+                },
+            )
+            session.flush()
+            from aicoding.daemon.run_orchestration import sync_resumed_run
+
+            sync_resumed_run(session_factory, logical_node_id=logical_node_id, force=True)
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+            state = _require_run_state(session, run.id)
+            recovery_status = _recovery_status_snapshot(
+                session,
+                logical_node_id=logical_node_id,
+                version=version,
+                run=run,
+                state=state,
+                active_sessions=[current],
+                adapter=adapter,
+                poller=poller,
+            )
+            rebound_provider_status = _provider_recovery_status_snapshot(
+                current=current,
+                recovery_status=recovery_status,
+                adapter=adapter,
+            )
+            snapshot = _session_snapshot(
+                session,
+                current,
+                adapter=adapter,
+                poller=poller,
+                recovery_classification=recovery_status.recovery_classification,
+            )
+            return ProviderRecoveryDecisionSnapshot(
+                status="provider_session_rebound",
+                provider_recovery_status=rebound_provider_status,
+                recovery_status=recovery_status,
+                session=snapshot,
+            )
+
+    decision = recover_primary_session(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        poller=poller,
+    )
+    provider_status = load_provider_recovery_status(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        poller=poller,
+    )
+    return ProviderRecoveryDecisionSnapshot(
+        status=decision.status,
+        provider_recovery_status=provider_status,
+        recovery_status=decision.recovery_status,
+        session=decision.session,
+    )
 
 
 def nudge_primary_session(
@@ -1075,6 +1264,59 @@ def _recovery_status_snapshot(
         provider_session_id_present=current.provider_session_id is not None,
         heartbeat_age_seconds=heartbeat_age,
         duplicate_active_primary_sessions=duplicate_count,
+    )
+
+
+def _provider_recovery_status_snapshot(
+    *,
+    current: Session | None,
+    recovery_status: RecoveryStatusSnapshot,
+    adapter: SessionAdapter,
+) -> ProviderRecoveryStatusSnapshot:
+    provider = None if current is None else current.provider
+    provider_session_id = None if current is None else current.provider_session_id
+    tmux_session_name = None if current is None else current.tmux_session_name
+    tmux_session_exists = None if tmux_session_name is None else adapter.session_exists(tmux_session_name)
+    provider_supported = current is not None and current.provider == adapter.backend_name and current.provider_session_id is not None
+    provider_session_exists = None
+    provider_rebind_possible = False
+    provider_recommended_action = "fallback_to_provider_agnostic_recovery"
+    provider_reason = None
+
+    if current is None:
+        provider_reason = "no_active_primary_session"
+    elif current.provider != adapter.backend_name:
+        provider_reason = "provider_backend_mismatch"
+    elif current.provider_session_id is None:
+        provider_reason = "provider_identity_unavailable"
+    else:
+        provider_session_exists = adapter.session_exists(current.provider_session_id)
+        if provider_session_exists and (current.tmux_session_name != current.provider_session_id or tmux_session_exists is False):
+            provider_rebind_possible = True
+            provider_recommended_action = "rebind_provider_session"
+            provider_reason = "provider_session_restorable"
+        elif provider_session_exists:
+            provider_recommended_action = "provider_recovery_not_needed"
+            provider_reason = "provider_session_already_bound"
+        else:
+            provider_recommended_action = "fallback_to_provider_agnostic_recovery"
+            provider_reason = "provider_session_missing"
+
+    return ProviderRecoveryStatusSnapshot(
+        node_id=recovery_status.node_id,
+        node_version_id=recovery_status.node_version_id,
+        node_run_id=recovery_status.node_run_id,
+        session_id=recovery_status.session_id,
+        provider=provider,
+        provider_session_id=provider_session_id,
+        provider_supported=provider_supported,
+        provider_session_exists=provider_session_exists,
+        tmux_session_name=tmux_session_name,
+        tmux_session_exists=tmux_session_exists,
+        provider_rebind_possible=provider_rebind_possible,
+        provider_recommended_action=provider_recommended_action,
+        provider_reason=provider_reason,
+        recovery_status=recovery_status,
     )
 
 

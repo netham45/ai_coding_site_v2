@@ -21,6 +21,8 @@ from aicoding.daemon.models import (
     ProvenanceRefreshResponse,
     PromptHistoryCatalogResponse,
     PromptHistoryRecordResponse,
+    ProviderSessionRecoveryActionResponse,
+    ProviderSessionRecoveryStatusResponse,
     RationaleResponse,
     SchemaCompatibilityResponse,
     SessionRecoveryActionResponse,
@@ -52,8 +54,8 @@ def test_daemon_status_response_serializes_stably() -> None:
         background_tasks=["session_recovery"],
         write_probe={"write_path": "available"},
         schema_compatibility=SchemaCompatibilityResponse(
-            current_revision="0027_provenance_docs_audit_views",
-            expected_revision="0027_provenance_docs_audit_views",
+            current_revision="0028_subtask_execution_results",
+            expected_revision="0028_subtask_execution_results",
             status="up_to_date",
             compatible=True,
         ),
@@ -66,8 +68,8 @@ def test_daemon_status_response_serializes_stably() -> None:
         "background_tasks": ["session_recovery"],
         "write_probe": {"write_path": "available"},
         "schema_compatibility": {
-            "current_revision": "0027_provenance_docs_audit_views",
-            "expected_revision": "0027_provenance_docs_audit_views",
+            "current_revision": "0028_subtask_execution_results",
+            "expected_revision": "0028_subtask_execution_results",
             "status": "up_to_date",
             "compatible": True,
         },
@@ -187,6 +189,68 @@ def test_session_recovery_response_serializes_stably() -> None:
 
     assert response.model_dump()["recovery_status"]["recovery_classification"] == "healthy"
     assert response.model_dump()["session"]["status"] == "resumed"
+
+
+def test_provider_session_recovery_response_serializes_stably() -> None:
+    recovery_status = SessionRecoveryStatusResponse(
+        node_id="node-1",
+        node_version_id="version-1",
+        node_run_id="run-1",
+        session_id="session-1",
+        recovery_classification="lost",
+        recommended_action="create_replacement_session",
+        reason="tmux_session_missing",
+        is_resumable=True,
+        pause_flag_name=None,
+        tmux_session_name="missing-session",
+        tmux_session_exists=False,
+        provider="fake",
+        provider_session_id_present=True,
+        heartbeat_age_seconds=3.0,
+        duplicate_active_primary_sessions=1,
+    )
+    response = ProviderSessionRecoveryActionResponse(
+        status="provider_session_rebound",
+        provider_recovery_status=ProviderSessionRecoveryStatusResponse(
+            node_id="node-1",
+            node_version_id="version-1",
+            node_run_id="run-1",
+            session_id="session-1",
+            provider="fake",
+            provider_session_id="provider-1",
+            provider_supported=True,
+            provider_session_exists=True,
+            tmux_session_name="missing-session",
+            tmux_session_exists=False,
+            provider_rebind_possible=True,
+            provider_recommended_action="rebind_provider_session",
+            provider_reason="provider_session_restorable",
+            recovery_status=recovery_status,
+        ),
+        recovery_status=recovery_status,
+        session=SessionStateResponse(
+            backend="fake",
+            session_name="provider-1",
+            status="resumed",
+            session_id="session-1",
+            node_run_id="run-1",
+            node_version_id="version-1",
+            session_role="primary",
+            provider="fake",
+            provider_session_id="provider-1",
+            last_heartbeat_at="2026-03-08T00:00:00+00:00",
+            event_count=6,
+            latest_event_type="provider_recovery_rebound",
+            recovery_classification="healthy",
+            pane_text="$ provider-ready\n",
+            idle_seconds=1.0,
+            in_alt_screen=False,
+        ),
+    )
+
+    assert response.model_dump()["provider_recovery_status"]["provider_rebind_possible"] is True
+    assert response.model_dump()["provider_recovery_status"]["recovery_status"]["recovery_classification"] == "lost"
+    assert response.model_dump()["session"]["provider_session_id"] == "provider-1"
 
 
 def test_child_session_models_serialize_stably() -> None:
@@ -413,8 +477,13 @@ def test_parent_failure_models_serialize_stably() -> None:
                 child_node_version_id="version-1",
                 child_node_run_id="run-2",
                 failure_class="environment_failure",
+                failure_origin="failed_to_parent",
                 decision_type="parent_pause_for_user",
                 decision_source="auto",
+                decision_reason="threshold exceeded",
+                options_considered=["retry_child", "regenerate_child", "replan_parent", "pause_for_user"],
+                threshold_triggered=True,
+                threshold_reason="per_child threshold exceeded",
                 summary="paused",
                 payload_json={"decision_type": "pause_for_user"},
                 created_at="2026-03-09T00:00:01+00:00",
@@ -428,8 +497,14 @@ def test_parent_failure_models_serialize_stably() -> None:
         child_node_version_id="version-1",
         child_node_run_id="run-2",
         failure_class="environment_failure",
+        failure_origin="failed_to_parent",
         decision_type="pause_for_user",
         decision_source="auto",
+        decision_reason="threshold exceeded",
+        options_considered=["retry_child", "regenerate_child", "replan_parent", "pause_for_user"],
+        threshold_triggered=True,
+        threshold_reason="per_child threshold exceeded",
+        policy_snapshot={"total_threshold": 3, "consecutive_threshold": 2, "per_child_threshold": 2},
         summary="paused for user",
         parent_lifecycle_state="PAUSED_FOR_USER",
         parent_run_status="PAUSED",
@@ -440,4 +515,6 @@ def test_parent_failure_models_serialize_stably() -> None:
 
     assert counters.model_dump()["counters"][0]["last_failure_class"] == "environment_failure"
     assert decisions.model_dump()["decisions"][0]["decision_type"] == "parent_pause_for_user"
+    assert decisions.model_dump()["decisions"][0]["threshold_triggered"] is True
     assert response.model_dump()["counters"]["failure_count_from_children"] == 2
+    assert response.model_dump()["policy_snapshot"]["per_child_threshold"] == 2

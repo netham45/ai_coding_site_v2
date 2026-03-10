@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,6 +12,7 @@ def test_settings_read_environment(monkeypatch) -> None:
     monkeypatch.setenv("AICODING_ENV", "test")
     monkeypatch.setenv("AICODING_DATABASE_URL", "postgresql+psycopg://example")
     monkeypatch.setenv("AICODING_DAEMON_PORT", "9001")
+    monkeypatch.setenv("AICODING_DAEMON_REQUEST_TIMEOUT_SECONDS", "45")
     monkeypatch.setenv("AICODING_LOG_LEVEL", "warning")
 
     settings = get_settings()
@@ -18,8 +21,10 @@ def test_settings_read_environment(monkeypatch) -> None:
     assert settings.database_url == "postgresql+psycopg://example"
     assert settings.daemon_port == 9001
     assert settings.normalized_log_level == "WARNING"
+    assert settings.daemon_request_timeout_seconds == 45
     assert settings.database.pool_size == 5
     assert settings.daemon.base_url == "http://127.0.0.1:9001"
+    assert settings.daemon.request_timeout_seconds == 45
 
 
 def test_settings_build_typed_submodels() -> None:
@@ -29,6 +34,7 @@ def test_settings_build_typed_submodels() -> None:
         daemon_port=8123,
         session_backend="tmux",
         auth_token="secret",
+        workspace_root=Path("/tmp/workspace"),
     )
 
     assert settings.database.model_dump() == {
@@ -46,6 +52,8 @@ def test_settings_build_typed_submodels() -> None:
         "max_nudge_count": 2,
     }
     assert settings.auth.token == "secret"
+    assert settings.daemon.request_timeout_seconds == 30.0
+    assert settings.workspace_root == Path("/tmp/workspace")
 
 
 def test_settings_reject_invalid_values() -> None:

@@ -48,8 +48,10 @@ def isolated_schema(db_engine):
 @pytest.fixture
 def clean_public_schema(db_engine):
     reset_public_schema(db_engine)
+    db_engine.dispose()
     yield db_engine
     reset_public_schema(db_engine)
+    db_engine.dispose()
 
 
 @pytest.fixture
@@ -57,4 +59,5 @@ def migrated_public_schema(clean_public_schema):
     from aicoding.db.migrations import upgrade_database
 
     upgrade_database("head")
+    clean_public_schema.dispose()
     return clean_public_schema

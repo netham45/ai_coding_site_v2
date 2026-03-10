@@ -7,7 +7,10 @@ from alembic.config import Config
 from aicoding.cli.handlers import (
     handle_auth_token,
     handle_daemon_boundary,
+    handle_git_abort_merge,
+    handle_git_bootstrap_node,
     handle_git_branch_show,
+    handle_git_finalize_node,
     handle_git_merge_children,
     handle_git_final_show,
     handle_git_merge_conflicts_record,
@@ -15,10 +18,12 @@ from aicoding.cli.handlers import (
     handle_git_merge_conflicts_show,
     handle_git_merge_events_show,
     handle_git_seed_show,
+    handle_git_status_show,
     handle_node_approve,
     handle_node_ancestors,
     handle_node_audit,
     handle_node_child_create,
+    handle_node_child_reconciliation,
     handle_node_child_results,
     handle_node_child_failures,
     handle_node_children,
@@ -26,6 +31,8 @@ from aicoding.cli.handlers import (
     handle_node_materialization,
     handle_node_materialize_children,
     handle_node_events,
+    handle_node_intervention_apply,
+    handle_node_interventions,
     handle_node_dependencies,
     handle_node_dependency_add,
     handle_node_dependency_status,
@@ -38,10 +45,14 @@ from aicoding.cli.handlers import (
     handle_node_lifecycle_transition,
     handle_node_pause_state,
     handle_node_provenance_refresh,
+    handle_node_quality_chain,
+    handle_node_rebuild_coordination,
     handle_node_rebuild_history,
     handle_node_reconcile,
     handle_node_rectify_upstream,
+    handle_node_reconcile_children,
     handle_node_recovery_status,
+    handle_node_provider_recovery_status,
     handle_node_respond_to_child_failure,
     handle_node_regenerate,
     handle_node_test,
@@ -55,6 +66,7 @@ from aicoding.cli.handlers import (
     handle_node_sources,
     handle_node_supersede,
     handle_node_version_cutover,
+    handle_node_version_cutover_readiness,
     handle_node_version_show,
     handle_node_version_sources,
     handle_node_versions,
@@ -90,11 +102,14 @@ from aicoding.cli.handlers import (
     handle_session_nudge,
     handle_session_pop,
     handle_session_push,
+    handle_session_provider_recover,
     handle_session_recover,
     handle_session_result_show,
     handle_session_list,
     handle_session_show,
     handle_static_placeholder,
+    handle_subtask_attempt_show,
+    handle_subtask_attempts,
     handle_subtask_list,
     handle_subtask_current,
     handle_subtask_context,
@@ -202,6 +217,15 @@ def add_node_group(subparsers) -> None:
     materialize_children_parser.add_argument("--node", required=True)
     materialize_children_parser.set_defaults(handler=handle_node_materialize_children, command_path=["node", "materialize-children"])
 
+    reconciliation_parser = node_subparsers.add_parser("child-reconciliation", help="Show available reconciliation decisions for a manual/layout hybrid child tree.")
+    reconciliation_parser.add_argument("--node", required=True)
+    reconciliation_parser.set_defaults(handler=handle_node_child_reconciliation, command_path=["node", "child-reconciliation"])
+
+    reconcile_children_parser = node_subparsers.add_parser("reconcile-children", help="Apply an explicit reconciliation decision to a manual/layout child tree.")
+    reconcile_children_parser.add_argument("--node", required=True)
+    reconcile_children_parser.add_argument("--decision", required=True, choices=["preserve_manual"])
+    reconcile_children_parser.set_defaults(handler=handle_node_reconcile_children, command_path=["node", "reconcile-children"])
+
     child_results_parser = node_subparsers.add_parser("child-results", help="Show authoritative child finals and reconcile readiness for a parent node.")
     child_results_parser.add_argument("--node", required=True)
     child_results_parser.set_defaults(handler=handle_node_child_results, command_path=["node", "child-results"])
@@ -308,6 +332,11 @@ def add_node_group(subparsers) -> None:
     rebuild_history_parser.add_argument("--node", required=True)
     rebuild_history_parser.set_defaults(handler=handle_node_rebuild_history, command_path=["node", "rebuild-history"])
 
+    rebuild_coordination_parser = node_subparsers.add_parser("rebuild-coordination", help="Show live runtime blockers for subtree or upstream rebuild coordination.")
+    rebuild_coordination_parser.add_argument("--node", required=True)
+    rebuild_coordination_parser.add_argument("--scope", choices=["subtree", "upstream"], default="subtree")
+    rebuild_coordination_parser.set_defaults(handler=handle_node_rebuild_coordination, command_path=["node", "rebuild-coordination"])
+
     validate_parser = node_subparsers.add_parser("validate", help="Run the current validation gate for a node's active workflow.")
     validate_parser.add_argument("--node", required=True)
     validate_parser.set_defaults(handler=handle_node_validate, command_path=["node", "validate"])
@@ -323,6 +352,10 @@ def add_node_group(subparsers) -> None:
     test_parser = node_subparsers.add_parser("test", help="Run the current testing gate for a node's active workflow.")
     test_parser.add_argument("--node", required=True)
     test_parser.set_defaults(handler=handle_node_test, command_path=["node", "test"])
+
+    quality_chain_parser = node_subparsers.add_parser("quality-chain", help="Run the built-in validation, review, testing, provenance, docs, and finalize chain for the active node run.")
+    quality_chain_parser.add_argument("--node", required=True)
+    quality_chain_parser.set_defaults(handler=handle_node_quality_chain, command_path=["node", "quality-chain"])
 
     runs_parser = node_subparsers.add_parser("runs", help="List node runs.")
     runs_parser.add_argument("--node", required=True)
@@ -381,6 +414,19 @@ def add_node_group(subparsers) -> None:
     pause_state_parser.add_argument("--node", required=True)
     pause_state_parser.set_defaults(handler=handle_node_pause_state, command_path=["node", "pause-state"])
 
+    interventions_parser = node_subparsers.add_parser("interventions", help="Show pending human intervention items for a node.")
+    interventions_parser.add_argument("--node", required=True)
+    interventions_parser.set_defaults(handler=handle_node_interventions, command_path=["node", "interventions"])
+
+    intervention_apply_parser = node_subparsers.add_parser("intervention-apply", help="Apply a pending human intervention action for a node.")
+    intervention_apply_parser.add_argument("--node", required=True)
+    intervention_apply_parser.add_argument("--kind", required=True)
+    intervention_apply_parser.add_argument("--action", required=True)
+    intervention_apply_parser.add_argument("--summary")
+    intervention_apply_parser.add_argument("--conflict-id")
+    intervention_apply_parser.add_argument("--pause-flag")
+    intervention_apply_parser.set_defaults(handler=handle_node_intervention_apply, command_path=["node", "intervention-apply"])
+
     approve_parser = node_subparsers.add_parser("approve", help="Approve the current user-gated pause for a node without resuming it yet.")
     approve_parser.add_argument("--node", required=True)
     approve_parser.add_argument("--pause-flag")
@@ -390,6 +436,10 @@ def add_node_group(subparsers) -> None:
     recovery_status_parser = node_subparsers.add_parser("recovery-status", help="Show provider-agnostic recovery classification for the active node run.")
     recovery_status_parser.add_argument("--node", required=True)
     recovery_status_parser.set_defaults(handler=handle_node_recovery_status, command_path=["node", "recovery-status"])
+
+    provider_recovery_status_parser = node_subparsers.add_parser("recovery-provider-status", help="Show provider-aware recovery classification for the active node run.")
+    provider_recovery_status_parser.add_argument("--node", required=True)
+    provider_recovery_status_parser.set_defaults(handler=handle_node_provider_recovery_status, command_path=["node", "recovery-provider-status"])
 
     events_parser = node_subparsers.add_parser("events", help="Show daemon-owned node event history.")
     events_parser.add_argument("--node", required=True)
@@ -424,6 +474,10 @@ def add_node_group(subparsers) -> None:
     version_cutover_parser.add_argument("--version", required=True)
     version_cutover_parser.set_defaults(handler=handle_node_version_cutover, command_path=["node", "version", "cutover"])
 
+    version_cutover_readiness_parser = version_subparsers.add_parser("cutover-readiness", help="Show detailed cutover readiness and blockers for a candidate version.")
+    version_cutover_readiness_parser.add_argument("--version", required=True)
+    version_cutover_readiness_parser.set_defaults(handler=handle_node_version_cutover_readiness, command_path=["node", "version", "cutover-readiness"])
+
 
 def add_workflow_group(subparsers) -> None:
     workflow_parser = subparsers.add_parser("workflow", help="Workflow inspection commands.")
@@ -431,12 +485,14 @@ def add_workflow_group(subparsers) -> None:
 
     show_parser = workflow_subparsers.add_parser("show", help="Show one compiled workflow.")
     show_parser.add_argument("--node")
+    show_parser.add_argument("--version")
     show_parser.add_argument("--workflow")
     show_parser.add_argument("--run")
     show_parser.set_defaults(handler=handle_workflow_show, command_path=["workflow", "show"])
 
     chain_parser = workflow_subparsers.add_parser("chain", help="Show the compiled subtask chain.")
     chain_parser.add_argument("--node")
+    chain_parser.add_argument("--version")
     chain_parser.add_argument("--workflow")
     chain_parser.add_argument("--run")
     chain_parser.set_defaults(handler=handle_workflow_chain, command_path=["workflow", "chain"])
@@ -447,43 +503,51 @@ def add_workflow_group(subparsers) -> None:
 
     sources_parser = workflow_subparsers.add_parser("sources", help="Show source lineage for a compiled workflow.")
     sources_parser.add_argument("--node")
+    sources_parser.add_argument("--version")
     sources_parser.add_argument("--workflow")
     sources_parser.add_argument("--run")
     sources_parser.set_defaults(handler=handle_workflow_sources, command_path=["workflow", "sources"])
 
     source_discovery_parser = workflow_subparsers.add_parser("source-discovery", help="Show deterministic compile input discovery for a workflow.")
     source_discovery_parser.add_argument("--node")
+    source_discovery_parser.add_argument("--version")
     source_discovery_parser.add_argument("--workflow")
     source_discovery_parser.set_defaults(handler=handle_workflow_source_discovery, command_path=["workflow", "source-discovery"])
 
     schema_validation_parser = workflow_subparsers.add_parser("schema-validation", help="Show compile-stage schema validation inventory for a workflow.")
     schema_validation_parser.add_argument("--node")
+    schema_validation_parser.add_argument("--version")
     schema_validation_parser.add_argument("--workflow")
     schema_validation_parser.set_defaults(handler=handle_workflow_schema_validation, command_path=["workflow", "schema-validation"])
 
     override_resolution_parser = workflow_subparsers.add_parser("override-resolution", help="Show compile-stage override resolution for a workflow.")
     override_resolution_parser.add_argument("--node")
+    override_resolution_parser.add_argument("--version")
     override_resolution_parser.add_argument("--workflow")
     override_resolution_parser.set_defaults(handler=handle_workflow_override_resolution, command_path=["workflow", "override-resolution"])
 
     hook_policy_parser = workflow_subparsers.add_parser("hook-policy", help="Show compile-stage policy folding and hook expansion for a workflow.")
     hook_policy_parser.add_argument("--node")
+    hook_policy_parser.add_argument("--version")
     hook_policy_parser.add_argument("--workflow")
     hook_policy_parser.set_defaults(handler=handle_workflow_hook_policy, command_path=["workflow", "hook-policy"])
 
     hooks_parser = workflow_subparsers.add_parser("hooks", help="Show the hook selection and expansion plan for a compiled workflow.")
     hooks_parser.add_argument("--node")
+    hooks_parser.add_argument("--version")
     hooks_parser.add_argument("--workflow")
     hooks_parser.add_argument("--run")
     hooks_parser.set_defaults(handler=handle_workflow_hooks, command_path=["workflow", "hooks"])
 
     rendering_parser = workflow_subparsers.add_parser("rendering", help="Show compile-stage rendering diagnostics and frozen payloads for a workflow.")
     rendering_parser.add_argument("--node")
+    rendering_parser.add_argument("--version")
     rendering_parser.add_argument("--workflow")
     rendering_parser.set_defaults(handler=handle_workflow_rendering, command_path=["workflow", "rendering"])
 
-    compile_parser = workflow_subparsers.add_parser("compile", help="Compile the authoritative workflow for a node.")
-    compile_parser.add_argument("--node", required=True)
+    compile_parser = workflow_subparsers.add_parser("compile", help="Compile the workflow for an authoritative node or an explicit node version.")
+    compile_parser.add_argument("--node")
+    compile_parser.add_argument("--version")
     compile_parser.set_defaults(handler=handle_workflow_compile, command_path=["workflow", "compile"])
 
     start_parser = workflow_subparsers.add_parser("start", help="Create a top-level node from a prompt, compile it, and optionally start the first run.")
@@ -532,6 +596,7 @@ def add_workflow_group(subparsers) -> None:
 
     failures_parser = workflow_subparsers.add_parser("compile-failures", help="Show durable compile failures.")
     failures_parser.add_argument("--node")
+    failures_parser.add_argument("--version")
     failures_parser.add_argument("--workflow")
     failures_parser.add_argument("--run")
     failures_parser.set_defaults(handler=handle_workflow_compile_failures, command_path=["workflow", "compile-failures"])
@@ -594,9 +659,30 @@ def add_git_group(subparsers) -> None:
     merge_events_show_parser.add_argument("--node", required=True)
     merge_events_show_parser.set_defaults(handler=handle_git_merge_events_show, command_path=["git", "merge-events", "show"])
 
-    merge_children_parser = git_subparsers.add_parser("merge-children", help="Run the staged deterministic child-merge pipeline for a parent node.")
+    bootstrap_node_parser = git_subparsers.add_parser("bootstrap-node", help="Bootstrap a real live git repo for a node version.")
+    bootstrap_node_parser.add_argument("--version", required=True)
+    bootstrap_node_parser.add_argument("--base-version")
+    bootstrap_node_parser.add_argument("--files-file")
+    bootstrap_node_parser.add_argument("--replace-existing", action="store_true")
+    bootstrap_node_parser.set_defaults(handler=handle_git_bootstrap_node, command_path=["git", "bootstrap-node"])
+
+    merge_children_parser = git_subparsers.add_parser("merge-children", help="Run the live deterministic child-merge pipeline for a parent node.")
     merge_children_parser.add_argument("--node", required=True)
     merge_children_parser.set_defaults(handler=handle_git_merge_children, command_path=["git", "merge-children"])
+
+    abort_merge_parser = git_subparsers.add_parser("abort-merge", help="Abort a conflicted live merge and reset the parent repo back to seed.")
+    abort_merge_parser.add_argument("--node", required=True)
+    abort_merge_parser.set_defaults(handler=handle_git_abort_merge, command_path=["git", "abort-merge"])
+
+    finalize_node_parser = git_subparsers.add_parser("finalize-node", help="Create a real finalize commit for the authoritative node version.")
+    finalize_node_parser.add_argument("--node", required=True)
+    finalize_node_parser.set_defaults(handler=handle_git_finalize_node, command_path=["git", "finalize-node"])
+
+    status_parser = git_subparsers.add_parser("status", help="Show live git status for a node version repo.")
+    status_subparsers = status_parser.add_subparsers(dest="git_status_command", required=True)
+    status_show_parser = status_subparsers.add_parser("show", help="Show live git status for a node version.")
+    status_show_parser.add_argument("--version", required=True)
+    status_show_parser.set_defaults(handler=handle_git_status_show, command_path=["git", "status", "show"])
 
     merge_conflicts_parser = git_subparsers.add_parser("merge-conflicts", help="Inspect and resolve durable merge conflicts.")
     merge_conflicts_subparsers = merge_conflicts_parser.add_subparsers(dest="git_merge_conflicts_command", required=True)
@@ -641,6 +727,14 @@ def add_subtask_group(subparsers) -> None:
     current_parser.add_argument("--node", required=True)
     current_parser.set_defaults(handler=handle_subtask_current, command_path=["subtask", "current"])
 
+    attempts_parser = subtask_subparsers.add_parser("attempts", help="List durable subtask attempts for the active node run.")
+    attempts_parser.add_argument("--node", required=True)
+    attempts_parser.set_defaults(handler=handle_subtask_attempts, command_path=["subtask", "attempts"])
+
+    attempt_show_parser = subtask_subparsers.add_parser("attempt-show", help="Show one durable subtask attempt.")
+    attempt_show_parser.add_argument("--attempt", required=True)
+    attempt_show_parser.set_defaults(handler=handle_subtask_attempt_show, command_path=["subtask", "attempt-show"])
+
     prompt_parser = subtask_subparsers.add_parser("prompt", help="Show the current compiled subtask prompt payload.")
     prompt_parser.add_argument("--node", required=True)
     prompt_parser.set_defaults(handler=handle_subtask_prompt, command_path=["subtask", "prompt"])
@@ -667,11 +761,13 @@ def add_subtask_group(subparsers) -> None:
     complete_parser.add_argument("--node", required=True)
     complete_parser.add_argument("--compiled-subtask", required=True)
     complete_parser.add_argument("--summary")
+    complete_parser.add_argument("--result-file")
     complete_parser.set_defaults(handler=handle_subtask_progress, command_path=["subtask", "complete"], daemon_path="/api/subtasks/complete")
 
     fail_parser = subtask_subparsers.add_parser("fail", help="Mark the current compiled subtask attempt as failed.")
     fail_parser.add_argument("--node", required=True)
     fail_parser.add_argument("--compiled-subtask", required=True)
+    fail_parser.add_argument("--result-file")
     fail_summary = fail_parser.add_mutually_exclusive_group(required=True)
     fail_summary.add_argument("--summary")
     fail_summary.add_argument("--summary-file")
@@ -812,6 +908,10 @@ def add_session_group(subparsers) -> None:
     recover_parser = session_subparsers.add_parser("recover", help="Run provider-agnostic recovery for the active node session.")
     recover_parser.add_argument("--node", required=True)
     recover_parser.set_defaults(handler=handle_session_recover, command_path=["session", "recover"])
+
+    provider_resume_parser = session_subparsers.add_parser("provider-resume", help="Run provider-aware recovery for the active node session when provider identity is restorable.")
+    provider_resume_parser.add_argument("--node", required=True)
+    provider_resume_parser.set_defaults(handler=handle_session_provider_recover, command_path=["session", "provider-resume"])
 
     nudge_parser = session_subparsers.add_parser("nudge", help="Nudge an idle primary session and escalate safely if needed.")
     nudge_parser.add_argument("--node", required=True)

@@ -19,3 +19,8 @@ Verify that tmux-backed session management, screen polling, idle detection, and 
 ## Notes
 
 - update session, recovery, and idle notes if the implemented mechanics differ from assumptions
+
+## Discovered Issues
+
+- 2026-03-10: The live primary-session tmux launch path still targets an interactive shell rather than a real Codex session, so the requested Codex-launch E2E proof cannot pass until that runtime path changes.
+- 2026-03-10: The requested dedicated tmux/Codex E2E files for live launch/idle/nudge and live completion/failure do not exist yet; current strongest idle/nudge proof remains in fake-adapter tests.

@@ -1,0 +1,30 @@
+id: 19_hook_expansion_compile_stage_flow
+name: Hook Expansion Compile Stage Flow
+purpose: Make deterministic hook selection, expansion, and inspection a standalone compile-stage contract.
+simulation_sources:
+  - simulations/14_hook_expansion_flow.md
+covers:
+  - collect applicable hooks for a node workflow
+  - apply deterministic hook ordering
+  - expose selected hooks, skipped hooks, and expanded steps through inspection surfaces
+entry_conditions:
+  - built-in or project-local hook definitions exist
+  - a node can be compiled far enough to expose workflow hook metadata
+task_flow:
+  - create a node with hook-applicable tasks
+  - compile the workflow
+  - inspect hook-policy and workflow hooks payloads
+  - verify selected hooks and expanded steps remain stable
+required_subtasks:
+  - create_hook_eligible_node
+  - compile_hook_eligible_workflow
+  - inspect_selected_hooks
+  - inspect_expanded_steps
+required_capabilities:
+  - workflow compile
+  - workflow hooks
+  - workflow hook-policy
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[19]
+known_limitations:
+  - the current contract focuses on built-in deterministic hook expansion rather than arbitrary project-local hook precedence matrices

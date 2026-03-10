@@ -1,0 +1,34 @@
+id: 20_compile_failure_and_reattempt_flow
+name: Compile Failure And Reattempt Flow
+purpose: Make durable compile failure, inspection, source repair, and successful recompile a standalone operator contract.
+simulation_sources:
+  - simulations/13_compile_failure_flow.md
+  - simulations2/05_compile_failure_and_reattempt_flow.md
+covers:
+  - fail compile because of an in-scope malformed YAML source that compile always loads
+  - inspect durable compile-failure evidence
+  - fix the source without replacing the node
+  - recompile successfully and confirm the node leaves compile-failed state
+entry_conditions:
+  - a node exists that can be compiled against project-local sources
+  - at least one source document can be repaired between compile attempts
+task_flow:
+  - create a node with a malformed project-local policy in scope
+  - compile and record a durable failure
+  - inspect compile-failure state
+  - fix the malformed source
+  - recompile the same node successfully
+required_subtasks:
+  - create_failure_prone_node
+  - compile_with_bad_source
+  - inspect_compile_failure
+  - repair_source
+  - recompile_after_repair
+required_capabilities:
+  - workflow compile
+  - workflow compile-failures
+  - workflow source-discovery
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[20]
+known_limitations:
+  - the current contract covers schema-validation compile failure caused by an in-scope malformed project source rather than every compile-failure class

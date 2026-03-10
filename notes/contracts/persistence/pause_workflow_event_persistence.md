@@ -328,6 +328,7 @@ Potential useful additions:
 
 - `ai-tool node decision-history --node <id>`
 - `ai-tool node recovery-history --node <id>`
+- `ai-tool node interventions --node <id>`
 
 If names differ, the capability should still exist.
 
@@ -338,6 +339,13 @@ If names differ, the capability should still exist.
 Workflow events would significantly improve the system’s ability to answer:
 
 - how many times was this node paused
+- which explicit human intervention action was applied after a pause, reconcile conflict, merge conflict, or recovery issue
+
+Implementation staging note:
+
+- the current runtime now uses `workflow_events` not only for pause-entry and pause-clear semantics but also for bounded unified intervention audit
+- human intervention application currently records `event_scope = intervention` and `event_type = intervention_applied`
+- this remains intentionally narrow; the runtime still derives pending intervention state from the canonical pause, reconciliation, merge-conflict, recovery, and cutover-readiness records instead of maintaining a second intervention ledger
 - why did it resume
 - when did recovery happen
 - what parent failure decisions were made

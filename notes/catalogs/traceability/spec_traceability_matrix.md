@@ -18,6 +18,9 @@ Related documents:
 - `notes/explorations/original_concept.md`
 - `notes/planning/expansion/full_spec_expansion_plan.md`
 - `notes/catalogs/inventory/major_feature_inventory.md`
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/traceability/cross_spec_gap_matrix.md`
 
 ---
@@ -37,6 +40,15 @@ Use the following artifact-state values when useful:
 - `exists`
 - `exists_but_needs_fold_in`
 - `missing`
+
+Interpretation rule:
+
+- `covered` and `partially_covered` in this document describe specification and artifact coverage only.
+- They do not mean a feature is `verified`, `flow_complete`, or `release_ready`.
+- Canonical implementation and verification status lives in:
+  - `notes/catalogs/checklists/feature_checklist_standard.md`
+  - `notes/catalogs/checklists/feature_checklist_backfill.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
 
 ---
 
@@ -100,7 +112,7 @@ This table maps the original goals to tracked feature IDs from `notes/catalogs/i
 
 ## Feature Traceability Matrix
 
-This matrix maps each feature to the current spec package and the remaining level of closure.
+This matrix maps each feature to the current spec package and the remaining level of specification closure.
 
 | Feature ID | Feature | Current Specs | YAML | DB | CLI | Pseudocode | Prompts | Coverage | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -133,7 +145,7 @@ This matrix maps each feature to the current spec package and the remaining leve
 | F27 | Source document lineage | `yaml_schemas_spec_v2`, `database_schema_spec_v2`, `cli_surface_spec_v2`, `state_value_catalog` | exists | exists | exists | exists_but_needs_fold_in |  | covered | Durable source-document lineage and workflow/node source inspection are implemented. |
 | F28 | Prompt history and summary history | `database_schema_spec_v2`, `cli_surface_spec_v2`, `runtime_command_loop_spec_v2`, `state_value_catalog`, `prompt_library_plan` | exists_but_needs_fold_in | exists | exists | exists | x | covered | Prompt delivery and summary registration now have durable history plus CLI/daemon inspection surfaces. |
 | F29 | Documentation generation | `yaml_schemas_spec_v2`, `review_testing_docs_yaml_plan`, `database_schema_spec_v2`, `cli_surface_spec_v2`, `prompt_library_plan` | exists | exists | exists | exists | x | covered | Docs are now first-class and ordered correctly relative to provenance/finalize, with default docs prompts drafted. |
-| F30 | Code provenance and rationale mapping | `database_schema_spec_v2`, `provenance_identity_strategy`, `cli_surface_spec_v2`, `auditability_checklist` | exists_but_needs_fold_in | exists | exists | exists |  | covered | Code-entity extraction, node/entity change history, rationale reads, and relation history are implemented with a bounded Python-first extractor. |
+| F30 | Code provenance and rationale mapping | `database_schema_spec_v2`, `provenance_identity_strategy`, `cli_surface_spec_v2`, `auditability_checklist` | exists_but_needs_fold_in | exists | exists | exists |  | covered | Code-entity extraction, node/entity change history, rationale reads, and relation history are implemented with a bounded multilanguage extractor spanning Python plus JS/TS implementation code. |
 | F31 | Daemon authority and durable orchestration record | `authority_and_api_model`, `database_schema_spec_v2`, `runtime_command_loop_spec_v2`, `cli_surface_spec_v2`, `auditability_checklist` | exists | exists | exists | exists |  | covered | The live-authority and durable-record boundary is now explicit across the package. |
 | F32 | Automation of all user-visible actions | `action_automation_matrix`, `cli_surface_spec_v2`, `implementation_slicing_plan` | exists_but_needs_fold_in | exists_but_needs_fold_in | exists | exists |  | covered | User-visible runtime mutations now have daemon-backed CLI surfaces and durable audit for the implemented command families. |
 | F33 | Optional isolated runtime environments | `runtime_environment_policy_note`, `yaml_schemas_spec_v2`, `implementation_slicing_plan` | exists_but_needs_fold_in | exists_but_needs_fold_in | exists_but_needs_fold_in | exists |  | covered | Environment-policy selection and frozen runtime environment metadata are implemented; real launcher isolation remains intentionally deferred. |

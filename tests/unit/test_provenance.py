@@ -4,6 +4,7 @@ from pathlib import Path
 
 from uuid import uuid4
 
+from aicoding.config import get_settings
 from aicoding.daemon.provenance import (
     refresh_node_provenance,
     show_entity_by_name,
@@ -170,3 +171,75 @@ def test_provenance_records_heuristic_rename_or_move_match_across_cutover(migrat
     assert history[-1].change_type == "renamed_or_moved"
     assert history[-1].match_confidence == "medium"
     assert history[0].entity_id == history[-1].entity_id
+
+
+def test_refresh_node_provenance_extracts_typescript_entities_and_relations(migrated_public_schema, tmp_path) -> None:
+    db_session_factory = create_session_factory(engine=migrated_public_schema)
+    _write_workspace(
+        tmp_path,
+        "web/app.ts",
+        "\n".join(
+            [
+                "export function helper(name: string) {",
+                "  return name.toUpperCase();",
+                "}",
+                "",
+                "export class Greeter {",
+                "  greet(name: string) {",
+                "    return helper(name);",
+                "  }",
+                "}",
+            ]
+        ),
+    )
+    node = _create_minimal_node_version(db_session_factory, title="TypeScript Provenance", prompt="track mixed code changes")
+
+    refreshed = refresh_node_provenance(db_session_factory, logical_node_id=node.node_id, workspace_root=tmp_path)
+    entity = show_entity_by_name(db_session_factory, canonical_name="web.app.Greeter.greet")
+    history = show_entity_history(db_session_factory, canonical_name="web.app.Greeter.greet")
+    relations = show_entity_relations(db_session_factory, canonical_name="web.app.Greeter.greet")
+
+    assert refreshed.entity_count >= 4
+    assert refreshed.relation_count >= 3
+    assert entity.entities[0].entity_type == "method"
+    assert history.history[0].metadata_json["language"] == "typescript"
+    assert relations.relations[0].relation_type in {"calls", "contains"}
+
+
+def test_provenance_records_javascript_heuristic_rename_or_move_match_across_cutover(migrated_public_schema, tmp_path) -> None:
+    db_session_factory = create_session_factory(engine=migrated_public_schema)
+    _write_workspace(tmp_path, "web/app.js", "export function hello(name) {\n  return name.toUpperCase();\n}\n")
+    node = _create_minimal_node_version(db_session_factory, title="JS Rename", prompt="p")
+
+    refresh_node_provenance(db_session_factory, logical_node_id=node.node_id, workspace_root=tmp_path)
+
+    candidate = create_superseding_node_version(db_session_factory, logical_node_id=node.node_id)
+    cutover_candidate_version(db_session_factory, version_id=candidate.id)
+    (tmp_path / "web" / "app.js").unlink()
+    _write_workspace(tmp_path, "web/renamed.js", "export function wave(name) {\n  return name.toUpperCase();\n}\n")
+
+    refresh_node_provenance(db_session_factory, logical_node_id=node.node_id, workspace_root=tmp_path)
+    history = show_entity_history(db_session_factory, canonical_name="web.renamed.wave").history
+
+    assert history[0].change_type == "added"
+    assert history[-1].change_type == "renamed_or_moved"
+    assert history[-1].match_confidence == "medium"
+    assert history[-1].metadata_json["language"] == "javascript"
+    assert history[0].entity_id == history[-1].entity_id
+
+
+def test_refresh_node_provenance_defaults_to_configured_workspace_root(migrated_public_schema, tmp_path, monkeypatch) -> None:
+    db_session_factory = create_session_factory(engine=migrated_public_schema)
+    workspace_root = tmp_path / "workspace"
+    _write_workspace(workspace_root, "src/defaulted.py", "def greet(name):\n    return name.upper()\n")
+    node = _create_minimal_node_version(db_session_factory, title="Workspace Default", prompt="p")
+
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    get_settings.cache_clear()
+    try:
+        refreshed = refresh_node_provenance(db_session_factory, logical_node_id=node.node_id)
+    finally:
+        get_settings.cache_clear()
+
+    assert refreshed.entity_count >= 1
+    assert show_entity_by_name(db_session_factory, canonical_name="src.defaulted.greet").entities

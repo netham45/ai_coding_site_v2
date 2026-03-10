@@ -15,3 +15,14 @@ They ensure:
 - stack and performance assumptions are verified explicitly, not inferred
 
 Run these after setup and feature phases, and rerun them whenever major features land.
+
+Document-schema references:
+
+- `notes/catalogs/checklists/document_schema_rulebook.md`
+- `notes/catalogs/checklists/document_schema_test_policy.md`
+
+Canonical status/command references:
+
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
+- `notes/catalogs/checklists/e2e_execution_policy.md`

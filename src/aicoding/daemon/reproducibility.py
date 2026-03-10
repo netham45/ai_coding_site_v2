@@ -350,6 +350,7 @@ def _list_compile_failures_for_version(session_factory: sessionmaker[Session], *
                 source_hash=row.source_hash,
                 target_family=row.target_family,
                 target_id=row.target_id,
+                compile_context=dict(row.details_json or {}).get("compile_context", {}),
                 created_at=row.created_at.isoformat(),
             )
             for row in rows

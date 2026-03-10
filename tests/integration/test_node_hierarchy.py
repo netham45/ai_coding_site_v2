@@ -138,3 +138,52 @@ def test_manual_child_creation_after_layout_materialization_enters_hybrid_mode(a
     assert payload["authority_mode"] == "hybrid"
     assert payload["status"] == "reconciliation_required"
     assert payload["child_count"] == 3
+
+
+def test_child_reconciliation_endpoint_can_preserve_manual_structure(app_client, migrated_public_schema) -> None:
+    parent_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "epic", "title": "Hybrid Parent", "prompt": "top-level prompt"},
+    )
+    parent_id = parent_response.json()["node_id"]
+
+    app_client.post(
+        f"/api/nodes/{parent_id}/children/materialize",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "kind": "phase",
+            "title": "Manual Extra Phase",
+            "prompt": "manual prompt",
+            "parent_node_id": parent_id,
+        },
+    )
+
+    inspection_response = app_client.get(
+        f"/api/nodes/{parent_id}/children/reconciliation",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    reconcile_response = app_client.post(
+        f"/api/nodes/{parent_id}/children/reconcile",
+        headers={"Authorization": "Bearer change-me"},
+        json={"decision": "preserve_manual"},
+    )
+    materialization_response = app_client.get(
+        f"/api/nodes/{parent_id}/children/materialization",
+        headers={"Authorization": "Bearer change-me"},
+    )
+
+    assert inspection_response.status_code == 200
+    assert inspection_response.json()["authority_mode"] == "hybrid"
+    assert inspection_response.json()["available_decisions"] == ["preserve_manual"]
+    assert reconcile_response.status_code == 200
+    assert reconcile_response.json()["authority_mode"] == "manual"
+    assert reconcile_response.json()["manual_child_count"] == 3
+    assert reconcile_response.json()["layout_generated_child_count"] == 0
+    assert materialization_response.status_code == 200
+    assert materialization_response.json()["authority_mode"] == "manual"
+    assert materialization_response.json()["status"] == "manual"

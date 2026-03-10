@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from dataclasses import dataclass
 from datetime import timezone
 from hashlib import sha256
@@ -12,6 +13,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.config import get_settings
 from aicoding.daemon.history import record_summary_history
 from aicoding.db.models import (
     CodeEntity,
@@ -27,6 +29,8 @@ from aicoding.db.session import query_session_scope, session_scope
 IGNORED_DIR_NAMES = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".runtime"}
 SUPPORTED_ENTITY_TYPES = {"module", "class", "function", "method"}
 CHANGED_ENTITY_TYPES = {"added", "modified", "renamed_or_moved"}
+SUPPORTED_SCRIPT_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
+JS_KEYWORD_CALL_NAMES = {"if", "for", "while", "switch", "catch", "return", "typeof", "new", "function", "class"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +44,7 @@ class ObservedRelation:
 
 @dataclass(frozen=True, slots=True)
 class ObservedEntity:
+    language: str
     entity_type: str
     canonical_name: str
     file_path: str
@@ -228,7 +233,8 @@ def refresh_node_provenance(
     logical_node_id: UUID,
     workspace_root: Path | None = None,
 ) -> ProvenanceRefreshSnapshot:
-    workspace_root = workspace_root or Path.cwd()
+    settings_workspace_root = get_settings().workspace_root
+    workspace_root = workspace_root or settings_workspace_root or Path.cwd()
     with session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
         prompt_row = _latest_prompt_row(session, version.id)
@@ -368,7 +374,7 @@ def _replace_node_provenance(
                 observed_file_path=observed.file_path,
                 observed_signature=observed.signature,
                 observed_stable_hash=observed.stable_hash,
-                metadata_json={"entity_type": observed.entity_type},
+                metadata_json={"entity_type": observed.entity_type, "language": observed.language},
             )
         )
     removed_ids = previous_entity_ids - current_entity_ids
@@ -391,7 +397,7 @@ def _replace_node_provenance(
                 observed_file_path=entity.file_path,
                 observed_signature=entity.signature,
                 observed_stable_hash=entity.stable_hash,
-                metadata_json={"entity_type": entity.entity_type},
+                metadata_json={"entity_type": entity.entity_type, "language": _language_for_path(entity.file_path)},
             )
         )
     session.flush()
@@ -488,24 +494,24 @@ def _extract_workspace_entities(workspace_root: Path) -> tuple[list[ObservedEnti
         raise DaemonConflictError("workspace root does not exist for provenance extraction")
     entities: list[ObservedEntity] = []
     relations: list[ObservedRelation] = []
-    for path in sorted(_iter_python_files(workspace_root)):
-        parser = _PythonEntityExtractor(workspace_root, path)
+    for path in sorted(_iter_source_files(workspace_root)):
+        parser = _PythonEntityExtractor(workspace_root, path) if path.suffix == ".py" else _ScriptEntityExtractor(workspace_root, path)
         parser.extract()
         entities.extend(parser.entities)
         relations.extend(parser.relations)
     if not entities:
-        raise DaemonConflictError("no Python entities found in workspace")
+        raise DaemonConflictError("no supported source entities found in workspace")
     return entities, relations
 
 
-def _iter_python_files(workspace_root: Path) -> list[Path]:
+def _iter_source_files(workspace_root: Path) -> list[Path]:
     files: list[Path] = []
     scan_root = workspace_root / "src" if (workspace_root / "src").is_dir() else workspace_root
     for current_root, dir_names, file_names in os.walk(scan_root):
         dir_names[:] = [name for name in dir_names if name not in IGNORED_DIR_NAMES]
         current_path = Path(current_root)
         for file_name in file_names:
-            if not file_name.endswith(".py"):
+            if Path(file_name).suffix not in SUPPORTED_SCRIPT_EXTENSIONS:
                 continue
             files.append(current_path / file_name)
     return files
@@ -524,6 +530,7 @@ class _PythonEntityExtractor:
         relative_path = self.file_path.relative_to(self.workspace_root).as_posix()
         module_name = _module_name_for_path(relative_path)
         module_entity = ObservedEntity(
+            language="python",
             entity_type="module",
             canonical_name=module_name,
             file_path=relative_path,
@@ -542,6 +549,7 @@ class _PythonEntityExtractor:
                 class_methods[class_canonical] = set()
                 self.entities.append(
                     ObservedEntity(
+                        language="python",
                         entity_type="class",
                         canonical_name=class_canonical,
                         file_path=relative_path,
@@ -567,6 +575,7 @@ class _PythonEntityExtractor:
                     class_methods[class_canonical].add(child.name)
                     self.entities.append(
                         ObservedEntity(
+                            language="python",
                             entity_type="method",
                             canonical_name=method_canonical,
                             file_path=relative_path,
@@ -591,6 +600,7 @@ class _PythonEntityExtractor:
                 top_level_functions[node.name] = function_canonical
                 self.entities.append(
                     ObservedEntity(
+                        language="python",
                         entity_type="function",
                         canonical_name=function_canonical,
                         file_path=relative_path,
@@ -614,6 +624,159 @@ class _PythonEntityExtractor:
         class_method_names = {class_name: set(methods) for class_name, methods in class_methods.items()}
         for from_name, raw_target, current_class, confidence in pending_calls:
             resolved = _resolve_call_target(raw_target, module_name, current_class, top_level_names, class_method_names)
+            if resolved is None:
+                continue
+            self.relations.append(
+                ObservedRelation(
+                    from_canonical_name=from_name,
+                    to_canonical_name=resolved,
+                    relation_type="calls",
+                    source="ast_exact" if confidence >= 1.0 else "ast_inferred",
+                    confidence=confidence,
+                )
+            )
+
+
+class _ScriptEntityExtractor:
+    CLASS_PATTERN = re.compile(r"(?m)^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)[^{]*\{")
+    FUNCTION_PATTERN = re.compile(r"(?m)^\s*(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{")
+    ARROW_PATTERN = re.compile(r"(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>\s*\{")
+    METHOD_PATTERN = re.compile(r"(?m)^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{")
+
+    def __init__(self, workspace_root: Path, file_path: Path) -> None:
+        self.workspace_root = workspace_root
+        self.file_path = file_path
+        self.entities: list[ObservedEntity] = []
+        self.relations: list[ObservedRelation] = []
+
+    def extract(self) -> None:
+        source = self.file_path.read_text(encoding="utf-8")
+        relative_path = self.file_path.relative_to(self.workspace_root).as_posix()
+        module_name = _module_name_for_path(relative_path)
+        language = _language_for_path(relative_path)
+        self.entities.append(
+            ObservedEntity(
+                language=language,
+                entity_type="module",
+                canonical_name=module_name,
+                file_path=relative_path,
+                signature=None,
+                start_line=1,
+                end_line=len(source.splitlines()) or 1,
+                stable_hash=_stable_text_hash(_normalize_js_source(source)),
+            )
+        )
+        top_level_functions: dict[str, str] = {}
+        class_methods: dict[str, set[str]] = {}
+        class_spans: list[tuple[int, int]] = []
+        pending_calls: list[tuple[str, str, str | None, float]] = []
+
+        for match in self.CLASS_PATTERN.finditer(source):
+            class_name = match.group(1)
+            body_start = match.end() - 1
+            body_end = _find_matching_brace(source, body_start)
+            class_spans.append((match.start(), body_end))
+            class_canonical = f"{module_name}.{class_name}"
+            class_block = source[match.start() : body_end + 1]
+            class_methods[class_canonical] = set()
+            self.entities.append(
+                ObservedEntity(
+                    language=language,
+                    entity_type="class",
+                    canonical_name=class_canonical,
+                    file_path=relative_path,
+                    signature=_js_class_signature(class_block),
+                    start_line=_line_number_for_offset(source, match.start()),
+                    end_line=_line_number_for_offset(source, body_end),
+                    stable_hash=_stable_text_hash(_normalize_js_entity_source(class_block, kind="class", name=class_name)),
+                )
+            )
+            self.relations.append(
+                    ObservedRelation(
+                        from_canonical_name=module_name,
+                        to_canonical_name=class_canonical,
+                        relation_type="contains",
+                        source="ast_exact",
+                        confidence=1.0,
+                    )
+                )
+
+            class_body = source[body_start + 1 : body_end]
+            class_body_offset = body_start + 1
+            for method_match in self.METHOD_PATTERN.finditer(class_body):
+                method_name = method_match.group(1)
+                if method_name == "constructor":
+                    continue
+                method_body_start = class_body_offset + method_match.end() - 1
+                method_body_end = _find_matching_brace(source, method_body_start)
+                method_block = source[class_body_offset + method_match.start() : method_body_end + 1]
+                method_canonical = f"{class_canonical}.{method_name}"
+                class_methods[class_canonical].add(method_name)
+                self.entities.append(
+                    ObservedEntity(
+                        language=language,
+                        entity_type="method",
+                        canonical_name=method_canonical,
+                        file_path=relative_path,
+                        signature=_js_callable_signature(method_match.group(2)),
+                        start_line=_line_number_for_offset(source, class_body_offset + method_match.start()),
+                        end_line=_line_number_for_offset(source, method_body_end),
+                        stable_hash=_stable_text_hash(_normalize_js_entity_source(method_block, kind="method", name=method_name)),
+                    )
+                )
+                self.relations.append(
+                    ObservedRelation(
+                        from_canonical_name=class_canonical,
+                        to_canonical_name=method_canonical,
+                        relation_type="contains",
+                        source="ast_exact",
+                        confidence=1.0,
+                    )
+                )
+                pending_calls.extend(_collect_script_calls(method_canonical, method_block, module_name, class_canonical))
+
+        for pattern in (self.FUNCTION_PATTERN, self.ARROW_PATTERN):
+            for match in pattern.finditer(source):
+                if any(start <= match.start() <= end for start, end in class_spans):
+                    continue
+                function_name = match.group(1)
+                function_canonical = f"{module_name}.{function_name}"
+                body_start = match.end() - 1
+                body_end = _find_matching_brace(source, body_start)
+                function_block = source[match.start() : body_end + 1]
+                top_level_functions[function_name] = function_canonical
+                self.entities.append(
+                    ObservedEntity(
+                        language=language,
+                        entity_type="function",
+                        canonical_name=function_canonical,
+                        file_path=relative_path,
+                        signature=_js_callable_signature(match.group(2)),
+                        start_line=_line_number_for_offset(source, match.start()),
+                        end_line=_line_number_for_offset(source, body_end),
+                        stable_hash=_stable_text_hash(
+                            _normalize_js_entity_source(
+                                function_block,
+                                kind="arrow_function" if pattern is self.ARROW_PATTERN else "function",
+                                name=function_name,
+                            )
+                        ),
+                    )
+                )
+                self.relations.append(
+                    ObservedRelation(
+                        from_canonical_name=module_name,
+                        to_canonical_name=function_canonical,
+                        relation_type="contains",
+                        source="ast_exact",
+                        confidence=1.0,
+                    )
+                )
+                pending_calls.extend(_collect_script_calls(function_canonical, function_block, module_name, None))
+
+        top_level_names = set(top_level_functions)
+        for from_name, raw_target, current_class, confidence in pending_calls:
+            resolved = _resolve_call_target(raw_target, module_name, current_class, top_level_names, class_methods)
             if resolved is None:
                 continue
             self.relations.append(
@@ -680,6 +843,19 @@ def _module_name_for_path(relative_path: str) -> str:
     return ".".join(parts)
 
 
+def _language_for_path(file_path: str | None) -> str:
+    if file_path is None:
+        return "unknown"
+    suffix = Path(file_path).suffix.lower()
+    if suffix == ".py":
+        return "python"
+    if suffix in {".js", ".jsx"}:
+        return "javascript"
+    if suffix in {".ts", ".tsx"}:
+        return "typescript"
+    return "unknown"
+
+
 def _function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     positional = [arg.arg for arg in list(node.args.posonlyargs) + list(node.args.args)]
     keyword_only = [arg.arg for arg in node.args.kwonlyargs]
@@ -702,6 +878,10 @@ def _stable_hash(node: ast.AST) -> str:
     return sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _stable_text_hash(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
 def _normalize_for_hash(node: ast.AST) -> ast.AST:
     node_copy = ast.fix_missing_locations(ast.parse(ast.unparse(node)).body[0] if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else ast.parse(ast.unparse(node)))
     if isinstance(node_copy, ast.Module):
@@ -709,6 +889,114 @@ def _normalize_for_hash(node: ast.AST) -> ast.AST:
     if isinstance(node_copy, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         node_copy.name = "_"
     return node_copy
+
+
+def _normalize_js_source(source: str) -> str:
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"//.*$", "", source, flags=re.MULTILINE)
+    return re.sub(r"\s+", " ", source).strip()
+
+
+def _normalize_js_entity_source(source: str, *, kind: str, name: str) -> str:
+    normalized = _normalize_js_source(source)
+    if kind == "class":
+        return re.sub(rf"\bclass\s+{re.escape(name)}\b", "class _", normalized, count=1)
+    if kind == "function":
+        return re.sub(rf"\bfunction\s+{re.escape(name)}\b", "function _", normalized, count=1)
+    if kind == "arrow_function":
+        return re.sub(rf"\b(const|let|var)\s+{re.escape(name)}\s*=", r"\1 _ =", normalized, count=1)
+    if kind == "method":
+        normalized = re.sub(rf"^\s*async\s+{re.escape(name)}\s*\(", "async _(", normalized, count=1)
+        return re.sub(rf"^\s*{re.escape(name)}\s*\(", "_(", normalized, count=1)
+    return normalized
+
+
+def _find_matching_brace(source: str, open_index: int) -> int:
+    depth = 0
+    in_single = False
+    in_double = False
+    in_backtick = False
+    escape = False
+    for index in range(open_index, len(source)):
+        char = source[index]
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if in_single:
+            if char == "'":
+                in_single = False
+            continue
+        if in_double:
+            if char == '"':
+                in_double = False
+            continue
+        if in_backtick:
+            if char == "`":
+                in_backtick = False
+            continue
+        if char == "'":
+            in_single = True
+            continue
+        if char == '"':
+            in_double = True
+            continue
+        if char == "`":
+            in_backtick = True
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    raise DaemonConflictError("unbalanced braces in script provenance extraction")
+
+
+def _line_number_for_offset(source: str, offset: int) -> int:
+    return source.count("\n", 0, offset) + 1
+
+
+def _js_callable_signature(params: str) -> str:
+    normalized = ", ".join(part.strip() for part in params.split(",") if part.strip())
+    return f"({normalized}) -> unknown"
+
+
+def _js_class_signature(class_block: str) -> str:
+    match = re.search(r"\bextends\s+([A-Za-z_$][\w$]*)", class_block)
+    return f"({match.group(1) if match else 'object'})"
+
+
+def _collect_script_calls(
+    source_canonical_name: str,
+    block: str,
+    module_name: str,
+    current_class: str | None,
+) -> list[tuple[str, str, str | None, float]]:
+    calls: list[tuple[str, str, str | None, float]] = []
+    seen: set[tuple[str, float]] = set()
+    for target in re.findall(r"\bthis\.([A-Za-z_$][\w$]*)\s*\(", block):
+        key = (target, 1.0)
+        if key not in seen:
+            seen.add(key)
+            calls.append((source_canonical_name, target, current_class, 1.0))
+    for target in re.findall(r"(?<!\.)\b([A-Za-z_$][\w$]*)\s*\(", block):
+        if target in JS_KEYWORD_CALL_NAMES:
+            continue
+        key = (target, 1.0)
+        if key not in seen:
+            seen.add(key)
+            calls.append((source_canonical_name, target, current_class, 1.0))
+    for target in re.findall(r"\.([A-Za-z_$][\w$]*)\s*\(", block):
+        if target in JS_KEYWORD_CALL_NAMES:
+            continue
+        key = (target, 0.6)
+        if key not in seen:
+            seen.add(key)
+            calls.append((source_canonical_name, target, current_class, 0.6))
+    return calls
 
 
 def _latest_prompt_row(session: Session, node_version_id: UUID) -> PromptRecord | None:

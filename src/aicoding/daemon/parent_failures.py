@@ -43,6 +43,13 @@ class ParentFailurePolicySnapshot:
     consecutive_threshold: int
     per_child_threshold: int
 
+    def to_payload(self) -> dict[str, int]:
+        return {
+            "total_threshold": self.total_threshold,
+            "consecutive_threshold": self.consecutive_threshold,
+            "per_child_threshold": self.per_child_threshold,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class ChildFailureContext:
@@ -52,6 +59,8 @@ class ChildFailureContext:
     child_title: str
     child_kind: str
     classification: str
+    classification_reason: str
+    failure_origin: str
     summary: str
     source_subtask_key: str | None
     failed_attempt_number: int | None
@@ -117,8 +126,13 @@ class ParentDecisionSnapshot:
     child_node_version_id: UUID | None
     child_node_run_id: UUID | None
     failure_class: str | None
+    failure_origin: str | None
     decision_type: str
     decision_source: str | None
+    decision_reason: str | None
+    options_considered: list[str]
+    threshold_triggered: bool
+    threshold_reason: str | None
     summary: str | None
     payload_json: dict[str, object]
     created_at: str
@@ -133,8 +147,13 @@ class ParentDecisionSnapshot:
             "child_node_version_id": None if self.child_node_version_id is None else str(self.child_node_version_id),
             "child_node_run_id": None if self.child_node_run_id is None else str(self.child_node_run_id),
             "failure_class": self.failure_class,
+            "failure_origin": self.failure_origin,
             "decision_type": self.decision_type,
             "decision_source": self.decision_source,
+            "decision_reason": self.decision_reason,
+            "options_considered": self.options_considered,
+            "threshold_triggered": self.threshold_triggered,
+            "threshold_reason": self.threshold_reason,
             "summary": self.summary,
             "payload_json": self.payload_json,
             "created_at": self.created_at,
@@ -161,8 +180,14 @@ class ParentFailureDecisionResult:
     child_node_version_id: UUID
     child_node_run_id: UUID
     failure_class: str
+    failure_origin: str
     decision_type: str
     decision_source: str
+    decision_reason: str
+    options_considered: list[str]
+    threshold_triggered: bool
+    threshold_reason: str | None
+    policy_snapshot: ParentFailurePolicySnapshot
     summary: str
     parent_lifecycle_state: str
     parent_run_status: str
@@ -178,8 +203,14 @@ class ParentFailureDecisionResult:
             "child_node_version_id": str(self.child_node_version_id),
             "child_node_run_id": str(self.child_node_run_id),
             "failure_class": self.failure_class,
+            "failure_origin": self.failure_origin,
             "decision_type": self.decision_type,
             "decision_source": self.decision_source,
+            "decision_reason": self.decision_reason,
+            "options_considered": self.options_considered,
+            "threshold_triggered": self.threshold_triggered,
+            "threshold_reason": self.threshold_reason,
+            "policy_snapshot": self.policy_snapshot.to_payload(),
             "summary": self.summary,
             "parent_lifecycle_state": self.parent_lifecycle_state,
             "parent_run_status": self.parent_run_status,
@@ -234,16 +265,18 @@ def handle_child_failure_at_parent(
         parent_state.failure_count_consecutive += 1
         policy = _parent_failure_policy(session, parent_version)
         decision_source = "override" if requested_action is not None else "auto"
-        decision_type = requested_action or _choose_auto_action(
-            classification=child_failure.classification,
+        evaluation = _evaluate_parent_decision(
+            child_failure=child_failure,
             counter_row=counter_row,
             parent_state=parent_state,
             policy=policy,
+            requested_action=requested_action,
         )
+        decision_type = str(evaluation["decision_type"])
         summary = _build_parent_decision_summary(
             parent_node_id=logical_node_id,
             child_failure=child_failure,
-            decision_type=decision_type,
+            evaluation=evaluation,
             counter_row=counter_row,
             parent_state=parent_state,
             policy=policy,
@@ -253,12 +286,19 @@ def handle_child_failure_at_parent(
             "child_node_version_id": str(child_failure.child_node_version_id),
             "child_node_run_id": str(child_failure.child_run_id),
             "failure_class": child_failure.classification,
+            "failure_origin": child_failure.failure_origin,
+            "classification_reason": child_failure.classification_reason,
             "failure_summary": child_failure.summary,
             "failure_count_for_child": counter_row.failure_count,
             "failure_count_total": parent_state.failure_count_from_children,
             "failure_count_consecutive": parent_state.failure_count_consecutive,
             "decision_type": decision_type,
             "decision_source": decision_source,
+            "decision_reason": evaluation["decision_reason"],
+            "options_considered": evaluation["options_considered"],
+            "threshold_triggered": evaluation["threshold_triggered"],
+            "threshold_reason": evaluation["threshold_reason"],
+            "policy_snapshot": policy.to_payload(),
             "summary": summary,
         }
         if decision_type in {"replan_parent", "pause_for_user"}:
@@ -313,8 +353,14 @@ def handle_child_failure_at_parent(
         child_node_version_id=child_failure.child_node_version_id,
         child_node_run_id=child_failure.child_run_id,
         failure_class=child_failure.classification,
+        failure_origin=child_failure.failure_origin,
         decision_type=decision_type,
         decision_source=decision_source,
+        decision_reason=str(evaluation["decision_reason"]),
+        options_considered=list(evaluation["options_considered"]),
+        threshold_triggered=bool(evaluation["threshold_triggered"]),
+        threshold_reason=None if evaluation["threshold_reason"] is None else str(evaluation["threshold_reason"]),
+        policy_snapshot=policy,
         summary=summary,
         parent_lifecycle_state=parent_lifecycle_state,
         parent_run_status=parent_run_status,
@@ -374,17 +420,25 @@ def _load_child_failure_context(session: Session, *, parent_node_version_id: UUI
         .order_by(SubtaskAttempt.ended_at.desc(), SubtaskAttempt.created_at.desc())
     ).scalars().first()
     summary = (None if attempt is None else attempt.summary) or run.summary or "child failed without a recorded summary"
-    classification = _classify_failure(
-        attempt=attempt,
-        run=run,
-        lifecycle=lifecycle,
-    )
     source_subtask_key = None
     if attempt is not None and attempt.compiled_subtask_id is not None:
         from aicoding.db.models import CompiledSubtask
 
         subtask = session.get(CompiledSubtask, attempt.compiled_subtask_id)
         source_subtask_key = None if subtask is None else subtask.source_subtask_key
+    classification = _classify_failure(
+        attempt=attempt,
+        run=run,
+        lifecycle=lifecycle,
+        source_subtask_key=source_subtask_key,
+    )
+    classification_reason, failure_origin = _classify_failure_reason(
+        attempt=attempt,
+        run=run,
+        lifecycle=lifecycle,
+        source_subtask_key=source_subtask_key,
+        classification=classification,
+    )
     return ChildFailureContext(
         child_node_id=child_node_id,
         child_node_version_id=child_version.id,
@@ -392,13 +446,15 @@ def _load_child_failure_context(session: Session, *, parent_node_version_id: UUI
         child_title=child.title,
         child_kind=child.kind,
         classification=classification,
+        classification_reason=classification_reason,
+        failure_origin=failure_origin,
         summary=summary,
         source_subtask_key=source_subtask_key,
         failed_attempt_number=None if attempt is None else attempt.attempt_number,
     )
 
 
-def _classify_failure(*, attempt: SubtaskAttempt | None, run: NodeRun, lifecycle: NodeLifecycleState) -> str:
+def _classify_failure(*, attempt: SubtaskAttempt | None, run: NodeRun, lifecycle: NodeLifecycleState, source_subtask_key: str | None) -> str:
     summary_text = ((None if attempt is None else attempt.summary) or run.summary or "").lower()
     if attempt is not None and attempt.validation_json:
         return "validation_failure"
@@ -406,11 +462,28 @@ def _classify_failure(*, attempt: SubtaskAttempt | None, run: NodeRun, lifecycle
         return "review_failure"
     if attempt is not None and attempt.testing_json:
         return "test_failure"
+    if source_subtask_key:
+        if source_subtask_key.startswith("validate_"):
+            return "validation_failure"
+        if source_subtask_key.startswith("review_"):
+            return "review_failure"
+        if source_subtask_key.startswith("run_tests"):
+            return "test_failure"
+        if source_subtask_key.startswith("reconcile_") or source_subtask_key.startswith("merge_"):
+            return "merge_conflict_unresolved"
+        if source_subtask_key.startswith("rectify_") or source_subtask_key.startswith("regenerate_"):
+            return "rectification_failure"
     if "merge conflict" in summary_text or "conflict" in summary_text:
         return "merge_conflict_unresolved"
+    if "hybrid tree" in summary_text or "reconciliation" in summary_text or "layout authority" in summary_text or "manual tree" in summary_text:
+        return "manual_tree_conflict"
+    if "provider session" in summary_text or "session recovery" in summary_text or "tmux session" in summary_text:
+        return "provider_recovery_failure"
+    if "rectification" in summary_text or "rebuild" in summary_text or "regeneration" in summary_text:
+        return "rectification_failure"
     if "layout" in summary_text or "requirement" in summary_text or "plan" in summary_text:
         return "bad_layout_or_bad_requirements"
-    if "dependency" in summary_text or "context" in summary_text:
+    if "dependency" in summary_text or "context" in summary_text or "blocked" in summary_text:
         return "dependency_or_context_failure"
     if "environment" in summary_text or "timeout" in summary_text or "tool" in summary_text:
         return "environment_failure"
@@ -419,6 +492,35 @@ def _classify_failure(*, attempt: SubtaskAttempt | None, run: NodeRun, lifecycle
     if lifecycle.pause_flag_name:
         return "unknown_failure"
     return "unknown_failure"
+
+
+def _classify_failure_reason(
+    *,
+    attempt: SubtaskAttempt | None,
+    run: NodeRun,
+    lifecycle: NodeLifecycleState,
+    source_subtask_key: str | None,
+    classification: str,
+) -> tuple[str, str]:
+    if attempt is not None and attempt.validation_json:
+        return ("validation payload was present on the failed attempt", "validation_gate")
+    if attempt is not None and attempt.review_json:
+        return ("review payload was present on the failed attempt", "review_gate")
+    if attempt is not None and attempt.testing_json:
+        return ("testing payload was present on the failed attempt", "testing_gate")
+    if source_subtask_key:
+        if source_subtask_key.startswith("validate_"):
+            return (f"failed source subtask '{source_subtask_key}' is a validation stage", "validation_gate")
+        if source_subtask_key.startswith("review_"):
+            return (f"failed source subtask '{source_subtask_key}' is a review stage", "review_gate")
+        if source_subtask_key.startswith("run_tests"):
+            return (f"failed source subtask '{source_subtask_key}' is a testing stage", "testing_gate")
+        if source_subtask_key.startswith("reconcile_") or source_subtask_key.startswith("merge_"):
+            return (f"failed source subtask '{source_subtask_key}' is a reconcile or merge stage", "merge_or_reconcile")
+        if source_subtask_key.startswith("rectify_") or source_subtask_key.startswith("regenerate_"):
+            return (f"failed source subtask '{source_subtask_key}' is a rectification stage", "rectification")
+    summary = ((None if attempt is None else attempt.summary) or run.summary or "no summary recorded").strip()
+    return (f"classified as {classification} from failure summary and lifecycle context: {summary}", lifecycle.lifecycle_state.lower())
 
 
 def _increment_child_failure_counter(
@@ -470,46 +572,102 @@ def _parent_failure_policy(session: Session, parent_version: NodeVersion) -> Par
     )
 
 
-def _choose_auto_action(
+def _evaluate_parent_decision(
     *,
-    classification: str,
+    child_failure: ChildFailureContext,
     counter_row: NodeRunChildFailureCounter,
     parent_state: NodeRunState,
     policy: ParentFailurePolicySnapshot,
-) -> str:
+    requested_action: str | None,
+) -> dict[str, object]:
+    options_considered = ["retry_child", "regenerate_child", "replan_parent", "pause_for_user"]
+    if requested_action is not None:
+        return {
+            "decision_type": requested_action,
+            "decision_reason": f"operator override selected '{requested_action}'",
+            "options_considered": options_considered,
+            "threshold_triggered": False,
+            "threshold_reason": None,
+        }
     if (
         parent_state.failure_count_from_children >= policy.total_threshold
         or parent_state.failure_count_consecutive >= policy.consecutive_threshold
         or counter_row.failure_count >= policy.per_child_threshold
     ):
-        return "pause_for_user"
-    if classification in {"transient_execution_failure", "environment_failure"}:
-        return "retry_child"
-    if classification in {"merge_conflict_unresolved"}:
-        return "regenerate_child"
-    if classification in {
+        threshold_reason = (
+            f"threshold exceeded for class {child_failure.classification}: "
+            f"per_child={counter_row.failure_count}/{policy.per_child_threshold}, "
+            f"total={parent_state.failure_count_from_children}/{policy.total_threshold}, "
+            f"consecutive={parent_state.failure_count_consecutive}/{policy.consecutive_threshold}"
+        )
+        return {
+            "decision_type": "pause_for_user",
+            "decision_reason": "parent failure thresholds were exceeded",
+            "options_considered": options_considered,
+            "threshold_triggered": True,
+            "threshold_reason": threshold_reason,
+        }
+    if child_failure.classification in {"transient_execution_failure", "environment_failure"}:
+        return {
+            "decision_type": "retry_child",
+            "decision_reason": "failure appears transient or environment-linked and remains within retry budget",
+            "options_considered": options_considered,
+            "threshold_triggered": False,
+            "threshold_reason": None,
+        }
+    if child_failure.classification in {"merge_conflict_unresolved", "rectification_failure"}:
+        return {
+            "decision_type": "regenerate_child",
+            "decision_reason": "failure suggests stale child state or rectification drift that is safer to regenerate than retry",
+            "options_considered": options_considered,
+            "threshold_triggered": False,
+            "threshold_reason": None,
+        }
+    if child_failure.classification in {
         "validation_failure",
         "review_failure",
         "test_failure",
         "bad_layout_or_bad_requirements",
         "dependency_or_context_failure",
+        "manual_tree_conflict",
     }:
-        return "replan_parent"
-    return "pause_for_user"
+        return {
+            "decision_type": "replan_parent",
+            "decision_reason": "failure suggests parent inputs, layout, or quality expectations need revision rather than child-only retry",
+            "options_considered": options_considered,
+            "threshold_triggered": False,
+            "threshold_reason": None,
+        }
+    if child_failure.classification in {"provider_recovery_failure", "unknown_failure"}:
+        return {
+            "decision_type": "pause_for_user",
+            "decision_reason": "failure is too ambiguous or operator-facing to recover safely without user guidance",
+            "options_considered": options_considered,
+            "threshold_triggered": False,
+            "threshold_reason": None,
+        }
+    return {
+        "decision_type": "pause_for_user",
+        "decision_reason": "default safe fallback was selected",
+        "options_considered": options_considered,
+        "threshold_triggered": False,
+        "threshold_reason": None,
+    }
 
 
 def _build_parent_decision_summary(
     *,
     parent_node_id: UUID,
     child_failure: ChildFailureContext,
-    decision_type: str,
+    evaluation: dict[str, object],
     counter_row: NodeRunChildFailureCounter,
     parent_state: NodeRunState,
     policy: ParentFailurePolicySnapshot,
 ) -> str:
     return (
         f"Parent node {parent_node_id} observed child {child_failure.child_node_id} fail with "
-        f"{child_failure.classification}. Decision: {decision_type}. "
+        f"{child_failure.classification} ({child_failure.classification_reason}). "
+        f"Decision: {evaluation['decision_type']}. Reason: {evaluation['decision_reason']}. "
         f"Child failure count={counter_row.failure_count}, total child failures={parent_state.failure_count_from_children}, "
         f"consecutive child failures={parent_state.failure_count_consecutive}, thresholds="
         f"{policy.per_child_threshold}/{policy.total_threshold}/{policy.consecutive_threshold}. "
@@ -618,8 +776,13 @@ def _decision_snapshot(row: WorkflowEvent) -> ParentDecisionSnapshot:
         child_node_version_id=None if child_node_version_id is None else UUID(str(child_node_version_id)),
         child_node_run_id=None if child_node_run_id is None else UUID(str(child_node_run_id)),
         failure_class=None if payload.get("failure_class") is None else str(payload["failure_class"]),
+        failure_origin=None if payload.get("failure_origin") is None else str(payload["failure_origin"]),
         decision_type=row.event_type,
         decision_source=None if payload.get("decision_source") is None else str(payload["decision_source"]),
+        decision_reason=None if payload.get("decision_reason") is None else str(payload["decision_reason"]),
+        options_considered=[str(item) for item in payload.get("options_considered", [])],
+        threshold_triggered=bool(payload.get("threshold_triggered", False)),
+        threshold_reason=None if payload.get("threshold_reason") is None else str(payload["threshold_reason"]),
         summary=None if payload.get("summary") is None else str(payload["summary"]),
         payload_json=payload,
         created_at=row.created_at.isoformat(),

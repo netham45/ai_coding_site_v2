@@ -204,6 +204,9 @@ Purpose:
 
 Implementation staging note:
 
+- the current implementation reuses `parent_child_authority.last_reconciled_at` as the durable timestamp for explicit `preserve_manual` reconciliation
+- no additional reconciliation-history table exists yet; richer reconcile-decision audit remains a later slice
+
 - the current implementation treats a matching `authoritative_layout_hash` plus existing `node_children` rows as idempotent materialization
 - a hash mismatch returns a replan/reconciliation-required result instead of mutating the existing child set in place
 
@@ -605,6 +608,8 @@ Implementation staging note:
 - daemon authority compatibility constraints were widened in the same slice so retry-reset actions may durably record `last_command = node.run.retry.reset` and `lifecycle_state/resulting_state = ready`
 - the row is incremented durably before the parent chooses retry, regenerate, replan, or pause
 - total and consecutive counters on `node_run_state` remain the current aggregate view, while this table provides the per-child durable detail
+- richer decision-matrix reasoning remains stored in `workflow_events.payload_json` rather than new columns here, because the canonical counter row is still focused on latest failure and latest chosen decision
+- the current payload detail includes `failure_origin`, `classification_reason`, `decision_reason`, `options_considered`, `threshold_triggered`, `threshold_reason`, and the frozen threshold policy snapshot used for the choice
 
 ### `subtask_attempts`
 
@@ -617,6 +622,7 @@ create table subtask_attempts (
   status text not null,
   input_context_json jsonb,
   output_json jsonb,
+  execution_result_json jsonb,
   execution_environment_json jsonb,
   changed_files_json jsonb,
   git_head_before text,
@@ -640,6 +646,8 @@ Recommended indexes:
 Implementation staging note:
 
 - the current implementation persists attempt `RUNNING`, `COMPLETE`, and `FAILED` transitions here
+- the current implementation now also persists `execution_result_json` as the explicit session-reported result payload for completion and failure writes
+- `output_json` remains populated for compatibility with already-implemented runtime and quality-gate consumers
 - richer payload columns such as changed-files, git-head deltas, and validation payloads remain schema-reserved for later slices and are not yet populated by the runtime
 - the current implementation now also persists `execution_environment_json` for each attempt so recovery and operator surfaces can inspect resolved mode, launcher kind, launch status, fallback reason, and environment-launch failures durably
 
@@ -830,6 +838,7 @@ Implementation note:
 - the active-attempt `registered_summaries` mirror remains in place for compatibility, but `summaries` is now the durable audit source
 - the implemented `summary_scope` value for this slice is `subtask_attempt`
 - `summary_type` is now durably bounded to the summary taxonomy used by orchestration, including `subtask`, `failure`, `pause`, `node`, `review`, `testing`, `validation`, `rectification`, `parent_replan`, `parent_child_failure_pause`, `docs`, and `provenance`
+- the turnkey quality-chain slice also writes a final node-level completion summary with `summary_type = node`, `summary_scope = node_run`, and `summary_path = summaries/final.md`
 
 ### `documentation_outputs`
 
@@ -917,6 +926,7 @@ Implementation staging note:
 
 - the current implementation now persists primary-session records here for bind/attach/resume flows
 - initial active status vocabulary is `BOUND`, `ATTACHED`, `RESUMED`, `RUNNING`, with terminal replacement/loss tracked through non-active statuses such as `LOST`
+- provider-aware recovery now reuses the existing `provider` and `provider_session_id` columns directly; no separate provider-recovery table was required for the first bounded enhancement
 
 ### `session_events`
 
@@ -940,6 +950,7 @@ Implementation staging note:
 
 - the current implementation records bind, attach, resume, replacement, and invalidation decisions here so recovery behavior is auditable
 - provider-agnostic recovery now also records `recovery_attempted`, `recovery_resumed_existing`, `recovery_replacement_created`, `recovery_rejected`, and `recovery_paused` event types here
+- provider-aware recovery now also records `provider_recovery_attempted` and `provider_recovery_rebound` here
 - idle handling now also records `nudged`, `nudge_skipped`, `nudge_suppressed`, and `nudge_escalated` event types here
 - no separate recovery-event table is required yet because recovery classification is derived from durable run state plus the canonical `sessions`/`session_events` history
 
@@ -998,8 +1009,8 @@ Recommended indexes:
 
 Implementation staging note:
 
-- the current implementation now persists merge events as explicit durable records keyed by parent candidate version and child version
-- automated clean merge recording remains deferred until the later rectification pipeline; this phase closes the durable event/conflict history and resolution surfaces first
+- the current implementation now persists merge events as explicit durable records keyed by parent version and child version
+- clean live git merges write these rows directly from the daemon runtime path, and conflicted live merges write the companion `merge_conflicts` records in the same execution slice
 
 ### `merge_conflicts`
 
@@ -1045,6 +1056,11 @@ Recommended indexes:
 - `(new_node_version_id)`
 - `(created_at)`
 
+Implementation staging note:
+
+- the current implementation uses the richer runtime-owned `rebuild_events` shape described by the live code, including `root_logical_node_id`, `root_node_version_id`, `target_node_version_id`, `event_kind`, `event_status`, `scope`, `trigger_reason`, and `details_json`
+- blocked rebuild and cutover coordination decisions now also audit through `rebuild_events.details_json`, including explicit active-run, active-session, merge-conflict, and rebuild-stability blockers
+
 ### `workflow_events`
 
 This table is canonical and should remain intentionally narrow and focused on orchestration transitions that are not already well covered by subtask attempts or session events.
@@ -1082,6 +1098,8 @@ Implementation staging note:
 
 - parent failure handling now records decision events in this table with `event_scope = parent_decision`
 - the current event payload includes child node/version/run ids, failure class and summary, counter values at decision time, decision source (`auto` or `override`), and the chosen decision type
+- the current human-intervention layer also audits through `workflow_events` with `event_scope = intervention` and `event_type = intervention_applied`
+- this bounded slice intentionally does not add a separate `interventions` table; the intervention catalog is derived from existing pause, reconciliation, merge-conflict, recovery, and cutover-readiness state families
 
 ---
 
@@ -1110,6 +1128,12 @@ Recommended indexes:
 - `(canonical_name)`
 - `(file_path)`
 - `(stable_hash)`
+
+Implementation staging note:
+
+- the current implementation still uses one shared entity table across languages rather than per-language provenance tables
+- language is currently carried through `node_entity_changes.metadata_json.language` instead of a dedicated `code_entities.language` column
+- the current extractor supports Python, JavaScript, and TypeScript while keeping the same durable `module|class|function|method` entity family
 
 Application-enforced invariants:
 
@@ -1506,3 +1530,25 @@ Remaining follow-on work still needed:
 - define the exact SQL or materialized-view implementation for authoritative-versus-candidate lineage read surfaces
 - define whether `parent_child_authority` needs a history table in addition to current-state storage
 - align runtime, lifecycle, CLI, and git v2 specs to these structures
+## Implementation Note: Candidate And Rebuild Compile Context
+
+- compiled workflows and compile failures already bind durably to `node_version_id`
+- rebuild lineage already binds durably through `rebuild_events`
+- the current implementation therefore does not add a new compile-mode table for candidate or rebuild compile variants
+- instead, compile mode is derived from node-version status plus rebuild lineage and then frozen into:
+  - `compiled_workflows.resolved_yaml.compile_context`
+  - `compile_failures.details_json.compile_context`
+- current compile-variant values are:
+  - `authoritative`
+  - `candidate`
+  - `rebuild_candidate`
+
+## Implementation Note: Richer Blocker Explanation
+
+- no new blocker table was added for this slice
+- the current implementation continues to use `node_dependency_blockers` as the replace-on-write current blocker snapshot for a node version
+- that snapshot now also carries runtime-derived blocker kinds in addition to dependency-derived blockers, including:
+  - `not_compiled`
+  - `lifecycle_not_ready`
+  - `pause_gate_active`
+  - `already_running`

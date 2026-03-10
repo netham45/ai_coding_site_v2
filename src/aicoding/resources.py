@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aicoding.bootstrap import PACKAGE_ROOT
+from aicoding.config import Settings, get_settings
 from aicoding.errors import ConfigurationError
 from aicoding.resource_models import (
     LoadedResourceText,
@@ -106,21 +107,24 @@ class ResourceCatalog:
         )
 
 
-def load_resource_catalog() -> ResourceCatalog:
-    root = PACKAGE_ROOT / "resources"
+def load_resource_catalog(settings: Settings | None = None) -> ResourceCatalog:
+    resolved_settings = settings or get_settings()
+    package_root = PACKAGE_ROOT / "resources"
+    workspace_root = resolved_settings.workspace_root
+    workspace_resources_root = (workspace_root / "resources") if workspace_root is not None else package_root
     return ResourceCatalog(
-        root=root,
-        yaml_builtin_dir=root / "yaml" / "builtin",
-        yaml_builtin_system_dir=root / "yaml" / "builtin" / "system-yaml",
-        yaml_project_dir=root / "yaml" / "project",
-        yaml_project_policies_dir=root / "yaml" / "project" / "project-policies",
-        yaml_overrides_dir=root / "yaml" / "overrides",
-        yaml_schemas_dir=root / "yaml" / "schemas",
-        prompt_layouts_dir=root / "prompts" / "layouts",
-        prompt_execution_dir=root / "prompts" / "execution",
-        prompt_recovery_dir=root / "prompts" / "recovery",
-        prompt_quality_dir=root / "prompts" / "quality",
-        prompt_pack_default_dir=root / "prompts" / "packs" / "default",
-        prompt_project_dir=root / "prompts" / "project",
-        docs_dir=root / "docs",
+        root=package_root,
+        yaml_builtin_dir=package_root / "yaml" / "builtin",
+        yaml_builtin_system_dir=package_root / "yaml" / "builtin" / "system-yaml",
+        yaml_project_dir=workspace_resources_root / "yaml" / "project",
+        yaml_project_policies_dir=workspace_resources_root / "yaml" / "project" / "project-policies",
+        yaml_overrides_dir=workspace_resources_root / "yaml" / "overrides",
+        yaml_schemas_dir=package_root / "yaml" / "schemas",
+        prompt_layouts_dir=package_root / "prompts" / "layouts",
+        prompt_execution_dir=package_root / "prompts" / "execution",
+        prompt_recovery_dir=package_root / "prompts" / "recovery",
+        prompt_quality_dir=package_root / "prompts" / "quality",
+        prompt_pack_default_dir=package_root / "prompts" / "packs" / "default",
+        prompt_project_dir=workspace_resources_root / "prompts" / "project",
+        docs_dir=workspace_resources_root / "docs",
     )

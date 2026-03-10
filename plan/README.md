@@ -39,6 +39,10 @@ The primary synthesis anchors for the first planning pass are:
 - `notes/review_testing_docs_yaml_plan.md`
 - `notes/pseudocode/README.md`
 - `notes/pseudocode/modules/*.md`
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
+- `notes/catalogs/checklists/e2e_execution_policy.md`
 
 This plan set should be maintained as implementation progresses.
 
@@ -63,6 +67,12 @@ No feature is complete until:
 - the relevant notes are updated for newly discovered limitations or elaborations
 - exhaustive tests exist
 - performance implications have been measured or guarded where appropriate
+
+Completion-language rule:
+
+- use `implemented`, `verified`, `partial`, `flow_complete`, and `release_ready` deliberately
+- use `notes/catalogs/checklists/verification_command_catalog.md` for the canonical proving commands
+- use `notes/catalogs/checklists/e2e_execution_policy.md` for the execution tier expected before stronger completion claims are made
 
 The code/YAML boundary for every phase must stay aligned with:
 
@@ -90,6 +100,12 @@ Short version:
   - additional support phases may exist when a tracked feature is too large to implement safely in one pass
   - command-family phases and schema-family phases should be split out whenever "CLI" or "YAML" is too coarse to drive implementation safely
   - database schema families and built-in YAML library families should also be split out whenever a single phase would hide test obligations or ownership boundaries
+- `tasks/`
+  - one task plan per meaningful code-change task
+  - every task plan lives under `plan/tasks/`
+  - every task plan uses the standard richer plan schema shared with feature plans
+  - every task plan must also include explicit `Verification` and `Exit Criteria` sections
+  - no meaningful code change should proceed without an associated task plan
 - `checklists/`
   - verification phases
   - closes inventory, workflow, CLI, database, YAML-library, and test-coverage gaps

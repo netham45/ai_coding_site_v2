@@ -519,6 +519,8 @@ def _classify_blocking_reasons(
         reasons.append("child paused")
     if version.final_commit_sha is None and lifecycle_state == "COMPLETE":
         reasons.append("child final commit missing")
+    if version.final_commit_sha is not None and not reasons:
+        return reasons
     if lifecycle_state not in {None, "COMPLETE"} and not (
         version.final_commit_sha is not None and lifecycle_state == "SUPERSEDED"
     ) and not reasons:

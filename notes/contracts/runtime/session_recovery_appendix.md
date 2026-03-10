@@ -493,11 +493,13 @@ The following CLI capabilities are especially important for recovery:
 - `ai-tool session events --session <id>`
 - `ai-tool session resume --node <id>`
 - `ai-tool session recover --node <id>`
+- `ai-tool session provider-resume --node <id>`
 - `ai-tool session attach --node <id>`
 - `ai-tool session nudge --node <id>`
 - `ai-tool node pause-state --node <id>`
 - `ai-tool subtask current --node <id>`
 - `ai-tool node recovery-status --node <id>`
+- `ai-tool node recovery-provider-status --node <id>`
 
 If names differ, these capabilities should still exist.
 
@@ -512,6 +514,11 @@ If recovery fails repeatedly for a child node:
 
 This means session recovery failure should integrate with the broader failure-class system rather than being treated as a special uncategorized case.
 
+Implementation staging note:
+
+- live rebuild and cutover coordination now explicitly treats active primary sessions as rebuild/cutover blockers and exposes that through rebuild-coordination and cutover-readiness reads
+- this does not replace the recovery system; it makes the dependency between session cleanup and safe candidate promotion explicit and auditable
+
 ---
 
 ## Auditability Requirements
@@ -523,6 +530,16 @@ Recovery should be auditable enough to answer:
 - why replacement occurred
 - whether tmux, provider, or git mismatch caused the change
 - what current subtask was resumed
+
+Implementation staging note:
+
+- provider-aware recovery is now a bounded live enhancement on top of the provider-agnostic baseline
+- the current implementation can rebind an existing durable primary session when:
+  - the durable provider identity exists
+  - the provider identity matches the active backend
+  - the provider session still exists
+  - the stored tmux session pointer is stale or missing
+- when those conditions are not true, recovery still falls back to the provider-agnostic path instead of inventing provider-specific behavior
 
 If the system cannot answer those questions, recovery is too opaque.
 

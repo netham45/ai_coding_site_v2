@@ -9,6 +9,7 @@ from sqlalchemy import text
 from aicoding.bootstrap import bootstrap_status
 from aicoding.cli.app import run
 from aicoding.config import Settings
+from aicoding.db.models import NodeLifecycleState, Session as DurableSession
 from aicoding.operational_library import inspect_builtin_operational_library
 from aicoding.quality_library import inspect_builtin_quality_library
 from aicoding.rendering import build_render_context, render_text
@@ -21,23 +22,44 @@ from aicoding.daemon.child_reconcile import collect_child_results
 from aicoding.daemon.docs_runtime import build_node_docs
 from aicoding.daemon.environments import list_environment_policies
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle, update_node_cursor, load_node_lifecycle
+from aicoding.daemon.live_git import bootstrap_live_git_repo, execute_live_merge_children, finalize_live_git_state, stage_live_git_change
 from aicoding.daemon.manual_tree import create_manual_node
-from aicoding.daemon.materialization import inspect_materialized_children, materialize_layout_children
+from aicoding.daemon.materialization import inspect_child_reconciliation, inspect_materialized_children, materialize_layout_children, reconcile_child_authority
 from aicoding.daemon.models import MutationEnvelope
 from aicoding.daemon.orchestration import apply_authority_mutation
 from aicoding.daemon.parent_failures import handle_child_failure_at_parent
 from aicoding.daemon.provenance import refresh_node_provenance, show_entity_by_name
+from aicoding.daemon.rebuild_coordination import inspect_cutover_readiness, inspect_rebuild_coordination
 from aicoding.daemon.reproducibility import load_node_audit_snapshot
 from aicoding.daemon.child_sessions import pop_child_session, push_child_session
-from aicoding.daemon.session_records import bind_primary_session, inspect_primary_session_screen_state, load_recovery_status, nudge_primary_session, recover_primary_session, show_current_primary_session
-from aicoding.daemon.run_orchestration import fail_current_subtask, load_current_run_progress, load_current_subtask_context, load_current_subtask_prompt, start_subtask_attempt
+from aicoding.daemon.session_records import (
+    bind_primary_session,
+    inspect_primary_session_screen_state,
+    load_provider_recovery_status,
+    load_recovery_status,
+    nudge_primary_session,
+    recover_primary_session,
+    show_current_primary_session,
+)
+from aicoding.daemon.run_orchestration import (
+    complete_current_subtask,
+    fail_current_subtask,
+    list_subtask_attempts_for_node,
+    load_current_run_progress,
+    load_current_subtask_context,
+    load_current_subtask_prompt,
+    load_subtask_attempt,
+    start_subtask_attempt,
+    sync_paused_run,
+)
 from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
 from aicoding.daemon.operator_views import load_pause_state, load_tree_catalog
 from aicoding.daemon.review_runtime import load_review_summary_for_node
 from aicoding.daemon.testing_runtime import load_testing_summary_for_node
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.history import list_prompt_history
-from aicoding.daemon.versioning import initialize_node_version
+from aicoding.daemon.interventions import list_node_interventions
+from aicoding.daemon.versioning import create_superseding_node_version, initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
 from aicoding.daemon.admission import admit_node_run
 from aicoding.db.migrations import expected_database_revision, migration_status
@@ -130,7 +152,7 @@ def test_migration_status_probe_completes_quickly() -> None:
 
     try:
         payload, elapsed = measure(lambda: migration_status(engine))
-        assert payload["expected_revision"] == "0027_provenance_docs_audit_views"
+        assert payload["expected_revision"] == "0028_subtask_execution_results"
         assert elapsed < 0.3
     finally:
         engine.dispose()
@@ -410,6 +432,35 @@ def test_pause_state_lookup_completes_quickly(migrated_public_schema) -> None:
     _, elapsed = measure(lambda: load_pause_state(factory, node_id=node.node_id))
 
     assert elapsed < 0.15
+
+
+@pytest.mark.performance
+def test_intervention_catalog_lookup_completes_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.workflows import compile_node_workflow
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Perf intervention", prompt="boot prompt")
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    compile_node_workflow(factory, logical_node_id=node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(node.node_id), target_state="READY")
+    admit_node_run(factory, node_id=node.node_id, trigger_reason="test")
+    sync_paused_run(factory, logical_node_id=node.node_id, pause_flag_name="user_guidance_required")
+    with session_scope(factory) as session:
+        lifecycle = session.get(NodeLifecycleState, str(node.node_id))
+        assert lifecycle is not None
+        cursor = dict(lifecycle.execution_cursor_json or {})
+        pause_context = dict(cursor.get("pause_context", {}))
+        pause_context["approval_required"] = True
+        lifecycle.execution_cursor_json = {**cursor, "pause_context": pause_context}
+        session.flush()
+
+    snapshot, elapsed = measure(lambda: list_node_interventions(factory, catalog, logical_node_id=node.node_id))
+
+    assert snapshot.pending_count >= 1
+    assert elapsed < 0.35
 
 
 @pytest.mark.performance
@@ -707,6 +758,97 @@ def test_testing_summary_lookup_completes_quickly(migrated_public_schema, tmp_pa
 
 
 @pytest.mark.performance
+def test_turnkey_quality_chain_completes_quickly(migrated_public_schema, tmp_path) -> None:
+    from aicoding.daemon.admission import admit_node_run
+    from aicoding.daemon.hierarchy import create_hierarchy_node
+    from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+    from aicoding.daemon.quality_chain import run_turnkey_quality_chain
+    from aicoding.daemon.run_orchestration import advance_workflow, complete_current_subtask, load_current_run_progress, start_subtask_attempt
+    from aicoding.daemon.versioning import initialize_node_version
+    from aicoding.daemon.workflows import compile_node_workflow
+    from aicoding.hierarchy import load_hierarchy_registry
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    base_catalog = load_resource_catalog()
+    project_root = tmp_path / "project"
+    (project_root / "project-policies").mkdir(parents=True)
+    (project_root / "project-policies" / "default_project_policy.yaml").write_text(
+        "\n".join(
+            [
+                "project_policy_definition:",
+                "  id: default_project_policy",
+                "  description: Perf quality-chain fixture policy.",
+                "  defaults:",
+                "    auto_run_children: true",
+                "    auto_merge_to_parent: false",
+                "    auto_merge_to_base: false",
+                "    require_review_before_finalize: true",
+                "    require_testing_before_finalize: true",
+                "    require_docs_before_finalize: true",
+                "  runtime_policy_refs: []",
+                "  hook_refs: []",
+                "  review_refs: []",
+                "  testing_refs: []",
+                "  docs_refs: []",
+                "  enabled_node_kinds: [epic, phase, plan, task]",
+                "  prompt_pack: default",
+                "  environment_profiles: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    overrides_root = tmp_path / "overrides"
+    (overrides_root / "nodes").mkdir(parents=True)
+    (overrides_root / "nodes" / "epic_quality_chain.yaml").write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: epic",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace_list",
+                "value:",
+                "  available_tasks:",
+                "    - research_context",
+                "    - execute_node",
+                "    - validate_node",
+                "    - review_node",
+                "    - test_node",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    catalog = replace(
+        base_catalog,
+        yaml_project_dir=project_root,
+        yaml_project_policies_dir=project_root / "project-policies",
+        yaml_overrides_dir=overrides_root,
+    )
+    registry = load_hierarchy_registry()
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Perf quality chain", prompt="p")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    compile_node_workflow(factory, logical_node_id=node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(node.node_id), target_state="READY")
+    admit_node_run(factory, node_id=node.node_id)
+
+    progress = load_current_run_progress(factory, logical_node_id=node.node_id)
+    while progress.current_subtask is not None and progress.current_subtask["subtask_type"] not in {"validate", "review", "run_tests"}:
+        compiled_subtask_id = progress.state.current_compiled_subtask_id
+        assert compiled_subtask_id is not None
+        start_subtask_attempt(factory, logical_node_id=node.node_id, compiled_subtask_id=compiled_subtask_id)
+        complete_current_subtask(factory, logical_node_id=node.node_id, compiled_subtask_id=compiled_subtask_id, summary="done")
+        progress = advance_workflow(factory, logical_node_id=node.node_id, catalog=catalog)
+
+    result, elapsed = measure(lambda: run_turnkey_quality_chain(factory, logical_node_id=node.node_id, catalog=catalog))
+
+    assert result.run_status == "COMPLETE"
+    assert result.final_summary is not None
+    assert elapsed < 6.0
+
+
+@pytest.mark.performance
 def test_workflow_compile_with_hook_expansion_completes_quickly(migrated_public_schema) -> None:
     from aicoding.daemon.hierarchy import create_hierarchy_node
     from aicoding.daemon.versioning import initialize_node_version
@@ -914,6 +1056,81 @@ def test_child_materialization_and_inspection_complete_quickly(migrated_public_s
 
 
 @pytest.mark.performance
+def test_rebuild_coordination_lookup_completes_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(factory, registry)
+    root = create_hierarchy_node(factory, registry, kind="epic", title="Perf coord root", prompt="root prompt")
+    initialize_node_version(factory, logical_node_id=root.node_id)
+    child = create_manual_node(factory, registry, kind="phase", title="Perf coord child", prompt="child prompt", parent_node_id=root.node_id)
+    seed_node_lifecycle(factory, node_id=str(child.node.node_id), initial_state="DRAFT")
+    transition_node_lifecycle(factory, node_id=str(child.node.node_id), target_state="COMPILED")
+    transition_node_lifecycle(factory, node_id=str(child.node.node_id), target_state="READY")
+    apply_authority_mutation(factory, node_id=str(child.node.node_id), command="node.run.start")
+
+    snapshot, elapsed = measure(lambda: inspect_rebuild_coordination(factory, logical_node_id=child.node.node_id, scope="upstream"))
+
+    assert snapshot.status == "blocked"
+    assert elapsed < 0.75
+
+
+@pytest.mark.performance
+def test_cutover_readiness_lookup_completes_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(factory, registry)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Perf cutover", prompt="boot prompt")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    candidate = create_superseding_node_version(factory, logical_node_id=node.node_id)
+
+    snapshot, elapsed = measure(lambda: inspect_cutover_readiness(factory, version_id=candidate.id))
+
+    assert snapshot.status in {"ready", "blocked"}
+    assert elapsed < 0.75
+
+
+@pytest.mark.performance
+def test_live_git_merge_and_finalize_complete_quickly(migrated_public_schema) -> None:
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(factory, registry, kind="epic", title="Perf live git parent", prompt="boot prompt")
+    seed_node_lifecycle(factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    parent_version = initialize_node_version(factory, logical_node_id=parent.node_id)
+    child = create_manual_node(factory, registry, kind="phase", title="Perf live git child", prompt="child prompt", parent_node_id=parent.node_id)
+
+    bootstrap_live_git_repo(factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(factory, version_id=child.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    child_status = stage_live_git_change(
+        factory,
+        version_id=child.node_version_id,
+        files={"shared.txt": "base\nperf child change\n"},
+        message="Perf child final",
+        record_as_final=True,
+    )
+
+    merge_result, merge_elapsed = measure(
+        lambda: execute_live_merge_children(
+            factory,
+            logical_node_id=parent.node_id,
+            ordered_child_versions=[(child.node_version_id, child_status.final_commit_sha, 1)],
+        )
+    )
+    finalize_result, finalize_elapsed = measure(lambda: finalize_live_git_state(factory, logical_node_id=parent.node_id))
+
+    assert merge_result.status == "merged"
+    assert finalize_result.status == "finalized"
+    assert merge_elapsed < 3.0
+    assert finalize_elapsed < 1.5
+
+
+@pytest.mark.performance
 def test_manual_child_creation_and_authority_inspection_complete_quickly(migrated_public_schema) -> None:
     from aicoding.hierarchy import load_hierarchy_registry
     from aicoding.resources import load_resource_catalog
@@ -937,6 +1154,97 @@ def test_manual_child_creation_and_authority_inspection_complete_quickly(migrate
 
     assert create_elapsed < 0.35
     assert inspect_elapsed < 0.2
+
+
+@pytest.mark.performance
+def test_hybrid_child_reconciliation_inspection_and_preserve_manual_complete_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.materialization import inspect_child_reconciliation, materialize_layout_children, reconcile_child_authority
+    from aicoding.hierarchy import load_hierarchy_registry
+    from aicoding.resources import load_resource_catalog
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_manual_node(factory, registry, kind="epic", title="Perf hybrid parent", prompt="boot prompt")
+    materialize_layout_children(factory, registry, catalog, logical_node_id=parent.node.node_id)
+    create_manual_node(
+        factory,
+        registry,
+        kind="phase",
+        title="Perf manual child",
+        prompt="child prompt",
+        parent_node_id=parent.node.node_id,
+    )
+
+    _, inspect_elapsed = measure(lambda: inspect_child_reconciliation(factory, catalog, logical_node_id=parent.node.node_id))
+    _, reconcile_elapsed = measure(
+        lambda: reconcile_child_authority(factory, catalog, logical_node_id=parent.node.node_id, decision="preserve_manual")
+    )
+
+    assert inspect_elapsed < 0.25
+    assert reconcile_elapsed < 0.4
+
+
+@pytest.mark.performance
+def test_subtask_attempt_result_reads_complete_quickly(migrated_public_schema) -> None:
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Attempt Perf", prompt="boot prompt")
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    compile_node_workflow(factory, logical_node_id=node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(node.node_id), target_state="READY")
+    admit_node_run(factory, node_id=node.node_id)
+    progress = load_current_run_progress(factory, logical_node_id=node.node_id)
+    current_subtask_id = progress.state.current_compiled_subtask_id
+    started = start_subtask_attempt(factory, logical_node_id=node.node_id, compiled_subtask_id=current_subtask_id)
+    complete_current_subtask(
+        factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        execution_result_json={"exit_code": 0, "stdout": "done"},
+        summary="done",
+    )
+
+    _, list_elapsed = measure(lambda: list_subtask_attempts_for_node(factory, logical_node_id=node.node_id))
+    _, show_elapsed = measure(lambda: load_subtask_attempt(factory, attempt_id=started.latest_attempt.id))
+
+    assert list_elapsed < 0.15
+    assert show_elapsed < 0.1
+
+
+@pytest.mark.performance
+def test_provider_recovery_status_lookup_completes_quickly(migrated_public_schema) -> None:
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Provider recovery perf", prompt="boot prompt")
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    compile_node_workflow(factory, logical_node_id=node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(node.node_id), target_state="READY")
+    admit_node_run(factory, node_id=node.node_id)
+    bound = bind_primary_session(factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+
+    with session_scope(factory) as session:
+        durable = session.get(DurableSession, bound.session_id)
+        assert durable is not None
+        durable.tmux_session_name = "missing-session-name"
+
+    _, elapsed = measure(
+        lambda: load_provider_recovery_status(
+            factory,
+            logical_node_id=node.node_id,
+            adapter=adapter,
+            poller=poller,
+        )
+    )
+
+    assert elapsed < 0.1
 
 
 @pytest.mark.performance
@@ -1366,6 +1674,34 @@ def test_workflow_rendering_lookup_completes_quickly(migrated_public_schema) -> 
 
 
 @pytest.mark.performance
+def test_candidate_workflow_compile_and_version_stage_lookup_complete_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+    from aicoding.daemon.lifecycle import seed_node_lifecycle
+    from aicoding.daemon.versioning import create_superseding_node_version, initialize_node_version
+    from aicoding.daemon.workflows import compile_node_version_workflow, load_workflow_source_discovery_for_version
+    from aicoding.hierarchy import load_hierarchy_registry
+    from aicoding.resources import load_resource_catalog
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(factory, registry)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Perf candidate compile", prompt="p")
+    seed_node_lifecycle(factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+    candidate = create_superseding_node_version(factory, logical_node_id=node.node_id, title="Perf candidate compile v2")
+
+    compile_result, compile_elapsed = measure(lambda: compile_node_version_workflow(factory, version_id=candidate.id, catalog=catalog))
+    stage_result, stage_elapsed = measure(lambda: load_workflow_source_discovery_for_version(factory, version_id=candidate.id))
+
+    assert compile_result.status == "compiled"
+    assert compile_result.compile_context["compile_variant"] == "candidate"
+    assert stage_result["compile_context"]["compile_variant"] == "candidate"
+    assert compile_elapsed < 3.5
+    assert stage_elapsed < 0.5
+
+
+@pytest.mark.performance
 def test_compiled_workflow_lookup_completes_quickly(migrated_public_schema) -> None:
     from aicoding.daemon.hierarchy import create_hierarchy_node
     from aicoding.daemon.lifecycle import seed_node_lifecycle
@@ -1478,13 +1814,14 @@ def test_session_poller_completes_quickly() -> None:
 
 @pytest.mark.performance
 def test_provenance_refresh_and_lookup_complete_quickly(migrated_public_schema) -> None:
-    from aicoding.daemon.hierarchy import create_hierarchy_node
+    from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
     from aicoding.daemon.versioning import initialize_node_version
     from aicoding.hierarchy import load_hierarchy_registry
 
     factory = create_session_factory(engine=migrated_public_schema)
     catalog = load_resource_catalog()
     registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(factory, registry)
     node = create_hierarchy_node(factory, registry, kind="epic", title="Perf provenance", prompt="p")
     initialize_node_version(factory, logical_node_id=node.node_id)
 
@@ -1493,6 +1830,33 @@ def test_provenance_refresh_and_lookup_complete_quickly(migrated_public_schema) 
 
     assert refresh_elapsed < 5.0
     assert lookup_elapsed < 0.25
+
+
+@pytest.mark.performance
+def test_multilanguage_provenance_refresh_complete_quickly(migrated_public_schema, tmp_path) -> None:
+    from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+    from aicoding.daemon.versioning import initialize_node_version
+    from aicoding.hierarchy import load_hierarchy_registry
+
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "app.py").write_text("def helper(name):\n    return name.upper()\n", encoding="utf-8")
+    (tmp_path / "src" / "web").mkdir(parents=True)
+    (tmp_path / "src" / "web" / "app.ts").write_text(
+        "export function greet(name: string) {\n  return helper(name);\n}\n",
+        encoding="utf-8",
+    )
+
+    factory = create_session_factory(engine=migrated_public_schema)
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(factory, registry)
+    node = create_hierarchy_node(factory, registry, kind="epic", title="Perf multilanguage provenance", prompt="p")
+    initialize_node_version(factory, logical_node_id=node.node_id)
+
+    snapshot, elapsed = measure(lambda: refresh_node_provenance(factory, logical_node_id=node.node_id, workspace_root=tmp_path))
+
+    assert snapshot.entity_count >= 3
+    assert elapsed < 5.0
 
 
 def _transaction_roundtrip(factory) -> int:

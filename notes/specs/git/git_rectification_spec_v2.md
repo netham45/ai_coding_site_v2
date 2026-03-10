@@ -101,7 +101,9 @@ It should be recorded only after:
 Implementation staging note:
 
 - the current implementation supports durable seed/final recording and immutable commit anchors per node version
-- it does not yet enforce the full quality-gate/finalization pipeline before `final_commit_sha` is recorded; that stronger guard lands with the later runtime/git phases
+- it now also exposes a runtime-owned live repo bootstrap path so per-version repos can be created through the daemon/CLI surface before merge/finalize execution
+- it now also supports a real live finalize commit path for the parent merge/finalize flow
+- it does not yet enforce the full rebuild-driven quality-gate/finalization pipeline before `final_commit_sha` is recorded; that stronger guard lands with the later rebuild/runtime git slices
 
 ---
 
@@ -138,8 +140,10 @@ The chosen order must be persisted in merge metadata.
 
 Implementation staging note:
 
+- the daemon now exposes a runtime-owned repo bootstrap surface for per-version repos before live merge/finalize work begins
 - the current implementation now computes deterministic child merge order from durable sibling dependencies, child ordinals, child-edge creation time, and logical child id
-- merge execution in this phase is metadata-backed rather than shelling out to live `git merge`; the daemon records replayable `merge_events`, persists the derived parent reconcile context, and defers real branch checkout/reset/merge mechanics to the later git-runtime phases
+- merge execution in this phase now shells out to live `git fetch` and `git merge --no-ff --no-edit` against the per-version runtime repos
+- the daemon records replayable `merge_events`, persists `merge_conflicts` on conflict, and writes the derived parent reconcile context into the active run cursor
 
 ---
 
@@ -392,6 +396,8 @@ Suggested commands:
 - `ai-tool git lineage show --node <id>`
 - `ai-tool node regenerate --node <id>`
 - `ai-tool node rectify-upstream --node <id>`
+- `ai-tool node rebuild-coordination --node <id> --scope subtree|upstream`
+- `ai-tool node version cutover-readiness --version <id>`
 - `ai-tool merge-events show --node <id>`
 - `ai-tool merge-conflicts show --node <id>`
 - `ai-tool rebuild show --node <id>`
@@ -427,4 +433,4 @@ Remaining follow-on work still needed:
 - decide the final canonical branch naming pattern
 - further refine active old-run behavior during supersession
 - rerun the gap matrix against the completed v2 core spec set
-Implementation note: the current codebase now persists staged rebuild history and deterministic candidate rectification anchors in the database. Real working-tree `git reset` / merge execution is still deferred, but rebuild lineage, merge ordering, and cutover gating are now durable and inspectable.
+Implementation note: the current codebase now persists staged rebuild history and deterministic candidate rectification anchors in the database. Real working-tree `git reset` / merge execution is still deferred, but rebuild lineage, merge ordering, cutover gating, explicit rebuild-coordination inspection, and blocked-attempt audit are now durable and inspectable.

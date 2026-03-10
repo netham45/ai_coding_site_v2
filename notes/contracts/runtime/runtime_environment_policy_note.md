@@ -300,6 +300,7 @@ Possible additions if this stays in scope:
 ### Add to subtask attempts
 
 - `execution_environment_json`
+- `execution_result_json`
 
 Possible contents:
 
@@ -361,7 +362,15 @@ If isolated environments remain in scope for first implementation, use this defa
 2. apply isolation at subtask level
 3. store requested policy in compiled workflow
 4. store actual execution environment details in subtask attempts
-5. treat environment launch failures as ordinary subtask failures
+5. store explicit execution-result payloads separately from environment metadata
+6. treat environment launch failures as ordinary subtask failures
+
+Implementation staging note:
+
+- the current implementation now distinguishes:
+  - `execution_environment_json` = where and how the subtask ran
+  - `execution_result_json` = what the session-reported execution returned
+- `output_json` is still populated for compatibility, but it should not be treated as the long-term only home for explicit command results
 
 This keeps the capability bounded and compatible with the rest of the orchestration model.
 

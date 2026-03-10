@@ -16,6 +16,7 @@ def test_load_hierarchy_registry_reads_builtin_node_definitions() -> None:
     registry = load_hierarchy_registry()
 
     assert sorted(registry.definitions) == ["epic", "phase", "plan", "task"]
+    assert registry.top_level_kinds() == ["epic"]
     assert registry.get("epic").parent_constraints.allow_parentless is True
     assert registry.get("phase").parent_constraints.allowed_kinds == ["epic"]
 

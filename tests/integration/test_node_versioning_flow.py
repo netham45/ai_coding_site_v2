@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.orchestration import apply_authority_mutation
+
 
 def test_daemon_node_version_lineage_and_cutover(app_client, migrated_public_schema) -> None:
     create_response = app_client.post(
@@ -159,3 +162,85 @@ def test_daemon_regenerate_and_rectify_upstream_round_trip(app_client, migrated_
     assert len(rectify_response.json()["stable_candidate_version_ids"]) >= 2
     assert history_response.status_code == 200
     assert {event["scope"] for event in history_response.json()["events"]} >= {"subtree", "upstream"}
+
+
+def test_rebuild_coordination_endpoint_reports_live_blockers_and_blocked_regenerate(app_client, db_session_factory, migrated_public_schema) -> None:
+    root_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "epic", "title": "Blocked Root", "prompt": "root prompt"},
+    )
+    child_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "phase", "title": "Blocked Child", "prompt": "child prompt", "parent_node_id": root_response.json()["node_id"]},
+    )
+    child_id = child_response.json()["node_id"]
+
+    seed_node_lifecycle(db_session_factory, node_id=child_id, initial_state="DRAFT")
+    transition_node_lifecycle(db_session_factory, node_id=child_id, target_state="COMPILED")
+    transition_node_lifecycle(db_session_factory, node_id=child_id, target_state="READY")
+    apply_authority_mutation(db_session_factory, node_id=child_id, command="node.run.start")
+
+    coordination_response = app_client.get(
+        f"/api/nodes/{child_id}/rebuild-coordination?scope=upstream",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    blocked_rectify = app_client.post(
+        f"/api/nodes/{child_id}/rectify-upstream",
+        headers={"Authorization": "Bearer change-me"},
+        json={},
+    )
+    history_response = app_client.get(
+        f"/api/nodes/{child_id}/rebuild-history",
+        headers={"Authorization": "Bearer change-me"},
+    )
+
+    assert coordination_response.status_code == 200
+    assert coordination_response.json()["status"] == "blocked"
+    assert any(item["blocker_type"] == "active_or_paused_run" for item in coordination_response.json()["blockers"])
+    assert blocked_rectify.status_code == 409
+    assert "live runtime state blocks upstream rectification" in blocked_rectify.json()["detail"]
+    assert any(event["event_kind"] == "live_conflict_blocked" and event["scope"] == "upstream" for event in history_response.json()["events"])
+
+
+def test_cutover_readiness_endpoint_reports_live_blockers(app_client, db_session_factory, migrated_public_schema) -> None:
+    create_response = app_client.post(
+        "/api/nodes/create",
+        headers={"Authorization": "Bearer change-me"},
+        json={"kind": "epic", "title": "Cutover Blocked", "prompt": "boot prompt"},
+    )
+    node_id = create_response.json()["node_id"]
+
+    supersede_response = app_client.post(
+        f"/api/nodes/{node_id}/supersede",
+        headers={"Authorization": "Bearer change-me"},
+        json={"title": "Cutover Blocked v2"},
+    )
+    candidate_version_id = supersede_response.json()["id"]
+
+    seed_node_lifecycle(db_session_factory, node_id=node_id, initial_state="DRAFT")
+    transition_node_lifecycle(db_session_factory, node_id=node_id, target_state="COMPILED")
+    transition_node_lifecycle(db_session_factory, node_id=node_id, target_state="READY")
+    apply_authority_mutation(db_session_factory, node_id=node_id, command="node.run.start")
+
+    readiness_response = app_client.get(
+        f"/api/node-versions/{candidate_version_id}/cutover-readiness",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    blocked_cutover = app_client.post(
+        f"/api/node-versions/{candidate_version_id}/cutover",
+        headers={"Authorization": "Bearer change-me"},
+        json={},
+    )
+    history_response = app_client.get(
+        f"/api/nodes/{node_id}/rebuild-history",
+        headers={"Authorization": "Bearer change-me"},
+    )
+
+    assert readiness_response.status_code == 200
+    assert readiness_response.json()["status"] == "blocked"
+    assert any(item["blocker_type"] == "authoritative_active_run" for item in readiness_response.json()["blockers"])
+    assert blocked_cutover.status_code == 409
+    assert "active or paused run" in blocked_cutover.json()["detail"]
+    assert any(event["event_kind"] == "cutover_blocked" and event["scope"] == "cutover" for event in history_response.json()["events"])

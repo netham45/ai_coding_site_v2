@@ -26,6 +26,8 @@ Related documents:
 - `notes/planning/expansion/full_spec_expansion_plan.md`
 - `notes/catalogs/inventory/major_feature_inventory.md`
 - `notes/catalogs/traceability/spec_traceability_matrix.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/inventory/yaml_inventory_v2.md`
 - `notes/catalogs/inventory/default_yaml_library_plan.md`
 - `notes/planning/expansion/database_schema_v2_expansion.md`
@@ -61,6 +63,14 @@ Status values:
 - `appendix_specified`
 - `implementation_open`
 - `deferred`
+
+Interpretation rule:
+
+- the gap classes, priorities, and statuses in this document are spec-review and implementation-planning statuses only
+- they do not mean a feature or flow is `implemented`, `verified`, `flow_complete`, or `release_ready`
+- implementation and proving status live in:
+  - `notes/catalogs/checklists/feature_checklist_backfill.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
 
 ---
 

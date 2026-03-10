@@ -18,7 +18,14 @@ This document should be updated during every major review cycle.
 
 ## Status Model
 
-Recommended feature statuses:
+This file tracks architectural design maturity, not canonical implementation or verification status.
+
+Canonical implementation status now lives in:
+
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+
+Recommended design-status values in this inventory:
 
 - `identified`
 - `in_specification`
@@ -45,7 +52,7 @@ Each feature should eventually track:
 
 - feature ID
 - feature name
-- status
+- design status
 - priority
 - prompt coverage
 - description
@@ -64,7 +71,7 @@ Each feature should eventually track:
 
 ## Feature Table
 
-| ID | Feature | Status | Priority | Prompts | Description | Depends On |
+| ID | Feature | Design Status | Priority | Prompts | Description | Depends On |
 | --- | --- | --- | --- | --- | --- | --- |
 | F01 | Configurable node hierarchy | specified | critical |  | Support configurable tiers and node kinds rather than hardcoded `epic -> phase -> plan -> task`. | |
 | F02 | Node versioning and supersession | needs_review | critical |  | Support durable node versions, regeneration via superseding versions, and lineage across rebuilds. | F01 |

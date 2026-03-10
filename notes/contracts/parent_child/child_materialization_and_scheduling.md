@@ -183,6 +183,17 @@ For each child, scheduling should classify it as one of:
 
 These classifications should be visible to the parent for orchestration and debugging.
 
+Implementation note:
+
+- the current implementation now exposes richer per-child scheduling explanation through `node child-materialization --node <id>`
+- each child row includes:
+  - `scheduling_status`
+  - `scheduling_reason`
+  - the current blocker list
+- current tree/operator reads also expose summarized scheduling visibility through:
+  - `tree show --node <id> --full`
+  - `node blockers --node <id>`
+
 ---
 
 ## Parent Runtime Behavior
@@ -370,6 +381,8 @@ If children are created manually rather than from a layout:
 
 - the system should still support scheduling and dependency evaluation
 - the materialization step is simply replaced by manual creation
+- if a layout-driven parent becomes hybrid, `node child-reconciliation --node <id>` should expose the currently available explicit reconciliation decisions
+- the currently supported explicit reconciliation action is `preserve_manual`, which converts the parent to `authority_mode = manual` without silently rewriting the current child set to a new layout
 
 The scheduler should not care whether children came from:
 

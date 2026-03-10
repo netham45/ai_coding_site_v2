@@ -119,6 +119,14 @@ If available, also preserve:
 - hook ID involved
 - policy ID involved
 - stack trace or internal diagnostic payload
+- compile context describing whether the failed target was:
+  - authoritative
+  - candidate
+  - rebuild candidate
+
+Implementation note:
+
+- the current implementation persists compile-mode context under `compile_failures.details_json.compile_context`
 
 ---
 

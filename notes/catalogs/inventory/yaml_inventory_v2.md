@@ -585,3 +585,9 @@ This inventory phase should be considered complete when:
 - missing families are listed explicitly for v2 work
 
 At that point, the YAML system is concrete enough to move into the actual v2 schema writing pass.
+
+Interpretation rule:
+
+- this is planning-inventory completion only
+- it does not mean the YAML runtime behavior is implemented, verified, or real-E2E complete
+- use the checklist and command-catalog surfaces for implementation and proving claims

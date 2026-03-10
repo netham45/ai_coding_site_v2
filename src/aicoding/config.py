@@ -23,6 +23,7 @@ class DaemonSettings(AICodingModel):
     app_name: str
     host: str
     port: int
+    request_timeout_seconds: float
 
     @property
     def base_url(self) -> str:
@@ -59,12 +60,14 @@ class Settings(BaseSettings):
     daemon_app_name: str = "AI Coding Orchestrator"
     daemon_host: str = "127.0.0.1"
     daemon_port: int = Field(default=8000, ge=1, le=65535)
+    daemon_request_timeout_seconds: float = Field(default=30.0, gt=0)
     session_backend: Literal["fake", "tmux"] = "fake"
     session_poll_interval_seconds: float = Field(default=1.0, gt=0)
     session_idle_threshold_seconds: float = Field(default=30.0, gt=0)
     session_max_nudge_count: int = Field(default=2, ge=1)
     auth_token: str = "change-me"
     auth_token_file: Path = Field(default=Path(".runtime/daemon.token"))
+    workspace_root: Path | None = None
 
     @field_validator("database_url")
     @classmethod
@@ -112,6 +115,7 @@ class Settings(BaseSettings):
             app_name=self.daemon_app_name,
             host=self.daemon_host,
             port=self.daemon_port,
+            request_timeout_seconds=self.daemon_request_timeout_seconds,
         )
 
     @property

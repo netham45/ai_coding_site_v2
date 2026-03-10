@@ -24,7 +24,7 @@ def auth_headers(daemon_token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def app_client(daemon_token: str) -> TestClient:
+def app_client(daemon_token: str, migrated_public_schema) -> TestClient:
     with TestClient(create_app()) as client:
         yield client
 

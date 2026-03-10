@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from aicoding.config import Settings
 from aicoding.errors import ConfigurationError
 from aicoding.resources import load_resource_catalog
 
@@ -55,3 +56,26 @@ def test_resource_load_text_returns_typed_payload() -> None:
     assert loaded.descriptor.group == "yaml_builtin_system"
     assert loaded.descriptor.relative_path == "nodes/epic.yaml"
     assert "node_definition:" in loaded.content
+
+
+def test_load_resource_catalog_uses_workspace_root_for_project_resources(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    project_policy_dir = workspace_root / "resources" / "yaml" / "project" / "project-policies"
+    overrides_dir = workspace_root / "resources" / "yaml" / "overrides"
+    project_policy_dir.mkdir(parents=True)
+    overrides_dir.mkdir(parents=True)
+
+    catalog = load_resource_catalog(
+        Settings(
+            database_url="postgresql+psycopg://example",
+            workspace_root=workspace_root,
+        )
+    )
+
+    assert catalog.root.name == "resources"
+    assert catalog.yaml_builtin_system_dir.is_dir()
+    assert catalog.yaml_project_dir == workspace_root / "resources" / "yaml" / "project"
+    assert catalog.yaml_project_policies_dir == project_policy_dir
+    assert catalog.yaml_overrides_dir == overrides_dir
+    assert catalog.prompt_project_dir == workspace_root / "resources" / "prompts" / "project"
+    assert catalog.docs_dir == workspace_root / "resources" / "docs"

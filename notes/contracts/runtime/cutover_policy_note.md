@@ -222,7 +222,14 @@ This suggests the implementation may need to distinguish:
 Implementation staging note:
 
 - the current implementation now blocks candidate-version cutover when unresolved durable merge conflicts exist for that candidate version
-- this is a local cutover guard, not yet the full required-scope conflict scan described by the later rectification/cutover phases
+- candidate cutover readiness is now also exposed explicitly through a dedicated read surface that reports:
+  - unresolved merge conflicts
+  - missing stable subtree/upstream rebuild completion for rebuild-backed candidates
+  - active or paused authoritative runs
+  - active primary sessions still attached to the authoritative run
+- blocked cutover attempts now leave durable `rebuild_events` audit instead of only returning a conflict
+- the runtime now supports the direct live git merge/finalize path for parent finalize flow
+- rebuild-driven working-tree reset and rectification mechanics are still deferred to the later rebuild-specific git slices
 
 - latest created version
 - latest authoritative version
@@ -493,4 +500,4 @@ This note is complete enough when:
 - DB and CLI implications are identified
 
 At that point, supersession cutover is concrete enough to stop being a dangerous implied behavior.
-Implementation note: candidate cutover now has an additional rebuild-specific gate. If a candidate version has recorded rebuild events, at least one `stable` rebuild event must exist before cutover is allowed.
+Implementation note: candidate cutover now has an additional rebuild-specific gate. If a candidate version has recorded subtree/upstream rebuild events, at least one `stable` rebuild event must exist before cutover is allowed. Cutover-only audit events do not themselves create a false rebuild-stability requirement.

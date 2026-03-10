@@ -226,20 +226,36 @@ The current implementation is intentionally narrower than the full target model.
 
 - supported entity types today are `module`, `class`, `function`, and `method`
 - supported relation types today are `contains` and `calls`
+- supported source languages today are:
+  - Python (`.py`)
+  - JavaScript (`.js`, `.jsx`)
+  - TypeScript (`.ts`, `.tsx`)
 - exact matches require the same entity type, canonical name, file path, and signature
 - heuristic rename/move matches require the same entity type, normalized signature, and stable hash while allowing the canonical name or file path to change
 - heuristic matches are currently recorded with `match_confidence = medium`
 - new entities and exact matches are currently recorded with `match_confidence = high`
 - ambiguous split/merge cases still fall back to new durable entity rows rather than attempting many-to-one or one-to-many identity preservation
 
-Stable hashes are currently derived from normalized Python AST structure. This is deliberately code-owned logic, not YAML-owned policy.
+Stable hashes are deliberately code-owned rather than YAML-owned policy.
+
+- Python hashes are derived from normalized AST structure
+- JavaScript/TypeScript hashes are currently derived from normalized declaration text with declaration names removed before hashing where possible
 
 Extraction scope is also bounded:
 
-- when the daemon refreshes provenance without an explicit workspace root, it scans the repository `src/` tree when present
+- when the daemon refreshes provenance without an explicit workspace root, it first uses the configured runtime workspace root when one exists
+- otherwise it scans the repository `src/` tree when present
 - when a caller provides an explicit workspace root, that tree is scanned directly
 
-This keeps the default refresh path focused on packaged implementation code instead of the whole repository while preserving deterministic behavior for explicit test or tool workspaces.
+This keeps the default refresh path focused on the active runtime workspace instead of the whole repository while preserving deterministic behavior for explicit test or tool workspaces.
+
+Still deferred in the current slice:
+
+- variables
+- types/interfaces
+- endpoints/routes
+- tests as first-class provenance entities
+- richer non-Python relation families such as imports or route bindings
 
 ---
 

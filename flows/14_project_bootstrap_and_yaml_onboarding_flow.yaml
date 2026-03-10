@@ -1,0 +1,40 @@
+id: 14_project_bootstrap_and_yaml_onboarding_flow
+name: Project Bootstrap And YAML Onboarding Flow
+purpose: Bootstrap project-local orchestration YAML, validate it, and prove the first project-scoped compile path is durable and inspectable.
+simulation_sources:
+  - simulations/12_project_bootstrap_flow.md
+covers:
+  - create project-local .ai structure
+  - validate project-local policy, testing, and override YAML
+  - compile the first node against built-in plus project-local layers
+  - inspect resolved workflow and source lineage
+entry_conditions:
+  - a repository exists and is being brought under orchestration control
+  - project-local policy, testing, docs, or override YAML may be authored
+  - the daemon can compile a top-level node using the active project resource catalog
+task_flow:
+  - create project-local YAML directories and authored files
+  - validate project-local policy, testing, and override documents
+  - create the first top-level node in the project
+  - compile the node workflow against built-in and project-local sources
+  - inspect workflow sources and resolved policy impact
+required_subtasks:
+  - author_project_local_yaml
+  - validate_project_policy_yaml
+  - validate_project_testing_yaml
+  - validate_project_override_yaml
+  - create_bootstrap_node
+  - compile_bootstrap_workflow
+  - inspect_compiled_sources
+required_capabilities:
+  - yaml validate
+  - node create
+  - workflow compile
+  - workflow sources
+  - yaml resolved
+  - policy inspection
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[14]
+known_limitations:
+  - the current top-level creation path is still limited to built-in top-level kinds such as epic
+  - project bootstrap remains a composed flow rather than a single frozen project-create command

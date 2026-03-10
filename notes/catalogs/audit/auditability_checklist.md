@@ -17,8 +17,16 @@ Related documents:
 - `notes/explorations/original_concept.md`
 - `notes/planning/expansion/database_schema_v2_expansion.md`
 - `notes/planning/expansion/runtime_pseudocode_plan.md`
+- `notes/catalogs/checklists/feature_checklist_backfill.md`
+- `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/traceability/action_automation_matrix.md`
 - `notes/catalogs/traceability/cross_spec_gap_matrix.md`
+
+Status language rule:
+
+- this checklist is an audit/review surface, not the canonical feature completion surface
+- use `yes`, `partial`, `no`, and `not_applicable` here only for auditability review
+- use the checklist layer for `implemented`, `verified`, `flow_complete`, and `release_ready` claims
 
 ---
 
@@ -101,7 +109,7 @@ These are now implementation-informed assessments. They should be read as the cu
 | Validation, review, and testing auditability | yes | These are now first-class families with explicit result models in the v2 spec package. |
 | Git and rebuild auditability | partial | Merge/rebuild/cutover logic is strong, but authority/cutover implementation details still need final normalization. |
 | Prompt, summary, and rationale auditability | yes | Prompt history, summary history, rationale mapping, and audit-bundle read surfaces are now durably inspectable. |
-| Documentation and provenance auditability | partial | Durable code entities, node-level change history, relation history, rationale inspection, and current-state DB views for docs/provenance now exist, but identity across large refactors remains confidence-based and the current extractor is intentionally bounded to Python implementation code. |
+| Documentation and provenance auditability | partial | Durable code entities, node-level change history, relation history, rationale inspection, and current-state DB views for docs/provenance now exist, and the extractor now spans Python plus JS/TS implementation code; identity across large refactors remains confidence-based and richer entity families are still intentionally deferred. |
 | Action auditability | partial | Most runtime mutations are now daemon-backed and durably auditable; the biggest remaining gaps are layout/policy mutation semantics and deferred live git execution. |
 | Reproducibility tests | yes | Focused audit-bundle tests now verify that a durable node/run history can be reconstructed from persisted records alone. |
 

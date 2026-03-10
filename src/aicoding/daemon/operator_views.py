@@ -13,6 +13,7 @@ from aicoding.db.models import (
     DaemonMutationEvent,
     HierarchyNode,
     LogicalNodeCurrentVersion,
+    NodeDependencyBlocker,
     NodeLifecycleState,
     NodeVersion,
 )
@@ -77,6 +78,8 @@ class TreeNodeSnapshot:
     title: str
     lifecycle_state: str | None
     run_status: str | None
+    scheduling_status: str | None = None
+    blocker_count: int = 0
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -88,6 +91,8 @@ class TreeNodeSnapshot:
             "title": self.title,
             "lifecycle_state": self.lifecycle_state,
             "run_status": self.run_status,
+            "scheduling_status": self.scheduling_status,
+            "blocker_count": self.blocker_count,
         }
 
 
@@ -199,6 +204,16 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
             item.node_id: item
             for item in session.execute(select(NodeLifecycleState).where(NodeLifecycleState.node_id.in_([str(row.node_id) for row in rows]))).scalars().all()
         }
+        selectors = session.execute(
+            select(LogicalNodeCurrentVersion).where(LogicalNodeCurrentVersion.logical_node_id.in_([row.node_id for row in rows]))
+        ).scalars().all()
+        version_by_node_id = {item.logical_node_id: item.authoritative_node_version_id for item in selectors}
+        blocker_rows = session.execute(
+            select(NodeDependencyBlocker).where(NodeDependencyBlocker.node_version_id.in_(list(version_by_node_id.values())))
+        ).scalars().all()
+        blockers_by_version_id: dict[UUID, list[NodeDependencyBlocker]] = {}
+        for row in blocker_rows:
+            blockers_by_version_id.setdefault(row.node_version_id, []).append(row)
         children_by_parent: dict[UUID | None, list[HierarchyNode]] = {}
         for row in rows:
             children_by_parent.setdefault(row.parent_node_id, []).append(row)
@@ -216,6 +231,11 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
                     title=node.title,
                     lifecycle_state=None if lifecycle is None else lifecycle.lifecycle_state,
                     run_status=None if lifecycle is None else lifecycle.run_status,
+                    scheduling_status=_tree_scheduling_status(
+                        lifecycle,
+                        blocker_count=len(blockers_by_version_id.get(version_by_node_id.get(node.node_id), [])),
+                    ),
+                    blocker_count=len(blockers_by_version_id.get(version_by_node_id.get(node.node_id), [])),
                 )
             )
             for child in children_by_parent.get(node.node_id, []):
@@ -223,6 +243,26 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
 
         visit(root, 0)
         return TreeCatalogSnapshot(root_node_id=root_node_id, nodes=ordered)
+
+
+def _tree_scheduling_status(lifecycle: NodeLifecycleState | None, *, blocker_count: int) -> str | None:
+    if lifecycle is None:
+        return None
+    if lifecycle.lifecycle_state == "COMPLETE":
+        return "complete"
+    if lifecycle.lifecycle_state == "SUPERSEDED":
+        return "superseded"
+    if lifecycle.lifecycle_state == "FAILED_TO_PARENT":
+        return "failed"
+    if lifecycle.run_status in {"PENDING", "RUNNING"}:
+        return "already_running"
+    if lifecycle.run_status == "PAUSED" or lifecycle.pause_flag_name is not None:
+        return "paused_for_user"
+    if blocker_count > 0:
+        return "blocked"
+    if lifecycle.lifecycle_state == "READY":
+        return "ready"
+    return "not_compiled"
 
 
 def list_sibling_nodes(session_factory: sessionmaker[Session], *, node_id: UUID) -> list[NodeOperatorSummarySnapshot]:

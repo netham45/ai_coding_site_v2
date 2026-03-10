@@ -15,18 +15,22 @@ It is not "print hello in a terminal." The system's hello world is:
 
 ## Current hierarchy
 
-The built-in hierarchy currently is:
+The current default built-in ladder is:
 
-- `epic` -> top-level kind
-- `phase` -> child of `epic`
-- `plan` -> child of `phase`
-- `task` -> child of `plan`
+- `epic` -> defaults to creating `phase` children
+- `phase` -> defaults to creating `plan` children
+- `plan` -> defaults to creating `task` children
+- `task` -> default leaf implementation node
 
-Important current constraint:
+Doctrinal rule:
 
-- only `epic` is parentless today
-- if you want to start from one command, use `workflow start --kind epic ...`
-- `phase`, `plan`, and `task` show up as descendants, either from layout materialization or manual child creation
+- top-ness is defined only by the absence of a parent node
+- a user should be able to create a node of any kind as a top node when the hierarchy definition for that kind allows `allow_parentless: true`
+
+Current implementation mismatch:
+
+- the shipped built-in YAML and workflow-start path still expose only `epic` as parentless today
+- treat that as a current reconciliation gap in the packaged hierarchy, not as the intended long-term rule for the system
 
 ## What "hello world" should be
 
@@ -38,7 +42,7 @@ That is enough to exercise prompt capture, compiled workflow state, session boot
 
 ## Prerequisites
 
-Set up the repo and database first:
+Set up the orchestrator repo and database first:
 
 ```bash
 python3 -m venv .venv
@@ -48,6 +52,11 @@ python3 -m aicoding.cli.main admin doctor
 python3 -m aicoding.cli.main admin db ping
 python3 -m aicoding.cli.main admin db upgrade
 ```
+
+Important current constraint:
+
+- the admin/bootstrap commands above must be run from the orchestrator checkout root
+- `admin db upgrade` depends on the local Alembic config in that repo and does not currently work from an arbitrary target repo directory
 
 Run the daemon in a separate shell:
 
@@ -60,6 +69,22 @@ All commands below use the current CLI entrypoint:
 ```bash
 python3 -m aicoding.cli.main ...
 ```
+
+## Current verification status
+
+The live quick-start has currently been verified through:
+
+- `workflow start`
+- read-side inspection with `node`, `workflow`, `task`, `subtask`, `tree`, and `node runs`
+
+Known live limitation from runtime verification:
+
+- `session bind`
+- `session show --node ...`
+- `subtask start|heartbeat|complete`
+- `workflow advance`
+
+are currently blocked in a live Postgres-backed run by authoritative node-version selector failures, so the write-side half of this walkthrough is specified correctly but not yet passing end to end.
 
 ## Phase 1: Start a top-level workflow
 

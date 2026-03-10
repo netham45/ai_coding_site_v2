@@ -257,22 +257,29 @@ Implementation staging note:
 - `ai-tool workflow advance --node <id>`
 - `ai-tool workflow pause --node <id>`
 - `ai-tool workflow resume --node <id>`
+- `ai-tool node interventions --node <id>`
+- `ai-tool node intervention-apply --node <id> --kind <kind> --action <action>`
 
 ### Recovery
 
 - `ai-tool session nudge --node <id>`
 - `ai-tool session resume --node <id>`
 - `ai-tool session recover --node <id>`
+- `ai-tool session provider-resume --node <id>`
 - `ai-tool session attach --node <id>`
 - `ai-tool node recovery-status --node <id>`
+- `ai-tool node recovery-provider-status --node <id>`
 
 Implementation staging note:
 
 - `session resume --node <id>` now runs provider-agnostic recovery against durable run state instead of assuming provider identity is sufficient
 - `session recover --node <id>` is an explicit alias for the same recovery path
 - `node recovery-status --node <id>` now exposes the current recovery classification and recommended action from the daemon
+- `node recovery-provider-status --node <id>` now exposes the provider-aware restoration view, including whether the persisted provider identity still exists and whether direct rebind is possible
+- `session provider-resume --node <id>` now attempts provider-aware rebound before falling back to the provider-agnostic recovery path
 - `session show --node <id>`, `session show --session <id>`, and `session show-current` now also expose the same `recommended_action` when the selected row is the active primary session, so session-control clients can decide whether to attach or resume from the ordinary session read path
 - the current staged classifier distinguishes `healthy`, `detached`, `stale_but_recoverable`, `lost`, `missing`, `ambiguous`, and `non_resumable`
+- the current provider-aware enhancement is intentionally bounded: it only performs direct rebind when the durable provider identity matches the active backend and that provider session still exists
 - `session nudge --node <id>` now performs bounded idle inspection against the active primary session, suppresses false positives while alt-screen content is active, records durable nudge audit events, and escalates to `PAUSED_FOR_USER` when the configured nudge budget is exhausted
 
 The command names may evolve, but the behavior must exist.
@@ -396,6 +403,7 @@ The default built-in runtime order is:
 Runtime rule:
 
 - validation, review, testing, provenance, and docs may compile into ordinary subtasks, but they are still semantically meaningful named stages
+- the current runtime also exposes a daemon-owned turnkey `node quality-chain` path that drives the built-in validation, review, and testing gates to completion and then records provenance, docs, and a final node summary once the active run completes
 
 ### Validation stage
 
@@ -563,6 +571,15 @@ Implementation note:
 - explicit operator approval records `pause_cleared` without resuming the run yet
 - resume is rejected until the active pause flag is approved unless the daemon is executing an internal forced recovery path
 - `node pause-state`, `node events`, `workflow approve`, and `node approve` are now implemented against that durable pause model
+- the runtime now also exposes a bounded unified human-intervention catalog through `node interventions --node <id>` and `node intervention-apply --node <id> --kind <kind> --action <action>`
+- the current intervention catalog aggregates the already durable pause, child-reconciliation, merge-conflict, session-recovery, and blocked-cutover attention state rather than creating a second intervention ledger
+- currently supported intervention actions are:
+  - `approve_pause`
+  - `preserve_manual`
+  - `abort_merge`
+  - `resolve_conflict`
+  - `resume_session`
+- rebuild and cutover decisions are not yet fully symmetrical on that apply surface; blocked cutover currently appears as read-only attention
 
 ---
 
@@ -606,7 +623,8 @@ Recommended default parent decision order:
 Implementation staging note:
 
 - the current daemon slice now exposes `node child-failures`, `node decision-history`, and `node respond-to-child-failure`
-- automatic parent decisions currently classify failures from the latest failed child attempt summary plus any validation/review/testing payload cached on that attempt
+- automatic parent decisions now classify failures from the latest failed child attempt summary, quality-gate payloads, source subtask identity, and lifecycle context
+- current decision payloads now expose `failure_origin`, `classification_reason`, `decision_reason`, `options_considered`, `threshold_triggered`, and the applied threshold policy
 - explicit operator overrides are supported for `retry_child`, `regenerate_child`, `replan_parent`, and `pause_for_user`
 
 ---
@@ -878,6 +896,12 @@ A node run must always be reconstructible from:
 - git seed/head/final lineage
 
 If the runtime cannot reconstruct execution from those artifacts, it is violating the model.
+
+Implementation staging note:
+
+- the current runtime now supports durable attempt-history reads through `subtask attempts --node <id>` and `subtask attempt-show --attempt <id>`
+- `subtask complete` and `subtask fail` may now carry explicit `execution_result_json` payloads; these are stored durably and mirrored into `output_json` for compatibility with already-implemented gate/runtime consumers
+- real shell or tool execution still remains session-driven rather than daemon-owned
 
 ---
 

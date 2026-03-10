@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.branches import build_canonical_branch_name, inherited_seed_commit
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.daemon.git_conflicts import has_unresolved_merge_conflicts
+from aicoding.daemon.rebuild_coordination import (
+    inspect_cutover_readiness,
+    record_rebuild_coordination_event,
+    require_cutover_ready,
+)
 from aicoding.db.models import (
     HierarchyNode,
     LogicalNodeCurrentVersion,
@@ -17,7 +21,6 @@ from aicoding.db.models import (
     NodeLifecycleState,
     NodeVersion,
     ParentChildAuthority,
-    RebuildEvent,
 )
 from aicoding.db.session import query_session_scope, session_scope
 
@@ -211,16 +214,23 @@ def create_superseding_node_version_in_session(
 
 
 def cutover_candidate_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> NodeLineageSnapshot:
+    readiness = inspect_cutover_readiness(session_factory, version_id=version_id)
+    if readiness.status != "ready":
+        record_rebuild_coordination_event(
+            session_factory,
+            logical_node_id=readiness.logical_node_id,
+            target_node_version_id=readiness.node_version_id,
+            event_kind="cutover_blocked",
+            event_status="blocked",
+            scope="cutover",
+            trigger_reason="manual_cutover",
+            details_json=readiness.to_payload(),
+        )
     with session_scope(session_factory) as session:
         version = session.get(NodeVersion, version_id)
         if version is None:
             raise DaemonNotFoundError("node version not found")
-        if version.status != "candidate":
-            raise DaemonConflictError("only candidate versions may cut over")
-        if has_unresolved_merge_conflicts(session, node_version_id=version.id):
-            raise DaemonConflictError("candidate version has unresolved merge conflicts")
-        if _rebuild_cutover_blocked(session, version_id=version.id):
-            raise DaemonConflictError("candidate version rebuild lineage is not yet marked stable for cutover")
+        require_cutover_ready(session, version_id=version.id)
 
         selector = session.get(LogicalNodeCurrentVersion, version.logical_node_id)
         if selector is None:
@@ -249,7 +259,18 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
             lifecycle.pause_flag_name = None
 
         session.flush()
-        return _lineage_snapshot(session, version.logical_node_id)
+        lineage = _lineage_snapshot(session, version.logical_node_id)
+    record_rebuild_coordination_event(
+        session_factory,
+        logical_node_id=lineage.logical_node_id,
+        target_node_version_id=version_id,
+        event_kind="cutover_completed",
+        event_status="allowed",
+        scope="cutover",
+        trigger_reason="manual_cutover",
+        details_json={"authoritative_node_version_id": str(lineage.authoritative_node_version_id)},
+    )
+    return lineage
 
 
 def list_node_versions(session_factory: sessionmaker[Session], logical_node_id: UUID) -> list[NodeVersionSnapshot]:
@@ -377,12 +398,4 @@ def _clone_version_scoped_edges(session: Session, *, source_version_id: UUID, ta
         )
 
 
-def _rebuild_cutover_blocked(session: Session, *, version_id: UUID) -> bool:
-    events = session.execute(
-        select(RebuildEvent)
-        .where(RebuildEvent.target_node_version_id == version_id)
-        .order_by(RebuildEvent.created_at, RebuildEvent.id)
-    ).scalars().all()
-    if not events:
-        return False
-    return not any(event.event_status == "stable" for event in events)
+# legacy helper removed; cutover readiness now lives in rebuild_coordination.py

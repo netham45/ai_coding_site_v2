@@ -15,9 +15,11 @@ from aicoding.daemon.run_orchestration import (
     fail_current_subtask,
     heartbeat_current_subtask,
     list_node_runs,
+    list_subtask_attempts_for_node,
     load_current_subtask_context,
     load_current_subtask_prompt,
     load_current_run_progress,
+    load_subtask_attempt,
     register_summary,
     retry_current_subtask,
     start_subtask_attempt,
@@ -93,6 +95,41 @@ def test_start_complete_and_advance_workflow(db_session_factory, migrated_public
     assert completed.latest_attempt.status == "COMPLETE"
     assert completed.state.last_completed_compiled_subtask_id == current_subtask_id
     assert advanced.run.run_status in {"RUNNING", "COMPLETE"}
+
+
+def test_complete_and_fail_capture_explicit_execution_result_payloads(db_session_factory, migrated_public_schema) -> None:
+    node, _, progress = _create_started_run(db_session_factory)
+    current_subtask_id = progress.state.current_compiled_subtask_id
+
+    started = start_subtask_attempt(db_session_factory, logical_node_id=node.node_id, compiled_subtask_id=current_subtask_id)
+    completed = complete_current_subtask(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        execution_result_json={"exit_code": 0, "stdout": "ok"},
+        summary="done",
+    )
+    attempts = list_subtask_attempts_for_node(db_session_factory, logical_node_id=node.node_id)[1]
+    loaded = load_subtask_attempt(db_session_factory, attempt_id=started.latest_attempt.id)
+
+    assert completed.latest_attempt.execution_result_json == {"exit_code": 0, "stdout": "ok"}
+    assert completed.latest_attempt.output_json["exit_code"] == 0
+    assert attempts[0].execution_result_json == {"exit_code": 0, "stdout": "ok"}
+    assert loaded.execution_result_json == {"exit_code": 0, "stdout": "ok"}
+
+    failing_node, _, failing_progress = _create_started_run(db_session_factory)
+    failing_subtask_id = failing_progress.state.current_compiled_subtask_id
+    start_subtask_attempt(db_session_factory, logical_node_id=failing_node.node_id, compiled_subtask_id=failing_subtask_id)
+    failed = fail_current_subtask(
+        db_session_factory,
+        logical_node_id=failing_node.node_id,
+        compiled_subtask_id=failing_subtask_id,
+        summary="boom",
+        execution_result_json={"exit_code": 17, "stderr": "boom"},
+    )
+
+    assert failed.latest_attempt.execution_result_json == {"exit_code": 17, "stderr": "boom"}
+    assert failed.latest_attempt.output_json["exit_code"] == 17
 
 
 def test_fail_current_subtask_marks_run_failed(db_session_factory, migrated_public_schema) -> None:

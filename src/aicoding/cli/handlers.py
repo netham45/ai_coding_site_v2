@@ -39,6 +39,7 @@ def handle_print_settings(args: Namespace, context: CliContext) -> dict[str, obj
         "daemon_app_name": settings.daemon_app_name,
         "daemon_host": settings.daemon_host,
         "daemon_port": settings.daemon_port,
+        "daemon_request_timeout_seconds": settings.daemon_request_timeout_seconds,
         "auth_token_file": str(settings.auth_token_file),
     }
 
@@ -269,6 +270,11 @@ def handle_node_rebuild_history(args: Namespace, context: CliContext) -> dict[st
     return client.request("GET", f"/api/nodes/{args.node}/rebuild-history")
 
 
+def handle_node_rebuild_coordination(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/nodes/{args.node}/rebuild-coordination?scope={args.scope}")
+
+
 def handle_node_validate(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("POST", f"/api/nodes/{args.node}/validation/run", json_payload={})
@@ -313,6 +319,11 @@ def handle_review_results(args: Namespace, context: CliContext) -> dict[str, obj
 def handle_node_test(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("POST", f"/api/nodes/{args.node}/testing/run", json_payload={})
+
+
+def handle_node_quality_chain(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("POST", f"/api/nodes/{args.node}/quality-chain/run", json_payload={})
 
 
 def handle_testing_show(args: Namespace, context: CliContext) -> dict[str, object]:
@@ -370,6 +381,11 @@ def handle_node_version_cutover(args: Namespace, context: CliContext) -> dict[st
     return client.request("POST", f"/api/node-versions/{args.version}/cutover", json_payload={})
 
 
+def handle_node_version_cutover_readiness(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/node-versions/{args.version}/cutover-readiness")
+
+
 def handle_node_children(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     children = client.request("GET", f"/api/nodes/{args.node}/children")
@@ -382,6 +398,20 @@ def handle_node_children(args: Namespace, context: CliContext) -> dict[str, obje
 def handle_node_materialization(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("GET", f"/api/nodes/{args.node}/children/materialization")
+
+
+def handle_node_child_reconciliation(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/nodes/{args.node}/children/reconciliation")
+
+
+def handle_node_reconcile_children(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request(
+        "POST",
+        f"/api/nodes/{args.node}/children/reconcile",
+        json_payload={"decision": args.decision},
+    )
 
 
 def handle_node_child_results(args: Namespace, context: CliContext) -> dict[str, object]:
@@ -424,6 +454,27 @@ def handle_node_pause_state(args: Namespace, context: CliContext) -> dict[str, o
     return client.request("GET", f"/api/nodes/{args.node}/pause-state")
 
 
+def handle_node_interventions(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/nodes/{args.node}/interventions")
+
+
+def handle_node_intervention_apply(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    payload: dict[str, object] = {
+        "node_id": args.node,
+        "intervention_kind": args.kind,
+        "action": args.action,
+    }
+    if getattr(args, "summary", None):
+        payload["summary"] = args.summary
+    if getattr(args, "conflict_id", None):
+        payload["conflict_id"] = args.conflict_id
+    if getattr(args, "pause_flag", None):
+        payload["pause_flag_name"] = args.pause_flag
+    return client.request("POST", "/api/nodes/interventions/apply", json_payload=payload)
+
+
 def handle_node_approve(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     payload = {"node_id": args.node}
@@ -437,6 +488,11 @@ def handle_node_approve(args: Namespace, context: CliContext) -> dict[str, objec
 def handle_node_recovery_status(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("GET", f"/api/nodes/{args.node}/recovery-status")
+
+
+def handle_node_provider_recovery_status(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/nodes/{args.node}/recovery-provider-status")
 
 
 def handle_node_events(args: Namespace, context: CliContext) -> dict[str, object]:
@@ -576,6 +632,16 @@ def handle_subtask_current(args: Namespace, context: CliContext) -> dict[str, ob
     return client.request("GET", f"/api/nodes/{args.node}/subtasks/current")
 
 
+def handle_subtask_attempts(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/nodes/{args.node}/subtask-attempts")
+
+
+def handle_subtask_attempt_show(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/subtask-attempts/{args.attempt}")
+
+
 def handle_subtask_prompt(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("GET", f"/api/nodes/{args.node}/subtasks/current/prompt")
@@ -607,6 +673,21 @@ def handle_subtask_progress(args: Namespace, context: CliContext) -> dict[str, o
                 message="Unable to read summary file.",
                 code="summary_file_unreadable",
                 details={"summary_path": args.summary_file, "reason": str(exc)},
+            ) from exc
+    if getattr(args, "result_file", None) is not None:
+        try:
+            payload["execution_result_json"] = json.loads(Path(args.result_file).read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise CommandExecutionError(
+                message="Unable to read result file.",
+                code="result_file_unreadable",
+                details={"result_path": args.result_file, "reason": str(exc)},
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise CommandExecutionError(
+                message="Result file must contain valid JSON.",
+                code="result_file_invalid_json",
+                details={"result_path": args.result_file, "reason": str(exc)},
             ) from exc
     return client.request("POST", args.daemon_path, json_payload=payload)
 
@@ -736,9 +817,47 @@ def handle_git_merge_events_show(args: Namespace, context: CliContext) -> dict[s
     return client.request("GET", f"/api/nodes/{args.node}/git/merge-events")
 
 
+def handle_git_bootstrap_node(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    files_json = _load_optional_json_file(args.files_file, expected="any")
+    if files_json is None:
+        files_json = {}
+    if not isinstance(files_json, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in files_json.items()):
+        raise CommandExecutionError(
+            message="Git bootstrap files payload must be a JSON object of string file paths to string contents.",
+            code="git_bootstrap_files_invalid",
+            details={"path": args.files_file},
+        )
+    return client.request(
+        "POST",
+        f"/api/node-versions/{args.version}/git/bootstrap",
+        json_payload={
+            "version_id": args.version,
+            "base_version_id": args.base_version,
+            "replace_existing": args.replace_existing,
+            "files_json": files_json,
+        },
+    )
+
+
 def handle_git_merge_children(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("POST", f"/api/nodes/{args.node}/git/merge-children", json_payload={})
+
+
+def handle_git_abort_merge(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("POST", f"/api/nodes/{args.node}/git/abort-merge", json_payload={})
+
+
+def handle_git_finalize_node(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("POST", f"/api/nodes/{args.node}/git/finalize", json_payload={})
+
+
+def handle_git_status_show(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("GET", f"/api/node-versions/{args.version}/git/status")
 
 
 def handle_git_merge_conflicts_show(args: Namespace, context: CliContext) -> dict[str, object]:
@@ -868,6 +987,8 @@ def handle_workflow_sources(args: Namespace, context: CliContext) -> dict[str, o
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/sources")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/sources")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/sources")
     return {
@@ -881,6 +1002,8 @@ def handle_workflow_source_discovery(args: Namespace, context: CliContext) -> di
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/source-discovery")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/source-discovery")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/source-discovery")
     return {
@@ -894,6 +1017,8 @@ def handle_workflow_schema_validation(args: Namespace, context: CliContext) -> d
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/schema-validation")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/schema-validation")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/schema-validation")
     return {
@@ -907,6 +1032,8 @@ def handle_workflow_override_resolution(args: Namespace, context: CliContext) ->
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/override-resolution")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/override-resolution")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/override-resolution")
     return {
@@ -920,6 +1047,8 @@ def handle_workflow_hook_policy(args: Namespace, context: CliContext) -> dict[st
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/hook-policy")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/hook-policy")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/hook-policy")
     return {
@@ -933,6 +1062,8 @@ def handle_workflow_hooks(args: Namespace, context: CliContext) -> dict[str, obj
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/hooks")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/hooks")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/hooks")
     return {
@@ -946,6 +1077,8 @@ def handle_workflow_rendering(args: Namespace, context: CliContext) -> dict[str,
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/rendering")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/rendering")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/rendering")
     return {
@@ -959,6 +1092,8 @@ def handle_workflow_show(args: Namespace, context: CliContext) -> dict[str, obje
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/current")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/current")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}")
     return {
@@ -972,6 +1107,8 @@ def handle_workflow_chain(args: Namespace, context: CliContext) -> dict[str, obj
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/chain")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/chain")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/chain")
     return {
@@ -996,7 +1133,15 @@ def handle_workflow_current(args: Namespace, context: CliContext) -> dict[str, o
 
 def handle_workflow_compile(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
-    return client.request("POST", f"/api/nodes/{args.node}/workflow/compile", json_payload={})
+    if getattr(args, "node", None):
+        return client.request("POST", f"/api/nodes/{args.node}/workflow/compile", json_payload={})
+    if getattr(args, "version", None):
+        return client.request("POST", f"/api/node-versions/{args.version}/workflow/compile", json_payload={})
+    return {
+        "status": "not_implemented",
+        "command_path": ["workflow", "compile"],
+        "message": "Select --node or --version to compile a workflow target.",
+    }
 
 
 def handle_workflow_start(args: Namespace, context: CliContext) -> dict[str, object]:
@@ -1017,6 +1162,8 @@ def handle_workflow_compile_failures(args: Namespace, context: CliContext) -> di
     client = build_daemon_client(context.settings)
     if getattr(args, "node", None):
         return client.request("GET", f"/api/nodes/{args.node}/workflow/compile-failures")
+    if getattr(args, "version", None):
+        return client.request("GET", f"/api/node-versions/{args.version}/workflow/compile-failures")
     if getattr(args, "workflow", None):
         return client.request("GET", f"/api/workflows/{args.workflow}/compile-failures")
     return {
@@ -1112,6 +1259,11 @@ def handle_session_events(args: Namespace, context: CliContext) -> dict[str, obj
 def handle_session_recover(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("POST", "/api/sessions/resume", json_payload={"node_id": getattr(args, "node")})
+
+
+def handle_session_provider_recover(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    return client.request("POST", "/api/sessions/provider-resume", json_payload={"node_id": getattr(args, "node")})
 
 
 def handle_session_nudge(args: Namespace, context: CliContext) -> dict[str, object]:

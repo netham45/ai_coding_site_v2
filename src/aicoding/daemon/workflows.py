@@ -24,6 +24,7 @@ from aicoding.db.models import (
     NodeLifecycleState,
     NodeVersion,
     NodeVersionSourceDocument,
+    RebuildEvent,
     SourceDocument,
     SubtaskAttempt,
 )
@@ -141,6 +142,7 @@ class CompiledWorkflowSnapshot:
     source_document_count: int
     task_count: int
     subtask_count: int
+    compile_context: dict[str, object]
     resolved_yaml: dict[str, object]
     tasks: list[CompiledTaskSnapshot]
 
@@ -155,6 +157,7 @@ class CompiledWorkflowSnapshot:
             "source_document_count": self.source_document_count,
             "task_count": self.task_count,
             "subtask_count": self.subtask_count,
+            "compile_context": self.compile_context,
             "resolved_yaml": self.resolved_yaml,
             "tasks": [item.to_payload() for item in self.tasks],
         }
@@ -201,6 +204,7 @@ class WorkflowChainSnapshot:
     compiled_workflow_id: UUID
     node_version_id: UUID
     logical_node_id: UUID
+    compile_context: dict[str, object]
     chain: list[WorkflowChainEntrySnapshot]
 
     def to_payload(self) -> dict[str, object]:
@@ -208,6 +212,7 @@ class WorkflowChainSnapshot:
             "compiled_workflow_id": str(self.compiled_workflow_id),
             "node_version_id": str(self.node_version_id),
             "logical_node_id": str(self.logical_node_id),
+            "compile_context": self.compile_context,
             "chain": [item.to_payload() for item in self.chain],
         }
 
@@ -224,6 +229,7 @@ class CompileFailureSnapshot:
     source_hash: str | None
     target_family: str | None
     target_id: str | None
+    compile_context: dict[str, object]
     created_at: str
 
     def to_payload(self) -> dict[str, object]:
@@ -238,6 +244,7 @@ class CompileFailureSnapshot:
             "source_hash": self.source_hash,
             "target_family": self.target_family,
             "target_id": self.target_id,
+            "compile_context": self.compile_context,
             "created_at": self.created_at,
         }
 
@@ -247,6 +254,7 @@ class WorkflowCompileAttemptSnapshot:
     status: str
     node_version_id: UUID
     logical_node_id: UUID
+    compile_context: dict[str, object]
     compiled_workflow: CompiledWorkflowSnapshot | None = None
     compile_failure: CompileFailureSnapshot | None = None
 
@@ -255,6 +263,7 @@ class WorkflowCompileAttemptSnapshot:
             "status": self.status,
             "node_version_id": str(self.node_version_id),
             "logical_node_id": str(self.logical_node_id),
+            "compile_context": self.compile_context,
             "compiled_workflow": None if self.compiled_workflow is None else self.compiled_workflow.to_payload(),
             "compile_failure": None if self.compile_failure is None else self.compile_failure.to_payload(),
         }
@@ -382,6 +391,7 @@ def compile_node_version_workflow(
         version = session.get(NodeVersion, version_id)
         if version is None:
             raise DaemonNotFoundError("node version not found")
+        compile_context = _compile_context(session, version)
         if version.status == "authoritative":
             _ensure_no_live_run(session, version.logical_node_id)
 
@@ -394,17 +404,19 @@ def compile_node_version_workflow(
                 status="compiled",
                 node_version_id=version.id,
                 logical_node_id=version.logical_node_id,
+                compile_context=compile_context,
                 compiled_workflow=snapshot,
             )
         except WorkflowCompileError as exc:
             version.compiled_workflow_id = None
-            failure = _persist_compile_failure(session, version, exc)
+            failure = _persist_compile_failure(session, version, exc, compile_context=compile_context)
             if version.status == "authoritative":
                 _update_lifecycle_after_compile(session, version.logical_node_id, compiled=False)
             return WorkflowCompileAttemptSnapshot(
                 status="failed",
                 node_version_id=version.id,
                 logical_node_id=version.logical_node_id,
+                compile_context=compile_context,
                 compile_failure=failure,
             )
 
@@ -418,6 +430,14 @@ def load_current_workflow(session_factory: sessionmaker[Session], *, logical_nod
         return _workflow_snapshot(session, version.compiled_workflow_id)
 
 
+def load_node_version_workflow(session_factory: sessionmaker[Session], *, version_id: UUID) -> CompiledWorkflowSnapshot:
+    with query_session_scope(session_factory) as session:
+        version = session.get(NodeVersion, version_id)
+        if version is None or version.compiled_workflow_id is None:
+            raise DaemonNotFoundError("compiled workflow not found")
+        return _workflow_snapshot(session, version.compiled_workflow_id)
+
+
 def load_workflow(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> CompiledWorkflowSnapshot:
     with query_session_scope(session_factory) as session:
         return _workflow_snapshot(session, workflow_id)
@@ -425,6 +445,11 @@ def load_workflow(session_factory: sessionmaker[Session], *, workflow_id: UUID) 
 
 def load_workflow_chain_for_node(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> WorkflowChainSnapshot:
     workflow = load_current_workflow(session_factory, logical_node_id=logical_node_id)
+    return load_workflow_chain(session_factory, workflow_id=workflow.id)
+
+
+def load_workflow_chain_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> WorkflowChainSnapshot:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
     return load_workflow_chain(session_factory, workflow_id=workflow.id)
 
 
@@ -473,6 +498,7 @@ def load_workflow_chain(session_factory: sessionmaker[Session], *, workflow_id: 
             compiled_workflow_id=workflow.id,
             node_version_id=workflow.node_version_id,
             logical_node_id=version.logical_node_id,
+            compile_context=_compile_context(session, version),
             chain=[
                 WorkflowChainEntrySnapshot(
                     compiled_task_id=task.id,
@@ -531,8 +557,18 @@ def load_workflow_sources_for_node(session_factory: sessionmaker[Session], *, lo
     return load_workflow_sources(session_factory, workflow_id=workflow.id)
 
 
+def load_workflow_sources_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
+    return load_workflow_sources(session_factory, workflow_id=workflow.id)
+
+
 def load_workflow_source_discovery_for_node(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> dict[str, object]:
     workflow = load_current_workflow(session_factory, logical_node_id=logical_node_id)
+    return load_workflow_source_discovery(session_factory, workflow_id=workflow.id)
+
+
+def load_workflow_source_discovery_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
     return load_workflow_source_discovery(session_factory, workflow_id=workflow.id)
 
 
@@ -544,6 +580,7 @@ def load_workflow_source_discovery(session_factory: sessionmaker[Session], *, wo
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "source_hash": workflow.source_hash,
         "built_in_library_version": workflow.resolved_yaml.get("built_in_library_version", BUILTIN_LIBRARY_VERSION),
         "discovery_order": [
@@ -562,6 +599,11 @@ def load_workflow_schema_validation_for_node(session_factory: sessionmaker[Sessi
     return load_workflow_schema_validation(session_factory, workflow_id=workflow.id)
 
 
+def load_workflow_schema_validation_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
+    return load_workflow_schema_validation(session_factory, workflow_id=workflow.id)
+
+
 def load_workflow_schema_validation(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> dict[str, object]:
     workflow = load_workflow(session_factory, workflow_id=workflow_id)
     source_discovery = load_workflow_source_discovery(session_factory, workflow_id=workflow_id)
@@ -574,6 +616,7 @@ def load_workflow_schema_validation(session_factory: sessionmaker[Session], *, w
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "validated_document_count": len(yaml_documents),
         "family_counts": family_counts,
         "validated_documents": yaml_documents,
@@ -603,6 +646,7 @@ def load_workflow_sources(session_factory: sessionmaker[Session], *, workflow_id
             "compiled_workflow_id": str(workflow.id),
             "node_version_id": str(workflow.node_version_id),
             "logical_node_id": str(version.logical_node_id),
+            "compile_context": workflow.resolved_yaml.get("compile_context", {}),
             "source_documents": [
                 {
                     "id": str(source.id),
@@ -629,6 +673,11 @@ def load_workflow_override_resolution_for_node(session_factory: sessionmaker[Ses
     return load_workflow_override_resolution(session_factory, workflow_id=workflow.id)
 
 
+def load_workflow_override_resolution_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
+    return load_workflow_override_resolution(session_factory, workflow_id=workflow.id)
+
+
 def load_workflow_override_resolution(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> dict[str, object]:
     workflow = load_workflow(session_factory, workflow_id=workflow_id)
     override_resolution = workflow.resolved_yaml.get("override_resolution", {})
@@ -637,6 +686,7 @@ def load_workflow_override_resolution(session_factory: sessionmaker[Session], *,
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "applied_override_count": len(override_resolution.get("applied_overrides", [])),
         "warning_count": len(override_resolution.get("warnings", [])),
         "applied_overrides": override_resolution.get("applied_overrides", []),
@@ -653,6 +703,7 @@ def load_override_chain(session_factory: sessionmaker[Session], *, workflow_id: 
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "applied_overrides": override_resolution.get("applied_overrides", []),
         "warnings": override_resolution.get("warnings", []),
     }
@@ -663,8 +714,18 @@ def load_workflow_hooks_for_node(session_factory: sessionmaker[Session], *, logi
     return load_workflow_hooks(session_factory, workflow_id=workflow.id)
 
 
+def load_workflow_hooks_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
+    return load_workflow_hooks(session_factory, workflow_id=workflow.id)
+
+
 def load_workflow_hook_policy_for_node(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> dict[str, object]:
     workflow = load_current_workflow(session_factory, logical_node_id=logical_node_id)
+    return load_workflow_hook_policy(session_factory, workflow_id=workflow.id)
+
+
+def load_workflow_hook_policy_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
     return load_workflow_hook_policy(session_factory, workflow_id=workflow.id)
 
 
@@ -675,6 +736,7 @@ def load_workflow_hook_policy(session_factory: sessionmaker[Session], *, workflo
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "effective_policy": workflow.resolved_yaml.get("effective_policy", {}),
         "policy_impact": workflow.resolved_yaml.get("policy_impact", {}),
         "selected_hooks": hook_expansion.get("selected_hooks", []),
@@ -690,6 +752,7 @@ def load_workflow_hooks(session_factory: sessionmaker[Session], *, workflow_id: 
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "selected_hooks": hook_expansion.get("selected_hooks", []),
         "skipped_hooks": hook_expansion.get("skipped_hooks", []),
         "expanded_steps": hook_expansion.get("expanded_steps", []),
@@ -701,6 +764,11 @@ def load_workflow_rendering_for_node(session_factory: sessionmaker[Session], *, 
     return load_workflow_rendering(session_factory, workflow_id=workflow.id)
 
 
+def load_workflow_rendering_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
+    return load_workflow_rendering(session_factory, workflow_id=workflow.id)
+
+
 def load_workflow_rendering(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> dict[str, object]:
     workflow = load_workflow(session_factory, workflow_id=workflow_id)
     rendering = workflow.resolved_yaml.get("rendering", {})
@@ -709,6 +777,7 @@ def load_workflow_rendering(session_factory: sessionmaker[Session], *, workflow_
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "canonical_syntax": rendering.get("canonical_syntax"),
         "legacy_syntax_supported": rendering.get("legacy_syntax_supported", False),
         "compiled_subtask_count": len(compiled_subtasks),
@@ -724,6 +793,22 @@ def load_resolved_yaml_for_node(
     target_id: str | None = None,
 ) -> dict[str, object]:
     workflow = load_current_workflow(session_factory, logical_node_id=logical_node_id)
+    return load_resolved_yaml(
+        session_factory,
+        workflow_id=workflow.id,
+        target_family=target_family,
+        target_id=target_id,
+    )
+
+
+def load_resolved_yaml_for_version(
+    session_factory: sessionmaker[Session],
+    *,
+    version_id: UUID,
+    target_family: str | None = None,
+    target_id: str | None = None,
+) -> dict[str, object]:
+    workflow = load_node_version_workflow(session_factory, version_id=version_id)
     return load_resolved_yaml(
         session_factory,
         workflow_id=workflow.id,
@@ -749,6 +834,7 @@ def load_resolved_yaml(
         "compiled_workflow_id": str(workflow.id),
         "node_version_id": str(workflow.node_version_id),
         "logical_node_id": str(workflow.logical_node_id),
+        "compile_context": workflow.compile_context,
         "resolved_documents": documents,
         "warnings": workflow.resolved_yaml.get("override_resolution", {}).get("warnings", []),
     }
@@ -760,6 +846,11 @@ def list_compile_failures_for_node(session_factory: sessionmaker[Session], *, lo
         return _compile_failures_for_version(session, selector.authoritative_node_version_id)
 
 
+def list_compile_failures_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> list[CompileFailureSnapshot]:
+    with query_session_scope(session_factory) as session:
+        return _compile_failures_for_version(session, version_id)
+
+
 def list_compile_failures_for_workflow(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> list[CompileFailureSnapshot]:
     with query_session_scope(session_factory) as session:
         workflow = session.get(CompiledWorkflow, workflow_id)
@@ -769,6 +860,7 @@ def list_compile_failures_for_workflow(session_factory: sessionmaker[Session], *
 
 
 def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCatalog) -> CompiledWorkflowSnapshot:
+    compile_context = _compile_context(session, version)
     try:
         ensure_builtin_structural_library(catalog)
     except ValueError as exc:
@@ -974,6 +1066,7 @@ def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCa
     resolved_yaml = {
         "compiler_version": 1,
         "built_in_library_version": BUILTIN_LIBRARY_VERSION,
+        "compile_context": compile_context,
         "node_version": {
             "id": str(version.id),
             "logical_node_id": str(version.logical_node_id),
@@ -1268,9 +1361,40 @@ def _workflow_snapshot(session: Session, workflow_id: UUID) -> CompiledWorkflowS
         source_document_count=len(source_count),
         task_count=len(tasks),
         subtask_count=sum(len(item.subtasks) for item in tasks),
+        compile_context=workflow.resolved_yaml.get("compile_context", {}),
         resolved_yaml=workflow.resolved_yaml,
         tasks=tasks,
     )
+
+
+def _compile_context(session: Session, version: NodeVersion) -> dict[str, object]:
+    rebuild_event = session.execute(
+        select(RebuildEvent)
+        .where(RebuildEvent.target_node_version_id == version.id)
+        .order_by(RebuildEvent.created_at.desc())
+    ).scalars().first()
+    compile_variant = "authoritative"
+    rebuild_context: dict[str, object] | None = None
+    if version.status == "candidate":
+        if rebuild_event is None:
+            compile_variant = "candidate"
+        else:
+            compile_variant = "rebuild_candidate"
+            rebuild_context = {
+                "rebuild_event_id": str(rebuild_event.id),
+                "root_logical_node_id": str(rebuild_event.root_logical_node_id),
+                "root_node_version_id": str(rebuild_event.root_node_version_id),
+                "event_kind": rebuild_event.event_kind,
+                "event_status": rebuild_event.event_status,
+                "scope": rebuild_event.scope,
+                "trigger_reason": rebuild_event.trigger_reason,
+            }
+    return {
+        "compile_variant": compile_variant,
+        "version_status": version.status,
+        "version_number": version.version_number,
+        "rebuild_context": rebuild_context,
+    }
 
 
 def _compile_failures_for_version(session: Session, node_version_id: UUID) -> list[CompileFailureSnapshot]:
@@ -1294,21 +1418,29 @@ def _compile_failures_for_version(session: Session, node_version_id: UUID) -> li
             source_hash=row.source_hash,
             target_family=row.target_family,
             target_id=row.target_id,
+            compile_context=row.details_json.get("compile_context", {}),
             created_at=row.created_at.isoformat(),
         )
         for row in rows
     ]
 
 
-def _persist_compile_failure(session: Session, version: NodeVersion, exc: WorkflowCompileError) -> CompileFailureSnapshot:
+def _persist_compile_failure(
+    session: Session,
+    version: NodeVersion,
+    exc: WorkflowCompileError,
+    *,
+    compile_context: dict[str, object],
+) -> CompileFailureSnapshot:
     source_hash = _latest_source_hash(session, version.id)
+    details_json = {**exc.details_json, "compile_context": compile_context}
     row = CompileFailure(
         id=uuid4(),
         node_version_id=version.id,
         failure_stage=exc.failure_stage,
         failure_class=exc.failure_class,
         summary=exc.summary,
-        details_json=exc.details_json,
+        details_json=details_json,
         source_hash=source_hash,
         target_family=exc.target_family,
         target_id=exc.target_id,
@@ -1326,6 +1458,7 @@ def _persist_compile_failure(session: Session, version: NodeVersion, exc: Workfl
         source_hash=row.source_hash,
         target_family=row.target_family,
         target_id=row.target_id,
+        compile_context=compile_context,
         created_at=row.created_at.isoformat(),
     )
 

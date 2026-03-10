@@ -11,10 +11,12 @@ from aicoding.daemon.session_records import (
     attach_primary_session,
     bind_primary_session,
     inspect_primary_session_screen_state,
+    load_provider_recovery_status,
     load_recovery_status,
     list_session_events,
     list_sessions_for_node,
     nudge_primary_session,
+    recover_primary_session_provider_specific,
     recover_primary_session,
     resume_primary_session,
     show_current_primary_session,
@@ -170,6 +172,47 @@ def test_recovery_status_distinguishes_stale_and_providerless_sessions(db_sessio
     assert healthy.provider_session_id_present is False
     assert stale.recovery_classification == "stale_but_recoverable"
     assert stale.recommended_action == "resume_existing_session"
+
+
+def test_provider_specific_recovery_rebinds_restorable_provider_session(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    original_session_name = bound.tmux_session_name
+    assert original_session_name is not None
+
+    with session_scope(db_session_factory) as session:
+        durable = session.get(DurableSession, bound.session_id)
+        assert durable is not None
+        durable.tmux_session_name = "missing-session-name"
+
+    provider_status = load_provider_recovery_status(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        adapter=adapter,
+        poller=poller,
+    )
+    decision = recover_primary_session_provider_specific(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        adapter=adapter,
+        poller=poller,
+    )
+    events = list_session_events(db_session_factory, session_id=bound.session_id)
+
+    assert provider_status.provider_supported is True
+    assert provider_status.provider_session_exists is True
+    assert provider_status.provider_rebind_possible is True
+    assert provider_status.provider_recommended_action == "rebind_provider_session"
+    assert decision.status == "provider_session_rebound"
+    assert decision.session is not None
+    assert decision.session.session_id == bound.session_id
+    assert decision.session.tmux_session_name == original_session_name
+    assert decision.recovery_status.recovery_classification in {"healthy", "detached", "stale_but_recoverable"}
+    assert [item.event_type for item in events][-2:] == ["provider_recovery_attempted", "provider_recovery_rebound"]
 
 
 def test_screen_classifier_distinguishes_active_quiet_and_idle(db_session_factory, migrated_public_schema) -> None:

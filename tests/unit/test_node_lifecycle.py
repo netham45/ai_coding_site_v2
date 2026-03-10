@@ -31,6 +31,26 @@ def test_transition_node_lifecycle_enforces_legal_state_machine(db_session_facto
     assert transition_node_lifecycle(db_session_factory, node_id="node-2", target_state="READY").lifecycle_state == "READY"
 
 
+def test_transition_node_lifecycle_accepts_paused_alias(db_session_factory, migrated_public_schema) -> None:
+    seed_node_lifecycle(db_session_factory, node_id="node-2b", initial_state="DRAFT")
+    transition_node_lifecycle(db_session_factory, node_id="node-2b", target_state="COMPILED")
+    transition_node_lifecycle(db_session_factory, node_id="node-2b", target_state="READY")
+
+    from aicoding.daemon.orchestration import apply_authority_mutation
+
+    apply_authority_mutation(db_session_factory, node_id="node-2b", command="node.run.start")
+    paused = transition_node_lifecycle(
+        db_session_factory,
+        node_id="node-2b",
+        target_state="PAUSED",
+        pause_flag_name="user_review_required",
+    )
+
+    assert paused.lifecycle_state == "PAUSED_FOR_USER"
+    assert paused.run_status == "PAUSED"
+    assert paused.pause_flag_name == "user_review_required"
+
+
 def test_update_node_cursor_requires_running_or_paused_state(db_session_factory, migrated_public_schema) -> None:
     seed_node_lifecycle(db_session_factory, node_id="node-3", initial_state="READY")
 

@@ -111,6 +111,7 @@ class SubtaskAttemptSnapshot:
     status: str
     input_context_json: dict[str, object] | None
     output_json: dict[str, object] | None
+    execution_result_json: dict[str, object] | None
     execution_environment_json: dict[str, object] | None
     validation_json: dict[str, object] | None
     review_json: dict[str, object] | None
@@ -128,6 +129,7 @@ class SubtaskAttemptSnapshot:
             "status": self.status,
             "input_context_json": self.input_context_json,
             "output_json": self.output_json,
+            "execution_result_json": self.execution_result_json,
             "execution_environment_json": self.execution_environment_json,
             "validation_json": self.validation_json,
             "review_json": self.review_json,
@@ -383,6 +385,7 @@ def complete_current_subtask(
     logical_node_id: UUID,
     compiled_subtask_id: UUID,
     output_json: dict[str, object] | None = None,
+    execution_result_json: dict[str, object] | None = None,
     summary: str | None = None,
 ) -> RunProgressSnapshot:
     with session_scope(session_factory) as session:
@@ -397,6 +400,15 @@ def complete_current_subtask(
             merged_output = dict(attempt.output_json or {})
             merged_output.update(output_json)
             attempt.output_json = merged_output
+        if execution_result_json is None:
+            attempt.execution_result_json = dict(attempt.execution_result_json or {}) or None
+        else:
+            merged_result = dict(attempt.execution_result_json or {})
+            merged_result.update(execution_result_json)
+            attempt.execution_result_json = merged_result
+            compatibility_output = dict(attempt.output_json or {})
+            compatibility_output.update(execution_result_json)
+            attempt.output_json = compatibility_output
         attempt.summary = summary
         attempt.ended_at = datetime.now(timezone.utc)
         state.last_completed_compiled_subtask_id = compiled_subtask_id
@@ -555,6 +567,7 @@ def fail_current_subtask(
     logical_node_id: UUID,
     compiled_subtask_id: UUID,
     summary: str,
+    execution_result_json: dict[str, object] | None = None,
 ) -> RunProgressSnapshot:
     with session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
@@ -562,6 +575,11 @@ def fail_current_subtask(
             raise DaemonConflictError("compiled subtask is not the current run cursor")
         attempt = _require_running_attempt(session, run.id, compiled_subtask_id)
         attempt.status = "FAILED"
+        if execution_result_json is not None:
+            attempt.execution_result_json = dict(execution_result_json)
+            compatibility_output = dict(attempt.output_json or {})
+            compatibility_output.update(execution_result_json)
+            attempt.output_json = compatibility_output
         attempt.summary = summary
         attempt.ended_at = datetime.now(timezone.utc)
         run.run_status = "FAILED"
@@ -996,6 +1014,7 @@ def _attempt_snapshot(attempt: SubtaskAttempt) -> SubtaskAttemptSnapshot:
         status=attempt.status,
         input_context_json=attempt.input_context_json,
         output_json=attempt.output_json,
+        execution_result_json=attempt.execution_result_json,
         execution_environment_json=attempt.execution_environment_json,
         validation_json=attempt.validation_json,
         review_json=attempt.review_json,
@@ -1004,6 +1023,32 @@ def _attempt_snapshot(attempt: SubtaskAttempt) -> SubtaskAttemptSnapshot:
         started_at=None if attempt.started_at is None else attempt.started_at.isoformat(),
         ended_at=None if attempt.ended_at is None else attempt.ended_at.isoformat(),
     )
+
+
+def load_subtask_attempt(session_factory: sessionmaker[Session], *, attempt_id: UUID) -> SubtaskAttemptSnapshot:
+    with query_session_scope(session_factory) as session:
+        attempt = session.get(SubtaskAttempt, attempt_id)
+        if attempt is None:
+            raise DaemonNotFoundError("subtask attempt not found")
+        return _attempt_snapshot(attempt)
+
+
+def list_subtask_attempts_for_node(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+) -> tuple[UUID, list[SubtaskAttemptSnapshot]]:
+    with query_session_scope(session_factory) as session:
+        version = _authoritative_version(session, logical_node_id)
+        run = _active_run_for_version(session, version.id)
+        if run is None:
+            raise DaemonNotFoundError("active node run not found")
+        attempts = session.execute(
+            select(SubtaskAttempt)
+            .where(SubtaskAttempt.node_run_id == run.id)
+            .order_by(SubtaskAttempt.created_at, SubtaskAttempt.attempt_number, SubtaskAttempt.id)
+        ).scalars().all()
+        return run.id, [_attempt_snapshot(item) for item in attempts]
 
 
 def _current_subtask_payload(session: Session, compiled_subtask_id: UUID | None) -> dict[str, object] | None:

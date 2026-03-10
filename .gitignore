@@ -11,3 +11,4 @@ tests/**/*.pyc
 tests/**/__pycache__/
 *.pyc
 .coverage
+.runtime/**

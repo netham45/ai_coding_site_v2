@@ -89,4 +89,5 @@ def build_daemon_client(settings: Settings | None = None) -> DaemonClient:
     return DaemonClient(
         base_url=build_daemon_base_url(active_settings),
         token=load_auth_token(settings=active_settings),
+        timeout_seconds=active_settings.daemon.request_timeout_seconds,
     )

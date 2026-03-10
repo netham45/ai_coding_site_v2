@@ -27,7 +27,21 @@ These flow specs describe:
 They should be read with one boundary in mind:
 
 - YAML defines declarative workflow structure, policy, and content
-- C++ defines compilation, orchestration, state transitions, recovery, persistence, and safety-critical algorithms
+- Python defines compilation, orchestration, state transitions, recovery, persistence, and safety-critical algorithms
+
+## Markdown And YAML
+
+This folder now supports two flow asset forms:
+
+- `.md` flow specs for the current canonical narrative contracts
+- `.yaml` flow assets for executable simulation-derived flow contracts
+
+Current rule:
+
+- the existing numbered `.md` files remain the authoritative human-readable flow specs
+- new simulation-gap closure work may add `.yaml` flow assets alongside them
+- `.yaml` assets must validate through the repository flow-asset loader and tests
+- `.yaml` assets must not silently contradict the stronger design notes or the canonical `.md` flow contracts
 
 ## Flow index
 
@@ -44,6 +58,18 @@ They should be read with one boundary in mind:
 - `11_finalize_and_merge_flow.md`
 - `12_query_provenance_and_docs_flow.md`
 - `13_human_gate_and_intervention_flow.md`
+
+## Executable YAML flow assets
+
+- `14_project_bootstrap_and_yaml_onboarding_flow.yaml`
+- `15_epic_default_workflow_blueprint_flow.yaml`
+- `16_phase_default_workflow_blueprint_flow.yaml`
+- `17_plan_default_workflow_blueprint_flow.yaml`
+- `18_task_default_workflow_blueprint_flow.yaml`
+- `19_hook_expansion_compile_stage_flow.yaml`
+- `20_compile_failure_and_reattempt_flow.yaml`
+- `21_child_session_round_trip_and_mergeback_flow.yaml`
+- `22_dependency_blocked_sibling_wait_flow.yaml`
 
 ## Coverage summary
 

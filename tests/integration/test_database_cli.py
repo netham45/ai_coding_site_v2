@@ -17,7 +17,7 @@ def test_db_upgrade_and_status_report_revision(clean_public_schema, cli_runner) 
     payload = result.json()
 
     assert result.exit_code == 0
-    assert payload["alembic_revision"] == "0027_provenance_docs_audit_views"
+    assert payload["alembic_revision"] == "0028_subtask_execution_results"
     assert "bootstrap_metadata" in payload["tables"]
     assert "daemon_node_states" in payload["tables"]
     assert "node_hierarchy_definitions" in payload["tables"]
@@ -59,14 +59,14 @@ def test_db_current_revision_command(clean_public_schema, cli_runner) -> None:
     payload = result.json()
 
     assert result.exit_code == 0
-    assert payload["alembic_revision"] == "0027_provenance_docs_audit_views"
+    assert payload["alembic_revision"] == "0028_subtask_execution_results"
 
 
 def test_db_heads_history_and_schema_check_commands(clean_public_schema, cli_runner) -> None:
     heads_result = cli_runner(["admin", "db", "heads"])
     heads_payload = heads_result.json()
     assert heads_result.exit_code == 0
-    assert heads_payload == {"heads": ["0027_provenance_docs_audit_views"]}
+    assert heads_payload == {"heads": ["0028_subtask_execution_results"]}
 
     history_result = cli_runner(["admin", "db", "history"])
     history_payload = history_result.json()
@@ -100,6 +100,7 @@ def test_db_heads_history_and_schema_check_commands(clean_public_schema, cli_run
             "0025_runtime_state_views",
             "0026_session_history_views",
             "0027_provenance_docs_audit_views",
+            "0028_subtask_execution_results",
         ]
     }
 

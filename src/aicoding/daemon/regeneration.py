@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.child_reconcile import execute_child_merge_pipeline_for_version
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.daemon.rebuild_coordination import inspect_rebuild_coordination, record_rebuild_coordination_event
 from aicoding.daemon.versioning import create_superseding_node_version_in_session
 from aicoding.daemon.workflows import compile_node_version_workflow
 from aicoding.db.models import (
@@ -95,6 +96,20 @@ def regenerate_node_and_descendants(
     catalog: ResourceCatalog | None = None,
 ) -> RegenerationSnapshot:
     resources = catalog or load_resource_catalog()
+    coordination = inspect_rebuild_coordination(session_factory, logical_node_id=logical_node_id, scope="subtree")
+    if coordination.status != "clear":
+        root_authoritative_id = _load_authoritative_version_id(session_factory, logical_node_id)
+        record_rebuild_coordination_event(
+            session_factory,
+            logical_node_id=logical_node_id,
+            target_node_version_id=root_authoritative_id,
+            event_kind="live_conflict_blocked",
+            event_status="blocked",
+            scope="subtree",
+            trigger_reason=trigger_reason,
+            details_json=coordination.to_payload(),
+        )
+        raise DaemonConflictError("live runtime state blocks subtree rebuild; inspect rebuild coordination")
     with session_scope(session_factory) as session:
         root_authoritative = _authoritative_version(session, logical_node_id)
         subtree_order = _collect_subtree_authoritative_versions(session, root_authoritative.id)
@@ -196,6 +211,20 @@ def rectify_upstream(
     catalog: ResourceCatalog | None = None,
 ) -> RegenerationSnapshot:
     resources = catalog or load_resource_catalog()
+    coordination = inspect_rebuild_coordination(session_factory, logical_node_id=logical_node_id, scope="upstream")
+    if coordination.status != "clear":
+        root_authoritative_id = _load_authoritative_version_id(session_factory, logical_node_id)
+        record_rebuild_coordination_event(
+            session_factory,
+            logical_node_id=logical_node_id,
+            target_node_version_id=root_authoritative_id,
+            event_kind="live_conflict_blocked",
+            event_status="blocked",
+            scope="upstream",
+            trigger_reason=trigger_reason,
+            details_json=coordination.to_payload(),
+        )
+        raise DaemonConflictError("live runtime state blocks upstream rectification; inspect rebuild coordination")
     subtree_snapshot = regenerate_node_and_descendants(
         session_factory,
         logical_node_id=logical_node_id,
@@ -476,6 +505,11 @@ def _authoritative_version(session: Session, logical_node_id: UUID) -> NodeVersi
     if version is None:
         raise DaemonNotFoundError("authoritative node version not found")
     return version
+
+
+def _load_authoritative_version_id(session_factory: sessionmaker[Session], logical_node_id: UUID) -> UUID:
+    with query_session_scope(session_factory) as session:
+        return _authoritative_version(session, logical_node_id).id
 
 
 def _record_rebuild_event(

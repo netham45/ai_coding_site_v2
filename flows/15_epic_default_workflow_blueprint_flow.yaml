@@ -1,0 +1,29 @@
+id: 15_epic_default_workflow_blueprint_flow
+name: Epic Default Workflow Blueprint Flow
+purpose: Make the current built-in epic workflow ladder an executable contract for compile-time inspection.
+simulation_sources:
+  - simulations/08_epic_default_flow.md
+covers:
+  - compile the built-in epic node kind
+  - inspect the default compiled task ladder for epic
+  - verify the current default ladder stays stable unless changed deliberately
+entry_conditions:
+  - the built-in epic node definition exists
+  - a top-level epic node can be created and compiled
+task_flow:
+  - create an epic node
+  - compile the epic workflow
+  - inspect the compiled task sequence
+  - compare it against the current built-in epic blueprint
+required_subtasks:
+  - create_epic_node
+  - compile_epic_workflow
+  - inspect_epic_task_sequence
+required_capabilities:
+  - node create
+  - workflow compile
+  - workflow current
+expected_tests:
+  - tests/integration/test_flow_yaml_contract_suite.py::test_flow_yaml_cases[15]
+known_limitations:
+  - the current built-in epic ladder is narrower than the older simulation ladder and currently compiles to research_context, execute_node, validate_node, and review_node
