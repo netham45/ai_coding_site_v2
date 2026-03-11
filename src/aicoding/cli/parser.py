@@ -51,6 +51,7 @@ from aicoding.cli.handlers import (
     handle_node_reconcile,
     handle_node_rectify_upstream,
     handle_node_reconcile_children,
+    handle_node_register_layout,
     handle_node_recovery_status,
     handle_node_provider_recovery_status,
     handle_node_respond_to_child_failure,
@@ -116,7 +117,9 @@ from aicoding.cli.handlers import (
     handle_subtask_environment,
     handle_subtask_prompt,
     handle_subtask_progress,
+    handle_subtask_report_command,
     handle_subtask_retry,
+    handle_subtask_succeed,
     handle_summary_history,
     handle_summary_register,
     handle_summary_show,
@@ -212,6 +215,11 @@ def add_node_group(subparsers) -> None:
     materialization_parser = node_subparsers.add_parser("child-materialization", help="Show layout-driven child materialization and scheduling state.")
     materialization_parser.add_argument("--node", required=True)
     materialization_parser.set_defaults(handler=handle_node_materialization, command_path=["node", "child-materialization"])
+
+    register_layout_parser = node_subparsers.add_parser("register-layout", help="Register a generated child layout file by filename for later materialization.")
+    register_layout_parser.add_argument("--node", required=True)
+    register_layout_parser.add_argument("--file", required=True)
+    register_layout_parser.set_defaults(handler=handle_node_register_layout, command_path=["node", "register-layout"])
 
     materialize_children_parser = node_subparsers.add_parser("materialize-children", help="Materialize child nodes from the node's default layout.")
     materialize_children_parser.add_argument("--node", required=True)
@@ -763,6 +771,25 @@ def add_subtask_group(subparsers) -> None:
     complete_parser.add_argument("--summary")
     complete_parser.add_argument("--result-file")
     complete_parser.set_defaults(handler=handle_subtask_progress, command_path=["subtask", "complete"], daemon_path="/api/subtasks/complete")
+
+    succeed_parser = subtask_subparsers.add_parser(
+        "succeed",
+        help="Record a durable summary, complete the current ordinary execution subtask, and route the workflow.",
+    )
+    succeed_parser.add_argument("--node", required=True)
+    succeed_parser.add_argument("--compiled-subtask", required=True)
+    succeed_parser.add_argument("--summary-file", required=True)
+    succeed_parser.set_defaults(handler=handle_subtask_succeed, command_path=["subtask", "succeed"])
+
+    report_command_parser = subtask_subparsers.add_parser(
+        "report-command",
+        help="Record a structured command result and let the daemon route the current command subtask.",
+    )
+    report_command_parser.add_argument("--node", required=True)
+    report_command_parser.add_argument("--compiled-subtask", required=True)
+    report_command_parser.add_argument("--result-file", required=True)
+    report_command_parser.add_argument("--failure-summary-file")
+    report_command_parser.set_defaults(handler=handle_subtask_report_command, command_path=["subtask", "report-command"])
 
     fail_parser = subtask_subparsers.add_parser("fail", help="Mark the current compiled subtask attempt as failed.")
     fail_parser.add_argument("--node", required=True)

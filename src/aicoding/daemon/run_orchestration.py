@@ -236,6 +236,30 @@ class SummaryRegistrationSnapshot:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CompositeStageOutcomeSnapshot:
+    node_id: UUID
+    node_run_id: UUID
+    accepted_compiled_subtask_id: UUID
+    accepted_subtask_type: str
+    recorded_summary_id: UUID
+    recorded_summary_path: str
+    outcome: str
+    progress: RunProgressSnapshot
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "node_id": str(self.node_id),
+            "node_run_id": str(self.node_run_id),
+            "accepted_compiled_subtask_id": str(self.accepted_compiled_subtask_id),
+            "accepted_subtask_type": self.accepted_subtask_type,
+            "recorded_summary_id": str(self.recorded_summary_id),
+            "recorded_summary_path": self.recorded_summary_path,
+            "outcome": self.outcome,
+            "progress": self.progress.to_payload(),
+        }
+
+
 def ensure_node_run_started(
     session_factory: sessionmaker[Session],
     *,
@@ -429,6 +453,8 @@ def load_current_subtask_prompt(session_factory: sessionmaker[Session], *, logic
         stage_context_json = _assemble_stage_context(session, run=run, state=state, version=version, subtask=subtask)
         prompt_text = subtask.prompt_text
         command_text = subtask.command_text
+        if prompt_text is None and command_text:
+            prompt_text = _synthesized_command_subtask_prompt(logical_node_id=logical_node_id, subtask=subtask)
         content = prompt_text or command_text or ""
         prompt_record = record_prompt_delivery(
             session,
@@ -459,6 +485,47 @@ def load_current_subtask_prompt(session_factory: sessionmaker[Session], *, logic
             environment_request_json=dict(subtask.environment_request_json or {}) or None,
             stage_context_json=stage_context_json,
         )
+
+
+def _synthesized_command_subtask_prompt(*, logical_node_id: UUID, subtask: CompiledSubtask) -> str:
+    result_path = "summaries/command_result.json"
+    failure_path = "summaries/command_failure.md"
+    output_instructions = [
+        f"Current subtask key: `{subtask.source_subtask_key}`",
+        f"Current subtask title: `{subtask.title or subtask.source_subtask_key}`",
+        f"Current subtask type: `{subtask.subtask_type}`",
+        "",
+        "Required CLI workflow:",
+        f"1. Resolve the live compiled subtask UUID with `python3 -m aicoding.cli.main subtask current --node {logical_node_id}`.",
+        f"2. Start the attempt with `python3 -m aicoding.cli.main subtask start --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`.",
+        f"3. Inspect the current context with `python3 -m aicoding.cli.main subtask context --node {logical_node_id}`.",
+        "4. Run the current command exactly once and capture its real exit code:",
+        f"   - `{subtask.command_text}`",
+        "5. Write `summaries/command_result.json` containing at least:",
+        '   - `{"exit_code": REAL_EXIT_CODE}`',
+    ]
+    if subtask.subtask_type in {"validate", "run_tests"}:
+        output_instructions.extend(
+            [
+                "6. Report the command result even when the exit code is non-zero, because the daemon-owned validation/testing gate decides pass or fail:",
+                f"   - `python3 -m aicoding.cli.main subtask report-command --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file {result_path}`",
+                "7. If the returned outcome still leaves a current compiled subtask, fetch the next prompt with:",
+                f"   - `python3 -m aicoding.cli.main subtask prompt --node {logical_node_id}`",
+                "8. Do not stop while a later workflow stage is available in the same session.",
+            ]
+        )
+    else:
+        output_instructions.extend(
+            [
+                "6. If the exit code is non-zero, write a bounded failure summary to `summaries/command_failure.md`.",
+                "7. Report the command result and let the daemon route the workflow:",
+                f"   - `python3 -m aicoding.cli.main subtask report-command --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file {result_path} --failure-summary-file {failure_path}`",
+                "8. If the returned outcome is `next_stage`, fetch the next prompt with:",
+                f"   - `python3 -m aicoding.cli.main subtask prompt --node {logical_node_id}`",
+                "9. Do not stop while a later workflow stage is available in the same session.",
+            ]
+        )
+    return "\n".join(output_instructions)
 
 
 def load_current_subtask_context(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> SubtaskContextSnapshot:
@@ -559,6 +626,141 @@ def register_summary(
             content_length=len(content),
             registered_at=registered_at,
         )
+
+
+def succeed_current_subtask(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    compiled_subtask_id: UUID,
+    summary_path: str,
+    content: str,
+    catalog: ResourceCatalog | None = None,
+) -> CompositeStageOutcomeSnapshot:
+    with query_session_scope(session_factory) as session:
+        run, state, version = _load_active_run_bundle(session, logical_node_id)
+        if state.current_compiled_subtask_id != compiled_subtask_id:
+            raise DaemonConflictError("compiled subtask is not the current run cursor")
+        current_subtask = session.get(CompiledSubtask, compiled_subtask_id)
+        if current_subtask is None:
+            raise DaemonNotFoundError("compiled subtask not found")
+        if current_subtask.command_text:
+            raise DaemonConflictError("subtask succeed only supports non-command stages")
+        if current_subtask.subtask_type in {"review", "validate", "run_tests", "build_docs"}:
+            raise DaemonConflictError("subtask succeed does not support this stage type")
+        accepted_subtask_type = current_subtask.subtask_type
+        node_run_id = run.id
+        node_id = version.logical_node_id
+
+    registration = register_summary(
+        session_factory,
+        logical_node_id=logical_node_id,
+        summary_type="subtask",
+        summary_path=summary_path,
+        content=content,
+    )
+    complete_current_subtask(
+        session_factory,
+        logical_node_id=logical_node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        summary=_summary_preview(content),
+    )
+    progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+    return CompositeStageOutcomeSnapshot(
+        node_id=node_id,
+        node_run_id=node_run_id,
+        accepted_compiled_subtask_id=compiled_subtask_id,
+        accepted_subtask_type=accepted_subtask_type,
+        recorded_summary_id=registration.summary_id,
+        recorded_summary_path=summary_path,
+        outcome=_route_outcome(progressed),
+        progress=progressed,
+    )
+
+
+def report_command_subtask(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    compiled_subtask_id: UUID,
+    execution_result_json: dict[str, object],
+    failure_summary: str | None = None,
+    catalog: ResourceCatalog | None = None,
+) -> CompositeStageOutcomeSnapshot:
+    with query_session_scope(session_factory) as session:
+        run, state, version = _load_active_run_bundle(session, logical_node_id)
+        if state.current_compiled_subtask_id != compiled_subtask_id:
+            raise DaemonConflictError("compiled subtask is not the current run cursor")
+        current_subtask = session.get(CompiledSubtask, compiled_subtask_id)
+        if current_subtask is None:
+            raise DaemonNotFoundError("compiled subtask not found")
+        if not current_subtask.command_text:
+            raise DaemonConflictError("subtask report-command only supports command stages")
+        node_run_id = run.id
+        node_id = version.logical_node_id
+        accepted_subtask_type = current_subtask.subtask_type
+
+    exit_code = execution_result_json.get("exit_code")
+    if not isinstance(exit_code, int):
+        raise DaemonConflictError("command result payload must include integer exit_code")
+
+    if accepted_subtask_type in {"validate", "run_tests"}:
+        complete_current_subtask(
+            session_factory,
+            logical_node_id=logical_node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            execution_result_json=execution_result_json,
+            summary=f"Recorded command result for {accepted_subtask_type}.",
+        )
+        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+        return CompositeStageOutcomeSnapshot(
+            node_id=node_id,
+            node_run_id=node_run_id,
+            accepted_compiled_subtask_id=compiled_subtask_id,
+            accepted_subtask_type=accepted_subtask_type,
+            recorded_summary_id=UUID(int=0),
+            recorded_summary_path="summaries/command_result.json",
+            outcome=_route_outcome(progressed),
+            progress=progressed,
+        )
+
+    if exit_code == 0:
+        complete_current_subtask(
+            session_factory,
+            logical_node_id=logical_node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            execution_result_json=execution_result_json,
+            summary="Completed command subtask.",
+        )
+        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+        return CompositeStageOutcomeSnapshot(
+            node_id=node_id,
+            node_run_id=node_run_id,
+            accepted_compiled_subtask_id=compiled_subtask_id,
+            accepted_subtask_type=accepted_subtask_type,
+            recorded_summary_id=UUID(int=0),
+            recorded_summary_path="summaries/command_result.json",
+            outcome=_route_outcome(progressed),
+            progress=progressed,
+        )
+
+    failed = fail_current_subtask(
+        session_factory,
+        logical_node_id=logical_node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        summary=(failure_summary or f"Command subtask failed with exit code {exit_code}."),
+        execution_result_json=execution_result_json,
+    )
+    return CompositeStageOutcomeSnapshot(
+        node_id=node_id,
+        node_run_id=node_run_id,
+        accepted_compiled_subtask_id=compiled_subtask_id,
+        accepted_subtask_type=accepted_subtask_type,
+        recorded_summary_id=UUID(int=0),
+        recorded_summary_path="summaries/command_result.json",
+        outcome=_route_outcome(failed),
+        progress=failed,
+    )
 
 
 def fail_current_subtask(
@@ -1071,6 +1273,24 @@ def _current_subtask_payload(session: Session, compiled_subtask_id: UUID | None)
         "block_on_user_flag": subtask.block_on_user_flag,
         "pause_summary_prompt": subtask.pause_summary_prompt,
     }
+
+
+def _summary_preview(content: str) -> str:
+    for raw_line in content.splitlines():
+        line = raw_line.strip().strip("#*-` ").strip()
+        if line:
+            return line[:160]
+    return "subtask succeeded"
+
+
+def _route_outcome(progress: RunProgressSnapshot) -> str:
+    if progress.run.run_status == "COMPLETE":
+        return "completed"
+    if progress.run.run_status == "FAILED":
+        return "failed"
+    if progress.run.run_status == "PAUSED" or progress.state.lifecycle_state == "PAUSED":
+        return "paused"
+    return "next_stage"
 
 
 def _authoritative_version(session: Session, logical_node_id: UUID) -> NodeVersion:

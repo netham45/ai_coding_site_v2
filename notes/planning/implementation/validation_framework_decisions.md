@@ -12,6 +12,8 @@ F21 implements validation as a durable runtime gate without pulling review/testi
 4. The compiler now preserves the authored first subtask type, prompt, command, checks, outputs, and retry policy for each task instead of flattening everything to `run_prompt`.
 5. The daemon evaluates validation gates during `workflow advance` when the current compiled subtask type is `validate`; a failed required check marks the run failed and blocks completion.
 6. F21 only implements the validation family directly. Review/testing/docs remain later dedicated phases, but the runtime and DB surfaces are now shaped to stay aligned with those later result families.
+7. The default built-in validation hook and `validate_node` command must remain workspace-local. They may not hardcode repo-internal paths like `tests/unit/test_yaml_schemas.py`, because task work can run inside arbitrary user workspaces; the generic built-in command is `python3 -m pytest -q`.
+8. Command-based validation subtasks implicitly mean `command_exit_code == 0` when no explicit validation `checks` are authored. The daemon must not reject a completed validation subtask simply because the built-in hook omitted an explicit check list.
 
 ## Current Validation Coverage
 

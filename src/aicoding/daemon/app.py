@@ -101,6 +101,7 @@ from aicoding.daemon.models import (
     ChildReconciliationResponse,
     ChildResultCollectionResponse,
     ChildFailureCounterCatalogResponse,
+    CompositeStageOutcomeResponse,
     CommitRecordRequest,
     CompiledWorkflowResponse,
     CompileFailureCatalogResponse,
@@ -132,6 +133,8 @@ from aicoding.daemon.models import (
     LiveGitBootstrapRequest,
     LiveGitStatusResponse,
     MaterializationResponse,
+    LayoutRegistrationRequest,
+    LayoutRegistrationResponse,
     MergeConflictCatalogResponse,
     MergeConflictRecordRequest,
     MergeConflictResolveRequest,
@@ -204,8 +207,10 @@ from aicoding.daemon.models import (
     SubtaskAttemptCatalogResponse,
     SubtaskAttemptResponse,
     SubtaskContextResponse,
+    SubtaskReportCommandRequest,
     SubtaskMutationRequest,
     SubtaskPromptResponse,
+    SubtaskSucceedRequest,
     SummaryRegistrationRequest,
     SummaryRegistrationResponse,
     SummaryHistoryCatalogResponse,
@@ -235,6 +240,7 @@ from aicoding.daemon.materialization import (
     inspect_child_reconciliation,
     inspect_materialized_children,
     materialize_layout_children,
+    register_generated_layout,
     reconcile_child_authority,
 )
 from aicoding.daemon.orchestration import apply_authority_mutation, load_authority_state
@@ -266,8 +272,10 @@ from aicoding.daemon.run_orchestration import (
     load_current_subtask_prompt,
     load_current_run_progress,
     load_subtask_attempt,
+    report_command_subtask,
     register_summary,
     retry_current_subtask,
+    succeed_current_subtask,
     start_subtask_attempt,
     sync_paused_run,
     sync_resumed_run,
@@ -379,20 +387,27 @@ def _session_state_response(snapshot) -> SessionStateResponse:
     )
 
 
+def _database_has_required_tables(engine, table_names: tuple[str, ...]) -> bool:
+    inspector = inspect(engine)
+    return all(inspector.has_table(name) for name in table_names)
+
+
 async def _run_idle_nudge_background_loop(app: FastAPI) -> None:
     settings = app.state.settings
     idle_nudge_prompt = app.state.resource_catalog.load_text("prompt_pack_default", "recovery/idle_nudge.md").content
     repeated_nudge_prompt = app.state.resource_catalog.load_text("prompt_pack_default", "recovery/repeated_missed_step.md").content
+    required_tables = ("node_versions", "sessions", "node_runs")
     while True:
         try:
-            auto_nudge_idle_primary_sessions(
-                app.state.db_session_factory,
-                adapter=app.state.session_adapter,
-                poller=app.state.session_poller,
-                max_nudge_count=settings.session.max_nudge_count,
-                idle_nudge_text=idle_nudge_prompt,
-                repeated_nudge_text=repeated_nudge_prompt,
-            )
+            if _database_has_required_tables(app.state.db_engine, required_tables):
+                auto_nudge_idle_primary_sessions(
+                    app.state.db_session_factory,
+                    adapter=app.state.session_adapter,
+                    poller=app.state.session_poller,
+                    max_nudge_count=settings.session.max_nudge_count,
+                    idle_nudge_text=idle_nudge_prompt,
+                    repeated_nudge_text=repeated_nudge_prompt,
+                )
         except Exception:
             logger.exception("Idle nudge background loop iteration failed.")
         await asyncio.sleep(settings.session.poll_interval_seconds)
@@ -400,15 +415,17 @@ async def _run_idle_nudge_background_loop(app: FastAPI) -> None:
 
 async def _run_child_auto_start_background_loop(app: FastAPI) -> None:
     settings = app.state.settings
+    required_tables = ("logical_node_current_versions", "node_children", "hierarchy_nodes")
     while True:
         try:
-            auto_bind_ready_child_runs(
-                app.state.db_session_factory,
-                hierarchy_registry=app.state.hierarchy_registry,
-                resources=app.state.resource_catalog,
-                adapter=app.state.session_adapter,
-                poller=app.state.session_poller,
-            )
+            if _database_has_required_tables(app.state.db_engine, required_tables):
+                auto_bind_ready_child_runs(
+                    app.state.db_session_factory,
+                    hierarchy_registry=app.state.hierarchy_registry,
+                    resources=app.state.resource_catalog,
+                    adapter=app.state.session_adapter,
+                    poller=app.state.session_poller,
+                )
         except Exception:
             logger.exception("Child auto-start background loop iteration failed.")
         await asyncio.sleep(settings.session.poll_interval_seconds)
@@ -1201,6 +1218,48 @@ def create_app() -> FastAPI:
                 output_json=payload.output_json,
                 execution_result_json=payload.execution_result_json,
                 summary=payload.summary,
+            ).to_payload()
+        )
+
+    @app.post(
+        "/api/subtasks/succeed",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=CompositeStageOutcomeResponse,
+    )
+    def succeed_subtask(
+        payload: SubtaskSucceedRequest,
+        session_factory=Depends(get_db_session_factory),
+        resource_catalog=Depends(get_resource_catalog),
+    ) -> CompositeStageOutcomeResponse:
+        return CompositeStageOutcomeResponse.model_validate(
+            succeed_current_subtask(
+                session_factory,
+                logical_node_id=UUID(payload.node_id),
+                compiled_subtask_id=UUID(payload.compiled_subtask_id),
+                summary_path=payload.summary_path,
+                content=payload.content,
+                catalog=resource_catalog,
+            ).to_payload()
+        )
+
+    @app.post(
+        "/api/subtasks/report-command",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=CompositeStageOutcomeResponse,
+    )
+    def report_command(
+        payload: SubtaskReportCommandRequest,
+        session_factory=Depends(get_db_session_factory),
+        resource_catalog=Depends(get_resource_catalog),
+    ) -> CompositeStageOutcomeResponse:
+        return CompositeStageOutcomeResponse.model_validate(
+            report_command_subtask(
+                session_factory,
+                logical_node_id=UUID(payload.node_id),
+                compiled_subtask_id=UUID(payload.compiled_subtask_id),
+                execution_result_json=payload.execution_result_json,
+                failure_summary=payload.failure_summary,
+                catalog=resource_catalog,
             ).to_payload()
         )
 
@@ -2227,6 +2286,23 @@ def create_app() -> FastAPI:
             logical_node_id=UUID(node_id),
         )
         return MaterializationResponse.model_validate(snapshot.to_payload())
+
+    @app.post(
+        "/api/nodes/{node_id}/children/register-layout",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=LayoutRegistrationResponse,
+    )
+    def register_node_child_layout(
+        node_id: str,
+        payload: LayoutRegistrationRequest,
+        session_factory=Depends(get_db_session_factory),
+    ) -> LayoutRegistrationResponse:
+        snapshot = register_generated_layout(
+            session_factory,
+            logical_node_id=UUID(node_id),
+            file_path=payload.file_path,
+        )
+        return LayoutRegistrationResponse.model_validate(snapshot.to_payload())
 
     @app.post(
         "/api/nodes/{node_id}/children/materialize",

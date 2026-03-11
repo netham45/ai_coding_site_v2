@@ -27,7 +27,7 @@ subtasks:
     title: Collect Child Summaries
     description: Gather summaries and outputs from completed child nodes.
     requires: [{subtask_complete: wait_for_child_completion}]
-    prompt: "prompts/runtime/resume_existing_session.md"
+    prompt: "prompts/recovery/resume_existing_session.md"
     outputs: [{type: summary_written, path: summaries/child_rollup.md}]
     retry_policy: {max_attempts: 1, backoff_seconds: 0}
     on_failure: {action: pause_for_user}

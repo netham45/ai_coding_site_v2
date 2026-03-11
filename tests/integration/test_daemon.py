@@ -7,11 +7,12 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
+from aicoding.config import get_settings
 from aicoding.daemon.app import create_app
 from aicoding.daemon.admission import admit_node_run
 from aicoding.daemon.branches import record_final_commit, record_seed_commit
 from aicoding.daemon.errors import DaemonUnavailableError
-from aicoding.daemon.hierarchy import create_hierarchy_node
+from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.live_git import abort_live_merge, bootstrap_live_git_repo, execute_live_merge_children, stage_live_git_change
 from aicoding.daemon.manual_tree import create_manual_node
@@ -50,6 +51,45 @@ def _pause_gate_catalog(tmp_path):
         encoding="utf-8",
     )
     return replace(base_catalog, yaml_overrides_dir=overrides_root)
+
+
+def _write_parent_decomposition_workspace_overrides(workspace_root) -> None:
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    for node_kind in ("epic", "phase", "plan"):
+        (overrides_root / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (overrides_root / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
 
 def _transition_to_complete(db_session_factory, *, node_id: str) -> None:
@@ -144,6 +184,137 @@ def test_daemon_status_reports_background_tasks(app_client) -> None:
     assert payload["schema_compatibility"]["expected_revision"] == "0028_subtask_execution_results"
 
 
+def test_background_loops_skip_cleanly_until_runtime_tables_exist(clean_public_schema, daemon_token: str, caplog, monkeypatch) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    caplog.set_level("ERROR", logger="aicoding.daemon.app")
+
+    with TestClient(create_app()) as client:
+        time.sleep(0.15)
+        response = client.get("/status", headers={"Authorization": "Bearer change-me"})
+
+    assert response.status_code == 200
+    assert "Idle nudge background loop iteration failed." not in caplog.text
+    assert "Child auto-start background loop iteration failed." not in caplog.text
+
+
+def test_register_layout_endpoint_makes_generated_layout_authoritative(migrated_public_schema, tmp_path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = workspace_root / "drafts" / "phase_layout.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path.write_text(
+        "\n".join(
+            [
+                "kind: layout_definition",
+                "id: generated_epic_layout",
+                "name: Generated Epic Layout",
+                "description: Registered generated layout for daemon integration testing.",
+                "children:",
+                "  - id: custom_phase",
+                "    kind: phase",
+                "    tier: 2",
+                "    name: Generated Discovery",
+                "    ordinal: 1",
+                "    goal: Build the generated phase first.",
+                "    rationale: Prove the registration endpoint makes the generated layout authoritative.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    from aicoding.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = client.app.state.db_session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+            parent = create_hierarchy_node(session_factory, registry, kind="epic", title="Layout Parent", prompt="boot prompt")
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            node_id = str(parent.node_id)
+
+            register_response = client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers={"Authorization": "Bearer change-me"},
+                json={"file_path": str(layout_path)},
+            )
+            materialize_response = client.post(
+                f"/api/nodes/{node_id}/children/materialize",
+                headers={"Authorization": "Bearer change-me"},
+                json={},
+            )
+
+            assert register_response.status_code == 200
+            assert register_response.json()["status"] == "registered"
+            assert register_response.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert register_response.json()["child_count"] == 1
+            assert materialize_response.status_code == 200
+            assert materialize_response.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert [item["layout_child_id"] for item in materialize_response.json()["children"]] == ["custom_phase"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_daemon_compile_endpoint_reads_scoped_parent_decomposition_overrides_from_workspace(
+    migrated_public_schema,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    _write_parent_decomposition_workspace_overrides(workspace_root)
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = client.app.state.db_session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+            epic = create_hierarchy_node(session_factory, registry, kind="epic", title="Scoped Epic", prompt="build cat")
+            phase = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="phase",
+                title="Scoped Phase",
+                prompt="build cat",
+                parent_node_id=epic.node_id,
+            )
+            plan = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="plan",
+                title="Scoped Plan",
+                prompt="build cat",
+                parent_node_id=phase.node_id,
+            )
+
+            for node in (epic, phase, plan):
+                initialize_node_version(session_factory, logical_node_id=node.node_id)
+                response = client.post(
+                    f"/api/nodes/{node.node_id}/workflow/compile",
+                    headers={"Authorization": "Bearer change-me"},
+                    json={},
+                )
+
+                assert response.status_code == 200
+                payload = response.json()["compiled_workflow"]
+                assert [item["task_key"] for item in payload["tasks"]] == [
+                    "generate_child_layout",
+                    "review_child_layout",
+                    "spawn_children",
+                ]
+                generate_subtask = next(
+                    subtask
+                    for subtask in payload["tasks"][0]["subtasks"]
+                    if subtask["inserted_by_hook"] is False
+                )
+                assert "node register-layout" in generate_subtask["prompt_text"]
+                assert "--file layouts/generated_layout.yaml" in generate_subtask["prompt_text"]
+    finally:
+        get_settings.cache_clear()
 def test_mutation_endpoint_accepts_valid_payload(app_client, migrated_public_schema) -> None:
     create_response = app_client.post(
         "/api/nodes/create",
@@ -237,6 +408,100 @@ def test_subtask_progress_and_workflow_advance_endpoints_work(app_client, migrat
     chain_response = app_client.get(f"/api/nodes/{node_id}/workflow/chain", headers={"Authorization": "Bearer change-me"})
     assert chain_response.status_code == 200
     assert chain_response.json()["chain"][0]["derived_execution_state"] == "complete"
+
+
+def test_subtask_succeed_endpoint_records_summary_and_routes_workflow(app_client, migrated_public_schema) -> None:
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Composite Success", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        start_response = client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        succeed_response = client.post(
+            "/api/subtasks/succeed",
+            headers={"Authorization": "Bearer change-me"},
+            json={
+                "node_id": node_id,
+                "compiled_subtask_id": current_subtask_id,
+                "summary_path": "summaries/implementation.md",
+                "content": "# Done\n\nImplemented the current slice.\n",
+            },
+        )
+        summary_history = client.get(f"/api/nodes/{node_id}/summary-history", headers={"Authorization": "Bearer change-me"})
+
+        assert start_response.status_code == 200
+        assert succeed_response.status_code == 200
+        assert succeed_response.json()["accepted_compiled_subtask_id"] == current_subtask_id
+        assert succeed_response.json()["accepted_subtask_type"] == "run_prompt"
+        assert succeed_response.json()["recorded_summary_path"] == "summaries/implementation.md"
+        assert succeed_response.json()["outcome"] in {"next_stage", "completed", "paused"}
+        assert succeed_response.json()["progress"]["state"]["last_completed_compiled_subtask_id"] == current_subtask_id
+        assert summary_history.status_code == 200
+        assert summary_history.json()["summaries"][0]["id"] == succeed_response.json()["recorded_summary_id"]
+
+
+def test_subtask_report_command_endpoint_routes_command_stage(app_client, migrated_public_schema) -> None:
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Composite Command", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        with session_scope(session_factory) as session:
+            subtask = session.get(CompiledSubtask, UUID(current_subtask_id))
+            assert subtask is not None
+            subtask.command_text = "printf 'ok'"
+            subtask.subtask_type = "build_docs"
+
+        start_response = client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        report_response = client.post(
+            "/api/subtasks/report-command",
+            headers={"Authorization": "Bearer change-me"},
+            json={
+                "node_id": node_id,
+                "compiled_subtask_id": current_subtask_id,
+                "execution_result_json": {"exit_code": 0, "stdout": "ok"},
+            },
+        )
+
+        assert start_response.status_code == 200
+        assert report_response.status_code == 200
+        assert report_response.json()["accepted_compiled_subtask_id"] == current_subtask_id
+        assert report_response.json()["accepted_subtask_type"] == "build_docs"
+        assert report_response.json()["recorded_summary_path"] == "summaries/command_result.json"
+        assert report_response.json()["outcome"] in {"next_stage", "completed", "paused"}
+        assert report_response.json()["progress"]["state"]["last_completed_compiled_subtask_id"] == current_subtask_id
 
 
 def test_subtask_attempt_result_capture_and_reads_work(app_client, migrated_public_schema) -> None:
@@ -1082,6 +1347,48 @@ def test_session_show_current_reports_binding_metadata_and_stale_recovery(monkey
     assert stale_response.json()["logical_node_id"] == node_id
     assert stale_response.json()["recovery_classification"] == "stale_but_recoverable"
     assert stale_response.json()["recommended_action"] == "resume_existing_session"
+
+
+def test_node_audit_endpoint_accepts_rich_durable_session_payload(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Audit Session Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post(
+            "/api/sessions/bind",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id},
+        )
+
+        audit_response = client.get(
+            f"/api/nodes/{node_id}/audit",
+            headers={"Authorization": "Bearer change-me"},
+        )
+
+    assert bind_response.status_code == 200
+    assert audit_response.status_code == 200
+    payload = audit_response.json()
+    assert payload["node_id"] == node_id
+    assert payload["sessions"]
+    session_payload = payload["sessions"][0]["session"]
+    assert session_payload["session_id"] == bind_response.json()["session_id"]
+    assert session_payload["logical_node_id"] == node_id
+    assert session_payload["node_kind"] == "epic"
+    assert session_payload["node_title"] == "Audit Session Node"
+    assert session_payload["run_status"] == "RUNNING"
+    assert session_payload["screen_state"] is None
+    assert session_payload["recommended_action"] is None
 
 
 def test_session_bind_detects_duplicate_active_primary_sessions(monkeypatch, migrated_public_schema) -> None:

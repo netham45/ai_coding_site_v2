@@ -36,7 +36,6 @@ def test_default_prompt_pack_contains_expected_files(default_prompt_pack_root) -
         "runtime/session_bootstrap.md",
         "recovery/idle_nudge.md",
         "recovery/repeated_missed_step.md",
-        "recovery/recover_interrupted_session.md",
         "recovery/resume_existing_session.md",
         "recovery/replacement_session_bootstrap.md",
     ):

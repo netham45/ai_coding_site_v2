@@ -183,6 +183,8 @@ Implementation staging note:
 - the current implementation now persists one durable primary-session record for an active run in `sessions`
 - bind/attach/resume reuse the existing primary session when safe and create a replacement durable session record when the harness session is missing
 - parent-local child-merge handoff is now also durable: after a staged merge run, the daemon stores `parent_reconcile_context` in the active run cursor so the session can resume or inspect that stage without rebuilding it from memory
+- command-only subtasks may not surface as bare shell text alone; when a compiled subtask has `command_text` but no authored `prompt_text`, `subtask prompt --node <id>` must synthesize a reporting contract that tells the AI to start the attempt, run the command once, persist at least `{"exit_code": ...}` through `subtask report-command`, and continue in the same session when a later stage exists
+- leaf execution prompts may not stop at `workflow advance` alone; after a successful advance they must tell the AI to query `subtask current`, fetch `subtask prompt` for the next stage when one exists, and continue in the same session so quality-gate subtasks receive their full authored or synthesized prompt contract
 
 ---
 
@@ -204,6 +206,9 @@ Implementation staging note:
 - `session show-current` now resolves from the durable primary-session table instead of only the session harness adapter
 - `session show-current` now also returns the bound `logical_node_id`, `node_kind`, `node_title`, current `run_status`, and derived `recovery_classification` so session bootstrap can safely discover what work it is attached to before reading workflow or subtask state
 - session bind/replacement flows now record concrete tmux launch metadata, including the derived session name, launch command, working directory, and tmux attach target
+- compile-time source capture must be idempotent within one compile pass: repeated resolved inputs for the same `(source_group, relative_path, source_role)` may not create duplicate `node_version_source_documents` rows, and sibling-tier `node_definition` overrides present in one workspace must not break compile for a different node kind
+- built-in validation commands used by leaf/runtime workflows must target the active workspace, not repository-internal fixture paths; the default validation gate and validation hook now use `python3 -m pytest -q` rather than repo-specific schema-test paths
+- command-based validation subtasks now default to an implicit `command_exit_code == 0` gate when no explicit `checks` list is authored, so built-in validation hooks can remain concise without breaking `workflow advance`
 
 ### Prompt and context retrieval
 
@@ -237,17 +242,21 @@ Implementation staging note:
 
 - `ai-tool subtask start --compiled-subtask <id>`
 - `ai-tool subtask heartbeat --compiled-subtask <id>`
+- `ai-tool subtask succeed --compiled-subtask <id> --summary-file <path>`
+- `ai-tool subtask report-command --compiled-subtask <id> --result-file result.json`
 - `ai-tool subtask complete --compiled-subtask <id>`
 - `ai-tool subtask fail --compiled-subtask <id> --summary-file <path>`
 
 Implementation staging note:
 
-- the current runtime slice durably supports `subtask start`, `subtask complete`, and `subtask fail`
+- the current runtime slice durably supports `subtask start`, `subtask complete`, `subtask fail`, `subtask succeed`, and `subtask report-command`
 - `subtask fail` now supports the documented file-backed AI path: the CLI reads `--summary-file <path>` locally and sends the file content as the durable failure summary
+- `subtask succeed` now owns the ordinary non-command success path: it registers the durable summary artifact, completes the active attempt, advances the workflow, and returns a routed outcome
+- `subtask report-command` now owns the command-stage reporting path: it records the explicit execution result, completes or fails the attempt as appropriate, advances daemon-owned validation/testing gates, and returns a routed outcome
 - `subtask heartbeat` now persists the latest heartbeat timestamp on both the active attempt output payload and the run cursor metadata; dedicated heartbeat history remains deferred
 - `subtask start` now resolves and persists `execution_environment_json` on the attempt before work proceeds
 - unsupported mandatory isolation requests fail immediately at start time, while unsupported non-mandatory requests are recorded as explicit host fallbacks rather than silently proceeding
-- `--result-file` on `subtask complete` and `subtask fail` is reserved for explicit `execution_result_json` payloads, so the referenced file must be valid JSON rather than a Markdown summary artifact
+- `--result-file` on `subtask complete`, `subtask fail`, and `subtask report-command` is reserved for explicit `execution_result_json` payloads, so the referenced file must be valid JSON rather than a Markdown summary artifact
 
 ### Summary and artifact registration
 
@@ -358,9 +367,16 @@ The cursor must advance only after successful completion and accepted validation
 Implementation staging note:
 
 - the current implementation persists one durable `node_runs` row per admitted active run, one `node_run_state` row for the live cursor, and one `subtask_attempts` row per started attempt
+- ordinary prompt-driven execution stages now have an initial composite success path: `subtask succeed` records the durable summary artifact, completes the active ordinary-stage attempt, advances the workflow, and returns a routed outcome of `next_stage`, `paused`, `completed`, or `failed`
+- command subtasks now have an initial composite reporting path: `subtask report-command` records the structured execution result, completes or fails the current command stage as appropriate, advances when appropriate, and returns the same routed outcome family
+- parent decomposition prompts must use those same composite paths by stage type: layout-generation and other ordinary parent subtasks should teach `subtask succeed`, command-backed parent subtasks should teach `subtask report-command`, and parent review subtasks should continue to use `review run`
+- recovery-oriented built-in tasks should bind to the `recovery/*` prompt family where the runtime owner is session reconstruction or interrupted-run recovery, rather than teaching duplicate `runtime/*` bootstrap/resume variants
+- generic user-pause tasks should bind to one canonical generic pause prompt family, while parent-failure-specific pause prompts remain distinct runtime-owner-specific surfaces
+- composite-enabled prompts must treat routed `completed` as terminal success and stop without issuing extra low-level inspection or workflow-mutation commands against the closed run
+- duplicate prompt assets that are no longer bound by runtime YAML or daemon-owned prompt selection must be removed rather than left as compatibility-only dead files
 - `subtask complete` records attempt completion durably, but the cursor advances only when `workflow advance --node <id>` is called
 - `subtask fail` marks the run `FAILED` and mirrors lifecycle visibility to `FAILED_TO_PARENT`
-- validation gating, retry policy, dedicated heartbeat history, and richer pause/recovery orchestration remain later runtime slices
+- dedicated heartbeat history and richer pause/recovery orchestration remain later runtime slices
 
 ---
 
@@ -662,7 +678,9 @@ Child-node work is different from pushed child sessions.
 Implementation staging note:
 
 - the current implementation materializes children through a daemon-owned `node materialize-children --node <id>` path
-- that path now resolves the effective layout from `layouts/generated_layout.yaml` under the configured workspace root when present, and otherwise falls back to the packaged built-in layout for the parent kind
+- parent-generated child layouts now require an explicit `node register-layout --node <id> --file <path>` handoff before they become authoritative
+- `node materialize-children --node <id>` now resolves the effective layout from the registered `layouts/generated_layout.yaml` when the current workspace file hash matches the latest durable layout-registration event for that node, and otherwise falls back to the packaged built-in layout for the parent kind
+- the packaged layout-generation prompts now tell parent sessions to write `layouts/generated_layout.yaml` and immediately run `node register-layout --node <id> --file layouts/generated_layout.yaml`; runtime does not promise ambient discovery of unregistered generated layouts
 - materialization creates child hierarchy rows, authoritative child versions, compiled workflows, ready lifecycle state, and sibling dependency edges in durable storage
 - parent-visible scheduling is currently exposed as derived classifications (`ready`, `blocked`, `invalid`, `impossible_wait`) rather than a separate schedule snapshot table
 - the daemon now runs a background child auto-start loop that admits `ready` child nodes with trigger reason `auto_run_child` and binds their primary sessions without an operator `node run start` or `session bind`

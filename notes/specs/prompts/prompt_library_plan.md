@@ -36,6 +36,7 @@ Implementation staging note:
 - the frozen render stage is now inspectable directly through `workflow rendering`, so prompt-pack debugging does not require opening the full compiled workflow payload
 - prompt-reference YAML is now schema-validated as its own rigid family: keys must use dotted identifiers, values must be prompt-pack-relative markdown paths, and referenced prompt assets must exist in the packaged prompt roots
 - the execution prompt now treats an explicit node-authored wait-for-nudge instruction as higher priority than the default leaf-task CLI workflow, and it forbids replacing that wait with shell activity such as `sleep`, slash commands, polling, or background terminals; the only allowed pre-nudge output is at most one short visible operator-facing wait-status line that is not durably registered as a summary
+- the packaged layout-generation prompts now include the explicit parent handoff `python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file layouts/generated_layout.yaml` after writing the generated layout, so parent decomposition does not rely on implicit daemon workspace discovery
 
 ---
 
@@ -135,6 +136,9 @@ Requirements:
 Write the layout to:
 <layout_path>
 
+Immediately after writing the approved layout, register it explicitly through:
+`python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file <layout_path>`
+
 Return JSON only:
 {"status":"OK","written_file":"<layout_path>","child_count":<n>}
 or
@@ -170,6 +174,9 @@ Requirements:
 
 Write the layout to:
 <layout_path>
+
+Immediately after writing the approved layout, register it explicitly through:
+`python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file <layout_path>`
 
 Return JSON only:
 {"status":"OK","written_file":"<layout_path>","child_count":<n>}
@@ -210,6 +217,9 @@ Requirements:
 
 Write the layout to:
 <layout_path>
+
+Immediately after writing the approved layout, register it explicitly through:
+`python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file <layout_path>`
 
 Return JSON only:
 {"status":"OK","written_file":"<layout_path>","child_count":<n>}
@@ -383,7 +393,7 @@ Inputs available:
 - changed files
 - validation results
 
-Implementation note: the prompt pack now includes a dedicated validation-failure recovery payload at `recovery/validation_failed.md` so runtime correction text matches durable validation evidence.
+Implementation note: validation-failure correction remains a runtime/quality behavior, but the prompt pack no longer keeps an unbound dedicated `recovery/validation_failed.md` asset unless that surface is rebound by active YAML or daemon selectors.
 - test results
 - summaries
 
@@ -504,17 +514,26 @@ Implementation staging note:
 - the shipped execution prompt now renders the original node request directly into the compiled prompt body through `{{node.prompt}}`, so a live tmux/Codex session receives the user/task request even before it decides whether to fetch extra context
 
 When finished successfully:
-- register any required summary with `ai-tool summary register ...` if needed
-- then complete with `ai-tool subtask complete --compiled-subtask <compiled_subtask_id>`
+- for ordinary leaf execution, write the required summary artifact and use `ai-tool subtask succeed --compiled-subtask <compiled_subtask_id> --summary-file <path>`
+- for synthesized command subtasks, write `summaries/command_result.json` with at least the real `exit_code` and use `ai-tool subtask report-command --compiled-subtask <compiled_subtask_id> --result-file summaries/command_result.json`
+- other lifecycle stages may still use their dedicated composite command or the retained low-level commands until the broader prompt migration lands
 
 Implementation staging note:
 
 - `summary register` is now a real durable command and now writes a dedicated `summaries` history row
+- the packaged leaf execution prompt now uses `subtask succeed` as its ordinary success path, so it no longer teaches the full low-level `summary register -> subtask complete -> workflow advance` ritual for successful implementation stages
+- synthesized command-subtask prompts now use `subtask report-command` as their command-stage reporting path, so they no longer teach `subtask complete` or `subtask fail` plus a separate `workflow advance` as the normal command-subtask happy path
+- the packaged layout-generation prompts now also use `subtask succeed` after successful `node register-layout`, so parent decomposition no longer teaches the low-level success ritual in those authored prompt-pack files
+- Python-rendered parent workflow prompts in `workflows.py` must follow the same rule: ordinary parent subtasks should teach `subtask succeed`, command-backed parent subtasks should teach `subtask report-command`, and review subtasks should stay on `review run`
+- recovery-oriented built-in task bindings should prefer the `recovery/*` prompt family over duplicate `runtime/*` bootstrap/resume variants; the first retarget slice now binds child-summary recovery and interrupted-run recovery to `recovery/resume_existing_session.md` and `recovery/replacement_session_bootstrap.md`
+- generic user-pause bindings should prefer the canonical `pause/*` family over duplicate generic `runtime/*` pause wording; the first retarget slice now binds generic pause tasks to `pause/pause_for_user.md` while keeping `runtime/parent_pause_for_user.md` for parent-specific failure handling
+- composite-enabled execution prompts must treat a routed `completed` outcome as terminal; they should stop without extra low-level probing instead of teaching “confirm the run is finished” follow-up commands
+- now-unbound duplicate runtime prompt files may not remain as dead assets; after prompt-family retargets land, the duplicate `runtime/pause_for_user.md`, `runtime/resume_existing_session.md`, and `runtime/replacement_session_bootstrap.md` files and their authoritative prompt-reference entries must be removed
 - shipped execution prompts must stay within the bounded durable summary taxonomy; implementation-stage summaries currently register as `subtask`, not a separate `implementation` type
 - the active attempt still mirrors registered summary metadata for compatibility with existing runtime and validation flows
-- in the current implementation, completion records the attempt result but does not itself move the cursor
-- the next stage becomes active only after `ai-tool workflow advance --node <node_id>`
-- `--result-file` on `subtask complete` and `subtask fail` is for structured execution-result payloads, so prompt examples should only point it at valid JSON files
+- for non-composite paths, completion records the attempt result but does not itself move the cursor
+- for non-composite paths, the next stage becomes active only after `ai-tool workflow advance --node <node_id>`
+- `--result-file` on `subtask complete`, `subtask fail`, and `subtask report-command` is for structured execution-result payloads, so prompt examples should only point it at valid JSON files
 
 Prompt-delivery note:
 

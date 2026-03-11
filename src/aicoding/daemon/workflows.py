@@ -1179,6 +1179,7 @@ def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCa
                 _materialize_task_subtask_definitions(
                     catalog=catalog,
                     version=version,
+                    node_definition=node_definition,
                     task_key=task_key,
                     task_doc=task_doc,
                     task_source=task_source,
@@ -1533,13 +1534,17 @@ def _runtime_policy_document_from_resolution(override_resolution) -> RuntimePoli
 
 
 def _override_documents_from_source_rows(
-    source_rows: list[tuple[NodeVersionSourceDocument, SourceDocument]]
+    source_rows: list[tuple[NodeVersionSourceDocument, SourceDocument]],
+    *,
+    logical_node_kind: str,
 ) -> list[OverrideSourceSnapshot]:
     documents: list[OverrideSourceSnapshot] = []
     for _, source in source_rows:
         if source.source_group != "yaml_overrides":
             continue
         raw = yaml.safe_load(source.content) or {}
+        if raw.get("target_family") == "node_definition" and str(raw.get("target_id", "")).strip() != logical_node_kind:
+            continue
         documents.append(
             OverrideSourceSnapshot(
                 relative_path=source.relative_path,
@@ -1562,6 +1567,10 @@ def _ensure_compile_sources(
 ) -> bool:
     added_sources = False
     source_rows = _source_rows(session, version.id)
+    captured_keys = {
+        (source.source_group, source.relative_path, link.source_role)
+        for link, source in source_rows
+    }
     next_order = max((link.resolution_order for link, _ in source_rows), default=0) + 10
     prompt_group = "prompt_project" if prompt_pack == "project" else "prompt_pack_default"
     prompt_relative_path = node_definition.main_prompt.removeprefix("prompts/")
@@ -1573,6 +1582,7 @@ def _ensure_compile_sources(
         relative_path=prompt_relative_path,
         source_role="prompt_template",
         resolution_order=next_order,
+        captured_keys=captured_keys,
     )
     added_sources = added_sources or did_add
     for task_key in node_definition.available_tasks:
@@ -1585,6 +1595,7 @@ def _ensure_compile_sources(
             relative_path=task_relative_path,
             source_role="base_definition",
             resolution_order=next_order,
+            captured_keys=captured_keys,
         )
         added_sources = added_sources or did_add
         task_doc = yaml.safe_load(catalog.read_text("yaml_builtin_system", task_relative_path)) or {}
@@ -1602,6 +1613,7 @@ def _ensure_compile_sources(
                 relative_path=environment_relative_path,
                 source_role="policy_definition",
                 resolution_order=next_order,
+                captured_keys=captured_keys,
             )
             added_sources = added_sources or did_add
         for review_ref in task_doc.get("uses_reviews", []):
@@ -1614,6 +1626,7 @@ def _ensure_compile_sources(
                 relative_path=review_relative_path,
                 source_role="base_definition",
                 resolution_order=next_order,
+                captured_keys=captured_keys,
             )
             added_sources = added_sources or did_add
             review_doc = yaml.safe_load(catalog.read_text("yaml_builtin_system", review_relative_path)) or {}
@@ -1627,6 +1640,7 @@ def _ensure_compile_sources(
                     relative_path=review_prompt.removeprefix("prompts/"),
                     source_role="prompt_template",
                     resolution_order=next_order,
+                    captured_keys=captured_keys,
                 )
                 added_sources = added_sources or did_add
         for testing_ref in task_doc.get("uses_testing", []):
@@ -1639,6 +1653,7 @@ def _ensure_compile_sources(
                 relative_path=testing_relative_path,
                 source_role="base_definition",
                 resolution_order=next_order,
+                captured_keys=captured_keys,
             )
             added_sources = added_sources or did_add
     for hook_ref in _normalize_hook_refs([*effective_hook_refs, *list(node_definition.hooks)]):
@@ -1663,6 +1678,7 @@ def _ensure_compile_sources(
             relative_path=hook_ref,
             source_role="base_definition",
             resolution_order=next_order,
+            captured_keys=captured_keys,
         )
         added_sources = added_sources or did_add
         hook_payload = (
@@ -1682,6 +1698,7 @@ def _ensure_compile_sources(
                 relative_path=step.prompt.removeprefix("prompts/"),
                 source_role="prompt_template",
                 resolution_order=next_order,
+                captured_keys=captured_keys,
             )
             added_sources = added_sources or did_add
     layout_relative_path = _default_layout_for_kind(version.node_kind)
@@ -1694,6 +1711,7 @@ def _ensure_compile_sources(
             relative_path=layout_relative_path,
             source_role="base_definition",
             resolution_order=next_order,
+            captured_keys=captured_keys,
         )
         added_sources = added_sources or did_add
     return added_sources
@@ -1708,17 +1726,23 @@ def _ensure_source_document_link(
     relative_path: str,
     source_role: str,
     resolution_order: int,
+    captured_keys: set[tuple[str, str, str]],
 ) -> tuple[int, bool]:
+    key = (source_group, relative_path, source_role)
+    if key in captured_keys:
+        return resolution_order, False
     existing_link = session.execute(
         select(NodeVersionSourceDocument, SourceDocument)
         .join(SourceDocument, NodeVersionSourceDocument.source_document_id == SourceDocument.id)
         .where(NodeVersionSourceDocument.node_version_id == node_version_id)
+        .where(NodeVersionSourceDocument.source_role == source_role)
         .where(SourceDocument.source_group == source_group)
         .where(SourceDocument.relative_path == relative_path)
     ).first()
     if existing_link is not None:
+        captured_keys.add(key)
         return resolution_order, False
-    return _persist_missing_source_document(
+    next_order, did_add = _persist_missing_source_document(
         session,
         node_version_id=node_version_id,
         catalog=catalog,
@@ -1727,6 +1751,9 @@ def _ensure_source_document_link(
         source_role=source_role,
         resolution_order=resolution_order,
     )
+    if did_add:
+        captured_keys.add(key)
+    return next_order, did_add
 
 
 def _persist_missing_source_document(
@@ -1835,7 +1862,7 @@ def _resolve_source_documents(
         ]
         resolution = resolve_overrides(
             build_base_document_index(source_inputs),
-            _override_documents_from_source_rows(source_rows),
+            _override_documents_from_source_rows(source_rows, logical_node_kind=version.node_kind),
             built_in_library_version=BUILTIN_LIBRARY_VERSION,
             allowed_targets=allowed_targets,
         )
@@ -1949,6 +1976,7 @@ def _materialize_task_subtask_definitions(
     *,
     catalog: ResourceCatalog,
     version: NodeVersion,
+    node_definition,
     task_key: str,
     task_doc: dict[str, object],
     task_source: SourceDocument,
@@ -1966,6 +1994,7 @@ def _materialize_task_subtask_definitions(
         _compiled_subtask_definition_from_hook(
             catalog=catalog,
             version=version,
+            node_definition=node_definition,
             task_key=task_key,
             task_doc=task_doc,
             step=step,
@@ -1978,6 +2007,7 @@ def _materialize_task_subtask_definitions(
         _compiled_subtask_definition_from_base(
             catalog=catalog,
             version=version,
+            node_definition=node_definition,
             task_key=task_key,
             task_doc=task_doc,
             task_source=task_source,
@@ -1993,6 +2023,7 @@ def _materialize_task_subtask_definitions(
         _compiled_subtask_definition_from_hook(
             catalog=catalog,
             version=version,
+            node_definition=node_definition,
             task_key=task_key,
             task_doc=task_doc,
             step=step,
@@ -2008,6 +2039,7 @@ def _compiled_subtask_definition_from_base(
     *,
     catalog: ResourceCatalog,
     version: NodeVersion,
+    node_definition,
     task_key: str,
     task_doc: dict[str, object],
     task_source: SourceDocument,
@@ -2023,14 +2055,21 @@ def _compiled_subtask_definition_from_base(
         task_key=task_key,
         source_subtask_key=str(base_subtask.get("id", "main")),
     )
+    prompt_value = _effective_subtask_prompt_value(
+        version=version,
+        node_definition=node_definition,
+        task_key=task_key,
+        source_subtask_key=str(base_subtask.get("id", "main")),
+        prompt_value=base_subtask.get("prompt"),
+    )
     render_context = _build_subtask_render_context(
         version=version,
         task_key=task_key,
         task_doc=task_doc,
         source_subtask_key=str(base_subtask.get("id", "main")),
         prompt_pack=prompt_pack,
-        prompt_relative_path=None if base_subtask.get("prompt") is None else _render_source_relative_path(
-            prompt_value=base_subtask.get("prompt"),
+        prompt_relative_path=None if prompt_value is None else _render_source_relative_path(
+            prompt_value=prompt_value,
             task_key=task_key,
             source_subtask_key=str(base_subtask.get("id", "main")),
         ),
@@ -2040,9 +2079,10 @@ def _compiled_subtask_definition_from_base(
     prompt_info = _resolve_prompt_payload(
         catalog=catalog,
         version=version,
+        node_definition=node_definition,
         task_key=task_key,
         source_subtask_key=str(base_subtask.get("id", "main")),
-        prompt_value=base_subtask.get("prompt"),
+        prompt_value=prompt_value,
         task_doc=task_doc,
         prompt_pack=prompt_pack,
         prompt_group=prompt_group,
@@ -2064,12 +2104,24 @@ def _compiled_subtask_definition_from_base(
         context=render_context,
         field_name=f"{task_key}.{base_subtask.get('id', 'main')}.pause_summary_prompt",
     )
+    prompt_text = prompt_info["prompt_text"]
+    command_text = None if command_render is None else command_render.rendered_text
+    if version.node_kind in {"epic", "phase", "plan"}:
+        prompt_text = _wrap_parent_workflow_subtask_prompt(
+            version=version,
+            task_key=task_key,
+            source_subtask_key=f"{task_key}.{base_subtask.get('id', 'main')}",
+            title=str(base_subtask.get("title", _humanize(task_key))),
+            subtask_type=str(base_subtask.get("type", "run_prompt")),
+            prompt_text=prompt_text,
+            command_text=command_text,
+        )
     return {
         "source_subtask_key": f"{task_key}.{base_subtask.get('id', 'main')}",
         "subtask_type": str(base_subtask.get("type", "run_prompt")),
         "title": base_subtask.get("title", _humanize(task_key)),
-        "prompt_text": prompt_info["prompt_text"],
-        "command_text": None if command_render is None else command_render.rendered_text,
+        "prompt_text": prompt_text,
+        "command_text": command_text,
         "environment_policy_ref": None if environment_request is None else environment_request["policy_ref"],
         "environment_request_json": environment_request,
         "retry_policy_json": {
@@ -2098,6 +2150,7 @@ def _compiled_subtask_definition_from_hook(
     *,
     catalog: ResourceCatalog,
     version: NodeVersion,
+    node_definition,
     task_key: str,
     task_doc: dict[str, object],
     step: HookExpansionStep,
@@ -2133,6 +2186,7 @@ def _compiled_subtask_definition_from_hook(
     prompt_info = _resolve_prompt_payload(
         catalog=catalog,
         version=version,
+        node_definition=node_definition,
         task_key=task_key,
         source_subtask_key=step.source_subtask_key,
         prompt_value=step.prompt_path,
@@ -2147,12 +2201,24 @@ def _compiled_subtask_definition_from_hook(
         context=render_context,
         field_name=f"{step.source_subtask_key}.command",
     )
+    prompt_text = prompt_info["prompt_text"]
+    command_text = None if command_render is None else command_render.rendered_text
+    if version.node_kind in {"epic", "phase", "plan"}:
+        prompt_text = _wrap_parent_workflow_subtask_prompt(
+            version=version,
+            task_key=task_key,
+            source_subtask_key=step.source_subtask_key,
+            title=_humanize(step.source_subtask_key.split(".")[-1]),
+            subtask_type=step.subtask_type,
+            prompt_text=prompt_text,
+            command_text=command_text,
+        )
     return {
         "source_subtask_key": step.source_subtask_key,
         "subtask_type": step.subtask_type,
         "title": _humanize(step.source_subtask_key.split(".")[-1]),
-        "prompt_text": prompt_info["prompt_text"],
-        "command_text": None if command_render is None else command_render.rendered_text,
+        "prompt_text": prompt_text,
+        "command_text": command_text,
         "environment_policy_ref": None,
         "environment_request_json": None,
         "retry_policy_json": {
@@ -2181,6 +2247,7 @@ def _resolve_prompt_payload(
     *,
     catalog: ResourceCatalog,
     version: NodeVersion,
+    node_definition,
     task_key: str,
     source_subtask_key: str,
     prompt_value: object,
@@ -2259,6 +2326,23 @@ def _resolve_prompt_payload(
         ),
         "render_result": render_result,
     }
+
+
+def _effective_subtask_prompt_value(
+    *,
+    version: NodeVersion,
+    node_definition,
+    task_key: str,
+    source_subtask_key: str,
+    prompt_value: object,
+) -> object:
+    if (
+        task_key == "generate_child_layout"
+        and source_subtask_key.endswith("render_layout_prompt")
+        and version.node_kind in {"epic", "phase", "plan"}
+    ):
+        return str(node_definition.main_prompt)
+    return prompt_value
 
 
 def _resolve_environment_request(
@@ -2566,6 +2650,83 @@ def _render_prompt(
     )
 
 
+def _wrap_parent_workflow_subtask_prompt(
+    *,
+    version: NodeVersion,
+    task_key: str,
+    source_subtask_key: str,
+    title: str,
+    subtask_type: str,
+    prompt_text: str | None,
+    command_text: str | None,
+) -> str:
+    body = "" if prompt_text is None else prompt_text.strip()
+    if command_text is not None:
+        command_block = (
+            "Execute this command for the current subtask after starting the attempt and inspecting context:\n"
+            f"`{command_text}`"
+        )
+        body = f"{body}\n\n{command_block}".strip() if body else command_block
+    success_block = (
+        "5. On success:\n"
+        "   - write a concise summary to `summaries/parent_subtask.md`\n"
+        f"   - record success and let the daemon route the workflow with `python3 -m aicoding.cli.main subtask succeed --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/summaries/parent_subtask.md`\n"
+    )
+    continuation_block = (
+        "7. After a successful completion, do not stop while the parent node still has pending workflow stages.\n"
+        "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
+        f"   - if the routed outcome is `next_stage`, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+        "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
+    )
+    if command_text is not None:
+        success_block = (
+            "5. On command completion:\n"
+            "   - write `summaries/command_result.json` containing at least the real exit code\n"
+            "   - if the command failed, write a bounded failure summary to `summaries/parent_subtask_failure.md`\n"
+            f"   - report the command result and let the daemon route the workflow with `python3 -m aicoding.cli.main subtask report-command --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file $(pwd)/summaries/command_result.json --failure-summary-file $(pwd)/summaries/parent_subtask_failure.md`\n"
+        )
+        continuation_block = (
+            "7. After reporting the command result, do not stop while the parent node still has pending workflow stages.\n"
+            "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
+            f"   - if the routed outcome is `next_stage`, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+            "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
+        )
+    if subtask_type == "review":
+        success_block = (
+            "5. On success:\n"
+            "   - decide whether the layout passes, needs revision, or fails\n"
+            "   - optionally write structured findings to `reviews/findings.json`\n"
+            "   - optionally write structured criteria results to `reviews/criteria.json`\n"
+            f"   - submit the review with `python3 -m aicoding.cli.main review run --node {version.logical_node_id} --status pass --summary \"Approved the parent layout review.\"`\n"
+            "   - if the review should revise or fail, change `--status pass` to `--status revise` or `--status fail` and use a bounded summary instead\n"
+            "   - do not call `subtask complete` or `workflow advance` after `review run`; that command records and routes the review outcome itself\n"
+        )
+        continuation_block = (
+            "7. After a successful review submission, do not stop while the parent node still has pending workflow stages.\n"
+            f"   - run `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}`\n"
+            f"   - if the node still has a current compiled subtask, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+            f"   - repeat until `python3 -m aicoding.cli.main node child-materialization --node {version.logical_node_id}` shows created or materialized children, or the node run is no longer active\n\n"
+        )
+    return (
+        f"You are executing parent workflow node `{version.logical_node_id}`.\n"
+        f"Current task key: `{task_key}`\n"
+        f"Current subtask key: `{source_subtask_key}`\n"
+        f"Current subtask title: `{title}`\n"
+        f"Current subtask type: `{subtask_type}`\n\n"
+        "Required CLI workflow:\n"
+        f"1. Resolve the live compiled subtask UUID with `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}`.\n"
+        f"2. Start the attempt with `python3 -m aicoding.cli.main subtask start --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`.\n"
+        f"3. Inspect the current context with `python3 -m aicoding.cli.main subtask context --node {version.logical_node_id}`.\n"
+        "4. Execute the current subtask instructions below.\n"
+        f"{success_block}"
+        "6. If blocked:\n"
+        "   - write the blocker summary to `summaries/parent_subtask_failure.md`\n"
+        f"   - fail the current subtask with `python3 -m aicoding.cli.main subtask fail --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/summaries/parent_subtask_failure.md`\n"
+        f"{continuation_block}"
+        f"Current subtask instructions:\n{body}\n"
+    )
+
+
 def _render_hook_prompt(
     *,
     render_result,
@@ -2675,6 +2836,8 @@ def _build_subtask_render_context(
             "node_tier": version.tier,
             "node_title": version.title,
             "node_prompt": version.prompt.strip(),
+            "user_request": version.prompt.strip(),
+            "acceptance_criteria": "" if version.description is None else version.description.strip(),
             "node_version": version.version_number,
             "task_key": task_key,
             "task_name": str(task_doc.get("name", _humanize(task_key))),

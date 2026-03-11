@@ -264,7 +264,15 @@ def _current_validation_subtask(session: Session, node_run_id: UUID) -> Compiled
 def _compiled_checks(subtask: CompiledSubtask) -> list[dict[str, object]]:
     payload = dict(subtask.retry_policy_json or {})
     checks = payload.get("checks", [])
-    return [dict(item) for item in checks if isinstance(item, dict)]
+    compiled_checks = [dict(item) for item in checks if isinstance(item, dict)]
+    if compiled_checks:
+        return compiled_checks
+    # Validation subtasks commonly run a command and rely on its exit status as
+    # the gate outcome. If no explicit checks were authored, default to the
+    # standard zero-exit-code contract rather than failing the runtime.
+    if subtask.command_text:
+        return [{"type": "command_exit_code", "exit_code": 0}]
+    return []
 
 
 def _latest_attempt(session: Session, node_run_id: UUID, compiled_subtask_id: UUID) -> SubtaskAttempt | None:

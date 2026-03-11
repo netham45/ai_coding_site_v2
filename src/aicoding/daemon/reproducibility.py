@@ -378,6 +378,10 @@ def _list_sessions_with_events_for_run(session_factory: sessionmaker[Session], *
 
 
 def _session_audit_snapshot(session: Session, row: Session) -> SessionAuditSnapshot:
+    version = session.get(NodeVersion, row.node_version_id)
+    if version is None:
+        raise DaemonNotFoundError("node version not found")
+    run = session.get(NodeRun, row.node_run_id) if row.node_run_id is not None else None
     events = session.execute(
         select(SessionEvent).where(SessionEvent.session_id == row.id).order_by(SessionEvent.created_at, SessionEvent.id)
     ).scalars().all()
@@ -395,8 +399,12 @@ def _session_audit_snapshot(session: Session, row: Session) -> SessionAuditSnaps
     return SessionAuditSnapshot(
         session=DurableSessionSnapshot(
             session_id=row.id,
+            logical_node_id=version.logical_node_id,
             node_version_id=row.node_version_id,
             node_run_id=row.node_run_id,
+            node_kind=version.node_kind,
+            node_title=version.title,
+            run_status=None if run is None else run.run_status,
             session_role=row.session_role,
             provider=row.provider,
             provider_session_id=row.provider_session_id,
@@ -412,6 +420,8 @@ def _session_audit_snapshot(session: Session, row: Session) -> SessionAuditSnaps
             pane_text=None,
             idle_seconds=None,
             in_alt_screen=None,
+            tmux_session_exists=None,
+            attach_command=None,
             recovery_classification=None,
         ),
         events=event_snapshots,

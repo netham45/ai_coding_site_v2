@@ -220,6 +220,8 @@ But the durable model should look the same either way.
 Implementation staging note:
 
 - the current daemon now runs a background child auto-start loop
+- parent-generated child layouts are no longer treated as authoritative merely because `layouts/generated_layout.yaml` exists in the workspace
+- the current runtime requires an explicit parent-side registration step before the generated layout becomes authoritative for materialization
 - after child materialization, the daemon scans authoritative parent-child edges, evaluates readiness from durable child state, and auto-starts only children that are actually `ready`
 - the current implementation admits the child run with trigger reason `auto_run_child` and binds a primary session immediately
 - dependency-blocked siblings remain unstarted until their dependencies clear

@@ -36,6 +36,7 @@ Read these note files before implementing or revising this phase:
 
 - Database: prove durable node/version/run/session/summary history through the full hierarchy.
 - CLI: prove the real flow through workflow start, session binding, subtask execution, materialization, inspection, and final verification commands.
+- CLI: prove the real flow through workflow start, session binding, subtask execution, generated child-plan registration by filename, materialization, inspection, and final verification commands.
 - Daemon: prove the live orchestration path across parent decomposition and leaf execution.
 - YAML: use the scoped decomposition configuration from the prior phase.
 - Prompts: use the real parent and leaf prompt chain, not synthetic injected summaries or direct DB shortcuts.
@@ -49,6 +50,7 @@ Read these note files before implementing or revising this phase:
 
 1. Create the minimal sample workspace and success checks for a basic `cat` recreation.
 2. Define the durable checkpoints to assert at epic, phase, plan, and task depth.
+3. Freeze the specific parent registration checkpoints: generated file exists, registration command is issued, durable registered child-plan state exists, then child materialization occurs.
 
 Exit criteria:
 
@@ -73,4 +75,5 @@ Exit criteria:
 
 - The real automated full-tree `cat` narrative passes through the intended runtime boundaries.
 - The resulting proof is durable and inspectable through CLI/daemon surfaces.
+- The E2E proves explicit parent registration of generated child plans/layouts rather than implicit filesystem discovery.
 - Notes, logs, and audit/checklist surfaces match the real E2E boundary honestly.

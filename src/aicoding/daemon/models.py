@@ -29,6 +29,20 @@ class ReviewRunRequest(AICodingModel):
     criteria_json: list[dict[str, object]] | dict[str, object] | None = None
 
 
+class SubtaskSucceedRequest(AICodingModel):
+    node_id: str
+    compiled_subtask_id: str
+    summary_path: str
+    content: str
+
+
+class SubtaskReportCommandRequest(AICodingModel):
+    node_id: str
+    compiled_subtask_id: str
+    execution_result_json: dict[str, object]
+    failure_summary: str | None = None
+
+
 class MutationAcceptedResponse(AICodingModel):
     status: str
     command: str
@@ -342,6 +356,22 @@ class MaterializationResponse(AICodingModel):
     ready_child_count: int
     blocked_child_count: int
     children: list[MaterializedChildResponse]
+
+
+class LayoutRegistrationRequest(AICodingModel):
+    file_path: str
+
+
+class LayoutRegistrationResponse(AICodingModel):
+    node_id: str
+    node_version_id: str
+    status: str
+    source_path: str
+    registered_path: str
+    layout_relative_path: str
+    layout_hash: str
+    child_count: int
+    workflow_event_id: str
 
 
 class ChildReconciliationRequest(AICodingModel):
@@ -915,6 +945,17 @@ class RunProgressResponse(AICodingModel):
     latest_attempt: SubtaskAttemptResponse | None = None
 
 
+class CompositeStageOutcomeResponse(AICodingModel):
+    node_id: str
+    node_run_id: str
+    accepted_compiled_subtask_id: str
+    accepted_subtask_type: str
+    recorded_summary_id: str
+    recorded_summary_path: str
+    outcome: str
+    progress: RunProgressResponse
+
+
 class SubtaskAttemptCatalogResponse(AICodingModel):
     node_id: str
     node_run_id: str
@@ -1245,8 +1286,12 @@ class WorkflowEventResponse(AICodingModel):
 
 class HistoricalSessionResponse(AICodingModel):
     session_id: str
+    logical_node_id: str | None = None
     node_version_id: str
     node_run_id: str | None = None
+    node_kind: str | None = None
+    node_title: str | None = None
+    run_status: str | None = None
     session_role: str
     provider: str
     provider_session_id: str | None = None
@@ -1264,7 +1309,9 @@ class HistoricalSessionResponse(AICodingModel):
     in_alt_screen: bool | None = None
     tmux_session_exists: bool | None = None
     attach_command: str | None = None
+    screen_state: dict[str, object] | None = None
     recovery_classification: str | None = None
+    recommended_action: str | None = None
 
 
 class SessionAuditResponse(AICodingModel):

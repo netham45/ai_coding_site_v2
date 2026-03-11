@@ -19,7 +19,7 @@ subtasks:
     type: validate
     title: Run Validation Gate
     description: Run the built-in validation gate checks.
-    command: "python3 -m pytest tests/unit/test_yaml_schemas.py -q"
+    command: "python3 -m pytest -q"
     checks:
       - {type: command_exit_code, exit_code: 0}
     retry_policy: {max_attempts: 1, backoff_seconds: 0}

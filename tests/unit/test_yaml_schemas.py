@@ -273,6 +273,36 @@ def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
             "rectification subtasks must be unique",
         ),
         (
+            "rectification/missing_trigger.yaml",
+            "\n".join(
+                [
+                    "kind: rectification_definition",
+                    "id: missing_trigger",
+                    "name: Missing Trigger",
+                    "description: Empty trigger.",
+                    "trigger: ''",
+                    "entry_task: reconcile_merge_conflict",
+                    "subtasks: [reset_to_seed]",
+                ]
+            ),
+            "trigger must not be empty",
+        ),
+        (
+            "rectification/missing_entry_task.yaml",
+            "\n".join(
+                [
+                    "kind: rectification_definition",
+                    "id: missing_entry_task",
+                    "name: Missing Entry Task",
+                    "description: Empty entry task.",
+                    "trigger: merge_conflict",
+                    "entry_task: ''",
+                    "subtasks: [reset_to_seed]",
+                ]
+            ),
+            "entry_task must not be empty",
+        ),
+        (
             "runtime/bad_runtime.yaml",
             "\n".join(
                 [
@@ -286,6 +316,88 @@ def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
                 ]
             ),
             "runtime definitions must declare at least one command",
+        ),
+        (
+            "environments/bad_environment_mode.yaml",
+            "\n".join(
+                [
+                    "kind: environment_policy_definition",
+                    "id: bad_environment_mode",
+                    "isolation_mode: imaginary_mode",
+                    "allow_network: false",
+                    "mandatory: false",
+                ]
+            ),
+            "unsupported isolation_mode",
+        ),
+        (
+            "environments/missing_profile.yaml",
+            "\n".join(
+                [
+                    "kind: environment_policy_definition",
+                    "id: missing_profile",
+                    "isolation_mode: custom_profile",
+                    "allow_network: false",
+                    "mandatory: true",
+                ]
+            ),
+            "runtime_profile is required",
+        ),
+        (
+            "environments/spurious_profile.yaml",
+            "\n".join(
+                [
+                    "kind: environment_policy_definition",
+                    "id: spurious_profile",
+                    "isolation_mode: none",
+                    "allow_network: true",
+                    "runtime_profile: should_not_be_here",
+                    "mandatory: false",
+                ]
+            ),
+            "runtime_profile is only valid",
+        ),
+        (
+            "validations/missing_exit_code.yaml",
+            "\n".join(
+                [
+                    "kind: validation_definition",
+                    "id: missing_exit_code",
+                    "name: Missing Exit Code",
+                    "description: Missing exit code for command validation.",
+                    "check:",
+                    "  type: command_exit_code",
+                ]
+            ),
+            "exit_code is required",
+        ),
+        (
+            "validations/missing_schema_name.yaml",
+            "\n".join(
+                [
+                    "kind: validation_definition",
+                    "id: missing_schema_name",
+                    "name: Missing Schema Name",
+                    "description: Missing schema name for yaml schema validation.",
+                    "check:",
+                    "  type: yaml_schema",
+                ]
+            ),
+            "schema is required",
+        ),
+        (
+            "validations/missing_status_value.yaml",
+            "\n".join(
+                [
+                    "kind: validation_definition",
+                    "id: missing_status_value",
+                    "name: Missing Status Value",
+                    "description: Missing status value for AI status validation.",
+                    "check:",
+                    "  type: ai_json_status",
+                ]
+            ),
+            "value is required",
         ),
         (
             "policies/bad_runtime_policy.yaml",

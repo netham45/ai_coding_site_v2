@@ -13,7 +13,7 @@ subtasks:
     type: write_summary
     title: Pause For User
     description: Write a pause summary and request guidance.
-    prompt: "prompts/runtime/pause_for_user.md"
+    prompt: "prompts/pause/pause_for_user.md"
     block_on_user_flag: user_guidance_required
     outputs: [{type: summary_written, path: summaries/pause.md}]
     retry_policy: {max_attempts: 1, backoff_seconds: 0}

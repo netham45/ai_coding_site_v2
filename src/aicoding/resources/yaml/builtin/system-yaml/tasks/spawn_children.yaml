@@ -18,7 +18,7 @@ subtasks:
     type: spawn_child_node
     title: Spawn Child Nodes
     description: Create child nodes from the accepted compiled layout.
-    command: "ai-tool node create --from-layout layouts/generated_layout.yaml"
+    command: "python3 -m aicoding.cli.main node materialize-children --node {{node_id}}"
     outputs: [{type: entity_index_updated}]
     retry_policy: {max_attempts: 1, backoff_seconds: 0}
     on_failure: {action: fail_to_parent}

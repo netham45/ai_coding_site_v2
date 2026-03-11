@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from uuid import UUID
 
+from aicoding.config import get_settings
+from fastapi.testclient import TestClient
+from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+from aicoding.daemon.app import create_app
+from aicoding.daemon.versioning import initialize_node_version
 from aicoding.db.models import CompiledSubtask, Session as DurableSession
 from aicoding.db.session import create_session_factory, session_scope
+from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
+from tests.helpers.daemon import DaemonBridgeClient
 
 
 def test_session_bind_and_show_current_round_trip(cli_runner, daemon_bridge_client, monkeypatch, migrated_public_schema) -> None:
@@ -946,6 +954,92 @@ def test_cli_review_run_show_and_results_round_trip(cli_runner, daemon_bridge_cl
     assert results_result.json()["results"][0]["review_definition_id"] == "node_against_requirements"
 
 
+def test_cli_subtask_succeed_round_trip(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch, tmp_path) -> None:
+    with TestClient(create_app()) as client:
+        factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(factory, registry)
+        bridge = DaemonBridgeClient(client=client, token="change-me")
+        monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: bridge)
+
+        create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Composite CLI", "--prompt", "boot prompt"])
+        node_id = create_result.json()["node_id"]
+        assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+        assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+        assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+        current_payload = cli_runner(["subtask", "current", "--node", node_id]).json()
+        current_subtask = current_payload["state"]["current_compiled_subtask_id"]
+        summary_path = tmp_path / "implementation.md"
+        summary_path.write_text("# Implemented\n\nComposite CLI path succeeded.\n", encoding="utf-8")
+
+        start_result = cli_runner(["subtask", "start", "--node", node_id, "--compiled-subtask", current_subtask])
+        succeed_result = cli_runner(
+            ["subtask", "succeed", "--node", node_id, "--compiled-subtask", current_subtask, "--summary-file", str(summary_path)]
+        )
+        summary_history_result = cli_runner(["summary", "history", "--node", node_id])
+
+        assert start_result.exit_code == 0
+        assert succeed_result.exit_code == 0
+        assert succeed_result.json()["accepted_compiled_subtask_id"] == current_subtask
+        assert succeed_result.json()["recorded_summary_path"] == str(summary_path)
+        assert succeed_result.json()["outcome"] in {"next_stage", "completed", "paused"}
+        assert succeed_result.json()["progress"]["state"]["last_completed_compiled_subtask_id"] == current_subtask
+        assert summary_history_result.exit_code == 0
+        assert summary_history_result.json()["summaries"][0]["id"] == succeed_result.json()["recorded_summary_id"]
+
+
+def test_cli_subtask_report_command_round_trip(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch, tmp_path) -> None:
+    with TestClient(create_app()) as client:
+        factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(factory, registry)
+        bridge = DaemonBridgeClient(client=client, token="change-me")
+        monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: bridge)
+
+        create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Composite Command CLI", "--prompt", "boot prompt"])
+        node_id = create_result.json()["node_id"]
+        assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+        assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+        assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+        current_payload = cli_runner(["subtask", "current", "--node", node_id]).json()
+        current_subtask = current_payload["state"]["current_compiled_subtask_id"]
+
+        with session_scope(factory) as session:
+            subtask = session.get(CompiledSubtask, UUID(current_subtask))
+            assert subtask is not None
+            subtask.command_text = "printf 'ok'"
+            subtask.subtask_type = "build_docs"
+
+        result_path = tmp_path / "command_result.json"
+        result_path.write_text('{"exit_code": 0, "stdout": "ok"}', encoding="utf-8")
+
+        start_result = cli_runner(["subtask", "start", "--node", node_id, "--compiled-subtask", current_subtask])
+        report_result = cli_runner(
+            [
+                "subtask",
+                "report-command",
+                "--node",
+                node_id,
+                "--compiled-subtask",
+                current_subtask,
+                "--result-file",
+                str(result_path),
+            ]
+        )
+
+        assert start_result.exit_code == 0
+        assert report_result.exit_code == 0
+        assert report_result.json()["accepted_compiled_subtask_id"] == current_subtask
+        assert report_result.json()["accepted_subtask_type"] == "build_docs"
+        assert report_result.json()["recorded_summary_path"] == "summaries/command_result.json"
+        assert report_result.json()["outcome"] in {"next_stage", "completed", "paused"}
+        assert report_result.json()["progress"]["state"]["last_completed_compiled_subtask_id"] == current_subtask
+
+
 def _testing_catalog(tmp_path):
     base_catalog = load_resource_catalog()
     project_root = tmp_path / "project"
@@ -1294,6 +1388,129 @@ def test_cli_child_materialization_round_trip(cli_runner, daemon_bridge_client, 
     assert all("blockers" in item for item in materialize_result.json()["children"])
     assert after_result.exit_code == 0
     assert after_result.json()["status"] == "materialized"
+
+
+def test_cli_register_layout_round_trip(
+    cli_runner,
+    migrated_public_schema,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = workspace_root / "drafts" / "phase_layout.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path.write_text(
+        "\n".join(
+            [
+                "kind: layout_definition",
+                "id: generated_epic_layout",
+                "name: Generated Epic Layout",
+                "description: Registered generated layout for CLI integration testing.",
+                "children:",
+                "  - id: custom_phase",
+                "    kind: phase",
+                "    tier: 2",
+                "    name: Generated Discovery",
+                "    ordinal: 1",
+                "    goal: Build the generated phase first.",
+                "    rationale: Prove the CLI registration flow makes the generated layout authoritative.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN_FILE", str(tmp_path / ".runtime" / "daemon.token"))
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            bridge = DaemonBridgeClient(client=client, token="change-me")
+            monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: bridge)
+
+            factory = client.app.state.db_session_factory
+            catalog = load_resource_catalog()
+            registry = load_hierarchy_registry(catalog)
+            sync_hierarchy_definitions(factory, registry)
+            parent = create_hierarchy_node(factory, registry, kind="epic", title="CLI Registered Parent", prompt="top prompt")
+            initialize_node_version(factory, logical_node_id=parent.node_id)
+            node_id = str(parent.node_id)
+
+            register_result = cli_runner(["node", "register-layout", "--node", node_id, "--file", str(layout_path)])
+            materialize_result = cli_runner(["node", "materialize-children", "--node", node_id])
+            after_result = cli_runner(["node", "child-materialization", "--node", node_id])
+
+            assert register_result.exit_code == 0
+            assert register_result.json()["status"] == "registered"
+            assert register_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert register_result.json()["child_count"] == 1
+            assert materialize_result.exit_code == 0
+            assert materialize_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert [item["layout_child_id"] for item in materialize_result.json()["children"]] == ["custom_phase"]
+            assert after_result.exit_code == 0
+            assert after_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_cli_register_layout_accepts_workspace_relative_file_path(
+    cli_runner,
+    migrated_public_schema,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = workspace_root / "layouts" / "generated_layout.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path.write_text(
+        "\n".join(
+            [
+                "kind: layout_definition",
+                "id: generated_epic_layout",
+                "name: Generated Epic Layout",
+                "description: Registered generated layout for CLI integration testing.",
+                "children:",
+                "  - id: custom_phase",
+                "    kind: phase",
+                "    tier: 1",
+                "    name: Generated Discovery",
+                "    ordinal: 1",
+                "    goal: Build the generated phase first.",
+                "    rationale: Prove the CLI relative-path registration flow works from the workspace cwd.",
+                "    dependencies: []",
+                "    acceptance:",
+                "      - The generated phase exists.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN_FILE", str(tmp_path / ".runtime" / "daemon.token"))
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            bridge = DaemonBridgeClient(client=client, token="change-me")
+            monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: bridge)
+
+            factory = client.app.state.db_session_factory
+            catalog = load_resource_catalog()
+            registry = load_hierarchy_registry(catalog)
+            sync_hierarchy_definitions(factory, registry)
+            parent = create_hierarchy_node(factory, registry, kind="epic", title="CLI Relative Registered Parent", prompt="top prompt")
+            initialize_node_version(factory, logical_node_id=parent.node_id)
+            node_id = str(parent.node_id)
+
+            monkeypatch.chdir(workspace_root)
+            register_result = cli_runner(["node", "register-layout", "--node", node_id, "--file", "layouts/generated_layout.yaml"])
+
+            assert register_result.exit_code == 0
+            assert register_result.json()["status"] == "registered"
+            assert register_result.json()["source_path"] == str(layout_path.resolve())
+            assert register_result.json()["registered_path"] == str(layout_path.resolve())
+    finally:
+        get_settings.cache_clear()
 
 
 def test_cli_child_materialization_reports_dependency_blocked_children(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:

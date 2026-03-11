@@ -90,6 +90,37 @@ def test_builtin_subtask_library_yaml_is_valid_and_bound_to_existing_prompt_asse
             assert "checkout --" not in document.command
 
 
+def test_builtin_recovery_oriented_tasks_prefer_recovery_prompt_family() -> None:
+    catalog = load_resource_catalog()
+    wait_for_children = yaml.safe_load(
+        (catalog.yaml_builtin_system_dir / "tasks" / "wait_for_children.yaml").read_text(encoding="utf-8")
+    )
+    recover_interrupted = yaml.safe_load(
+        (catalog.yaml_builtin_system_dir / "tasks" / "recover_interrupted_run.yaml").read_text(encoding="utf-8")
+    )
+
+    collect_child = next(item for item in wait_for_children["subtasks"] if item["id"] == "collect_child_summaries")
+    recover_session = next(item for item in recover_interrupted["subtasks"] if item["id"] == "recover_session")
+
+    assert collect_child["prompt"] == "prompts/recovery/resume_existing_session.md"
+    assert recover_session["prompt"] == "prompts/recovery/replacement_session_bootstrap.md"
+
+
+def test_builtin_generic_pause_surfaces_prefer_canonical_pause_prompt_family() -> None:
+    catalog = load_resource_catalog()
+    pause_task = yaml.safe_load(
+        (catalog.yaml_builtin_system_dir / "tasks" / "pause_for_user.yaml").read_text(encoding="utf-8")
+    )
+    pause_flag_subtask = yaml.safe_load(
+        (catalog.yaml_builtin_system_dir / "subtasks" / "pause_on_user_flag.yaml").read_text(encoding="utf-8")
+    )
+
+    pause_and_summarize = next(item for item in pause_task["subtasks"] if item["id"] == "pause_and_summarize")
+
+    assert pause_and_summarize["prompt"] == "prompts/pause/pause_for_user.md"
+    assert pause_flag_subtask["prompt"] == "prompts/pause/pause_for_user.md"
+
+
 def test_builtin_subtask_library_is_synthetically_compileable_and_startable(
     db_session_factory,
     migrated_public_schema,

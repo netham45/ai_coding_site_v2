@@ -56,8 +56,10 @@ def clean_public_schema(db_engine):
 
 @pytest.fixture
 def migrated_public_schema(clean_public_schema):
-    from aicoding.db.migrations import upgrade_database
+    from aicoding.db.migrations import create_alembic_config, upgrade_database
 
-    upgrade_database("head")
+    config = create_alembic_config()
+    config.attributes["override_sqlalchemy_url"] = str(clean_public_schema.url.render_as_string(hide_password=False))
+    upgrade_database("head", config=config)
     clean_public_schema.dispose()
     return clean_public_schema

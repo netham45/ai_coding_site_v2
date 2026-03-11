@@ -15,12 +15,14 @@ from aicoding.daemon.admission import add_node_dependency, check_node_dependency
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.workflow_events import record_workflow_event
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
-from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeVersion, ParentChildAuthority
+from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeVersion, ParentChildAuthority, WorkflowEvent
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import HierarchyRegistry
 from aicoding.resources import ResourceCatalog
+from aicoding.yaml_schemas import LayoutDefinitionDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,96 @@ class ResolvedMaterializationLayout:
     content: str
 
 
+@dataclass(frozen=True, slots=True)
+class LayoutRegistrationSnapshot:
+    node_id: UUID
+    node_version_id: UUID
+    status: str
+    source_path: str
+    registered_path: str
+    layout_relative_path: str
+    layout_hash: str
+    child_count: int
+    workflow_event_id: UUID
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "node_id": str(self.node_id),
+            "node_version_id": str(self.node_version_id),
+            "status": self.status,
+            "source_path": self.source_path,
+            "registered_path": self.registered_path,
+            "layout_relative_path": self.layout_relative_path,
+            "layout_hash": self.layout_hash,
+            "child_count": self.child_count,
+            "workflow_event_id": str(self.workflow_event_id),
+        }
+
+
+def register_generated_layout(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    file_path: str,
+) -> LayoutRegistrationSnapshot:
+    source_path = Path(file_path).expanduser()
+    if not source_path.exists() or not source_path.is_file():
+        raise DaemonNotFoundError("layout file not found")
+
+    try:
+        content = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DaemonConflictError(f"unable to read layout file: {exc}") from exc
+
+    try:
+        parsed = yaml.safe_load(content)
+        document = LayoutDefinitionDocument.model_validate(parsed)
+    except Exception as exc:
+        raise DaemonConflictError(f"layout file is invalid: {exc}") from exc
+
+    layout_hash = sha256(content.encode("utf-8")).hexdigest()
+    workspace_root = get_settings().workspace_root or Path.cwd()
+    registered_path = workspace_root / "layouts" / "generated_layout.yaml"
+    registered_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with session_scope(session_factory) as session:
+        parent_node = session.get(HierarchyNode, logical_node_id)
+        if parent_node is None:
+            raise DaemonNotFoundError("parent node not found")
+        selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+        if selector is None:
+            raise DaemonNotFoundError("parent node version selector not found")
+        node_version_id = selector.authoritative_node_version_id
+        registered_path.write_text(content, encoding="utf-8")
+        event = record_workflow_event(
+            session,
+            logical_node_id=logical_node_id,
+            node_version_id=node_version_id,
+            node_run_id=None,
+            event_scope="child_layout",
+            event_type="registered_generated_layout",
+            payload_json={
+                "source_path": str(source_path.resolve()),
+                "registered_path": str(registered_path),
+                "layout_relative_path": "layouts/generated_layout.yaml",
+                "layout_hash": layout_hash,
+                "child_count": len(document.children),
+            },
+        )
+
+    return LayoutRegistrationSnapshot(
+        node_id=logical_node_id,
+        node_version_id=node_version_id,
+        status="registered",
+        source_path=str(source_path.resolve()),
+        registered_path=str(registered_path),
+        layout_relative_path="layouts/generated_layout.yaml",
+        layout_hash=layout_hash,
+        child_count=len(document.children),
+        workflow_event_id=event.id,
+    )
+
+
 def materialize_layout_children(
     session_factory: sessionmaker[Session],
     registry: HierarchyRegistry,
@@ -131,7 +223,12 @@ def materialize_layout_children(
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
 
-        resolved_layout = _resolve_materialization_layout(resources=resources, parent_kind=parent_node.kind)
+        resolved_layout = _resolve_materialization_layout(
+            session_factory=session_factory,
+            logical_node_id=logical_node_id,
+            resources=resources,
+            parent_kind=parent_node.kind,
+        )
         layout_hash = sha256(resolved_layout.content.encode("utf-8")).hexdigest()
         parsed = yaml.safe_load(resolved_layout.content)
         children_spec = list(parsed.get("children", []))
@@ -331,14 +428,27 @@ def _default_layout_for_kind(kind: str) -> str | None:
     }.get(kind)
 
 
-def _resolve_materialization_layout(*, resources: ResourceCatalog, parent_kind: str) -> ResolvedMaterializationLayout:
+def _resolve_materialization_layout(
+    *,
+    session_factory: sessionmaker[Session],
+    logical_node_id: UUID,
+    resources: ResourceCatalog,
+    parent_kind: str,
+) -> ResolvedMaterializationLayout:
     workspace_root = get_settings().workspace_root or Path.cwd()
     generated_layout_path = workspace_root / "layouts" / "generated_layout.yaml"
     if generated_layout_path.exists():
-        return ResolvedMaterializationLayout(
-            relative_path="layouts/generated_layout.yaml",
-            content=generated_layout_path.read_text(encoding="utf-8"),
-        )
+        generated_content = generated_layout_path.read_text(encoding="utf-8")
+        generated_hash = sha256(generated_content.encode("utf-8")).hexdigest()
+        if _generated_layout_is_registered(
+            session_factory,
+            logical_node_id=logical_node_id,
+            layout_hash=generated_hash,
+        ):
+            return ResolvedMaterializationLayout(
+                relative_path="layouts/generated_layout.yaml",
+                content=generated_content,
+            )
 
     layout_relative_path = _default_layout_for_kind(parent_kind)
     if layout_relative_path is None:
@@ -348,6 +458,31 @@ def _resolve_materialization_layout(*, resources: ResourceCatalog, parent_kind: 
         relative_path=layout_relative_path,
         content=loaded.content,
     )
+
+
+def _generated_layout_is_registered(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    layout_hash: str,
+) -> bool:
+    with query_session_scope(session_factory) as session:
+        row = (
+            session.execute(
+                select(WorkflowEvent)
+                .where(
+                    WorkflowEvent.logical_node_id == logical_node_id,
+                    WorkflowEvent.event_scope == "child_layout",
+                    WorkflowEvent.event_type == "registered_generated_layout",
+                )
+                .order_by(WorkflowEvent.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        if row is None:
+            return False
+        return str((row.payload_json or {}).get("layout_hash", "")) == layout_hash
 
 
 def _validate_layout_children(children_spec: list[dict[str, object]]) -> None:
@@ -403,7 +538,12 @@ def inspect_materialized_children(
         parent_version = session.get(NodeVersion, selector.authoritative_node_version_id)
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
-        resolved_layout = _resolve_materialization_layout(resources=resources, parent_kind=parent_node.kind)
+        resolved_layout = _resolve_materialization_layout(
+            session_factory=session_factory,
+            logical_node_id=logical_node_id,
+            resources=resources,
+            parent_kind=parent_node.kind,
+        )
         layout_hash = sha256(resolved_layout.content.encode("utf-8")).hexdigest()
         authority = session.get(ParentChildAuthority, parent_version.id)
         if authority is None:

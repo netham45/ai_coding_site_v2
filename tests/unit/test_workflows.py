@@ -22,6 +22,7 @@ from aicoding.db.session import query_session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.source_lineage import load_node_version_source_lineage
 from aicoding.resources import load_resource_catalog
+from aicoding.overrides import SourceDocumentInput, build_base_document_index, list_override_documents, resolve_overrides
 
 
 def _create_task_hierarchy_node(db_session_factory, registry, *, title: str):
@@ -51,6 +52,44 @@ def _create_task_hierarchy_node(db_session_factory, registry, *, title: str):
         prompt="boot",
         parent_node_id=plan.node_id,
     )
+
+
+def _write_parent_decomposition_overrides(overrides_root) -> None:
+    (overrides_root / "nodes").mkdir(parents=True, exist_ok=True)
+    for node_kind in ("epic", "phase", "plan"):
+        (overrides_root / "nodes" / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (overrides_root / "nodes" / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
 
 def test_compile_node_workflow_persists_linear_snapshot(db_session_factory, migrated_public_schema) -> None:
@@ -305,6 +344,167 @@ def test_compile_node_workflow_applies_override_and_backfills_required_sources(
     ]
 
 
+def test_override_resolution_supports_scoped_parent_decomposition_without_changing_default_path(
+    tmp_path,
+) -> None:
+    base_catalog = load_resource_catalog()
+    overrides_root = tmp_path / "overrides"
+    _write_parent_decomposition_overrides(overrides_root)
+    scoped_catalog = replace(base_catalog, yaml_overrides_dir=overrides_root)
+
+    base_documents = build_base_document_index(
+        [
+            SourceDocumentInput(
+                source_group="yaml_builtin_system",
+                relative_path=f"nodes/{node_kind}.yaml",
+                source_role="base_definition",
+                content=base_catalog.read_text("yaml_builtin_system", f"nodes/{node_kind}.yaml"),
+                content_hash="test-hash",
+            )
+            for node_kind in ("epic", "phase", "plan")
+        ]
+    )
+    resolution = resolve_overrides(
+        base_documents,
+        list_override_documents(scoped_catalog),
+        built_in_library_version="builtin-system-v1",
+        allowed_targets={
+            ("node_definition", "epic"),
+            ("node_definition", "phase"),
+            ("node_definition", "plan"),
+        },
+    )
+
+    default_epic = base_documents[("node_definition", "epic")].document
+    assert default_epic["entry_task"] == "research_context"
+    assert default_epic["available_tasks"] == [
+        "research_context",
+        "execute_node",
+        "validate_node",
+        "review_node",
+    ]
+
+    for node_kind in ("epic", "phase", "plan"):
+        resolved = resolution.document_for("node_definition", node_kind)
+        assert resolved is not None
+        assert resolved.resolved_document["entry_task"] == "generate_child_layout"
+        assert resolved.resolved_document["available_tasks"] == [
+            "generate_child_layout",
+            "review_child_layout",
+            "spawn_children",
+        ]
+
+
+def test_compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path,
+) -> None:
+    base_catalog = load_resource_catalog()
+    overrides_root = tmp_path / "overrides"
+    _write_parent_decomposition_overrides(overrides_root)
+    scoped_catalog = replace(base_catalog, yaml_overrides_dir=overrides_root)
+
+    registry = load_hierarchy_registry(scoped_catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Scoped Epic", prompt="build cat")
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Scoped Phase",
+        prompt="build cat",
+        parent_node_id=epic.node_id,
+    )
+    plan = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="plan",
+        title="Scoped Plan",
+        prompt="build cat",
+        parent_node_id=phase.node_id,
+    )
+
+    for node in (epic, phase, plan):
+        initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+        result = compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=scoped_catalog)
+        assert result.status == "compiled"
+        assert result.compiled_workflow is not None
+        assert [task.task_key for task in result.compiled_workflow.tasks] == [
+            "generate_child_layout",
+            "review_child_layout",
+            "spawn_children",
+        ]
+        first_subtask_prompt = result.compiled_workflow.tasks[0].subtasks[0].prompt_text
+        assert first_subtask_prompt is not None
+        assert "subtask succeed --node" in first_subtask_prompt
+        assert "workflow advance --node" not in first_subtask_prompt
+        assert "subtask prompt --node" in first_subtask_prompt
+        assert "follow the routed daemon outcome" in first_subtask_prompt
+        assert "stop and do not probe the closed run" in first_subtask_prompt
+        review_subtask_prompt = result.compiled_workflow.tasks[1].subtasks[0].prompt_text
+        assert review_subtask_prompt is not None
+        assert "review run --node" in review_subtask_prompt
+        assert "do not call `subtask complete` or `workflow advance` after `review run`" in review_subtask_prompt
+        spawn_subtask_prompt = result.compiled_workflow.tasks[2].subtasks[0].prompt_text
+        assert spawn_subtask_prompt is not None
+        assert "node materialize-children --node" in spawn_subtask_prompt
+        assert "subtask report-command --node" in spawn_subtask_prompt
+        assert "command_result.json" in spawn_subtask_prompt
+        assert "workflow advance --node" not in spawn_subtask_prompt
+        assert "stop and do not probe the closed run" in spawn_subtask_prompt
+
+
+def test_generate_child_layout_uses_node_kind_specific_prompt_templates(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path,
+) -> None:
+    base_catalog = load_resource_catalog()
+    overrides_root = tmp_path / "overrides"
+    _write_parent_decomposition_overrides(overrides_root)
+    scoped_catalog = replace(base_catalog, yaml_overrides_dir=overrides_root)
+
+    registry = load_hierarchy_registry(scoped_catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Prompt Epic", prompt="build cat")
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Prompt Phase",
+        prompt="build cat",
+        parent_node_id=epic.node_id,
+    )
+    plan = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="plan",
+        title="Prompt Plan",
+        prompt="build cat",
+        parent_node_id=phase.node_id,
+    )
+
+    for node in (epic, phase, plan):
+        initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+        result = compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=scoped_catalog)
+        assert result.status == "compiled"
+        assert result.compiled_workflow is not None
+        rendering = next(
+            item
+            for item in result.compiled_workflow.resolved_yaml["rendering"]["compiled_subtasks"]
+            if item["source_subtask_key"] == "generate_child_layout.render_layout_prompt"
+        )
+        prompt_field = next(item for item in rendering["rendered_fields"] if item["field"] == "prompt")
+        assert prompt_field["source_text"].startswith(
+            {
+                "epic": "You are generating a phase layout for node",
+                "phase": "You are generating a plan layout for node",
+                "plan": "You are generating a task layout for node",
+            }[node.kind]
+        )
+
+
 def test_compile_node_workflow_records_override_missing_target_failure(
     db_session_factory,
     migrated_public_schema,
@@ -435,6 +635,8 @@ def test_compile_task_node_workflow_expands_configured_hooks_and_captures_hook_s
     assert current.tasks[0].subtasks[1].source_subtask_key.startswith("execute_node.")
     assert current.tasks[1].subtasks[0].source_subtask_key == "validate_node.hook.before_validation_default.1"
     assert current.tasks[1].subtasks[1].source_subtask_key.startswith("validate_node.")
+    assert current.tasks[1].subtasks[0].command_text == "python3 -m pytest -q"
+    assert current.tasks[1].subtasks[1].command_text == "python3 -m pytest -q"
     assert current.tasks[2].subtasks[0].source_subtask_key == "review_node.hook.before_review_default.1"
     assert current.tasks[2].subtasks[1].source_subtask_key.startswith("review_node.")
     assert current.tasks[0].subtasks[0].inserted_by_hook is True

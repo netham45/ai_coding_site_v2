@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 
-from aicoding.daemon.hierarchy import create_hierarchy_node
+from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.history import get_prompt_record, get_summary_record, list_prompt_history, list_summary_history
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.run_orchestration import (
@@ -21,8 +24,11 @@ from aicoding.daemon.run_orchestration import (
     load_current_run_progress,
     load_subtask_attempt,
     register_summary,
+    report_command_subtask,
     retry_current_subtask,
+    succeed_current_subtask,
     start_subtask_attempt,
+    _synthesized_command_subtask_prompt,
     sync_resumed_run,
 )
 from aicoding.daemon.versioning import initialize_node_version
@@ -64,6 +70,7 @@ def _pause_gate_catalog(tmp_path):
 def _create_started_run(db_session_factory, *, catalog=None):
     catalog = load_resource_catalog() if catalog is None else catalog
     registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
     node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Runnable", prompt="boot prompt")
     seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
     initialize_node_version(db_session_factory, logical_node_id=node.node_id)
@@ -74,6 +81,48 @@ def _create_started_run(db_session_factory, *, catalog=None):
     admission = admit_node_run(db_session_factory, node_id=node.node_id)
     progress = load_current_run_progress(db_session_factory, logical_node_id=node.node_id)
     return node, admission, progress
+
+
+def test_synthesized_command_subtask_prompt_reports_validation_command_result() -> None:
+    subtask = CompiledSubtask(
+        id=uuid4(),
+        compiled_workflow_id=uuid4(),
+        compiled_task_id=uuid4(),
+        source_subtask_key="validate_node.hook.before_validation_default.1",
+        ordinal=1,
+        subtask_type="validate",
+        title="1",
+        command_text="python3 -m pytest -q",
+    )
+
+    prompt = _synthesized_command_subtask_prompt(logical_node_id=uuid4(), subtask=subtask)
+
+    assert "subtask start --node" in prompt
+    assert "python3 -m pytest -q" in prompt
+    assert "--result-file summaries/command_result.json" in prompt
+    assert '"exit_code": REAL_EXIT_CODE' in prompt
+    assert "subtask report-command --node" in prompt
+    assert "workflow advance --node" not in prompt
+    assert "daemon-owned validation/testing gate decides pass or fail" in prompt
+
+
+def test_synthesized_non_quality_command_subtask_prompt_reports_result_with_optional_failure_summary() -> None:
+    subtask = CompiledSubtask(
+        id=uuid4(),
+        compiled_workflow_id=uuid4(),
+        compiled_task_id=uuid4(),
+        source_subtask_key="finalize_node.build_docs",
+        ordinal=1,
+        subtask_type="build_docs",
+        title="Build Docs",
+        command_text="printf 'docs built'",
+    )
+
+    prompt = _synthesized_command_subtask_prompt(logical_node_id=uuid4(), subtask=subtask)
+
+    assert "subtask report-command --node" in prompt
+    assert "--failure-summary-file summaries/command_failure.md" in prompt
+    assert "workflow advance --node" not in prompt
 
 
 def test_start_complete_and_advance_workflow(db_session_factory, migrated_public_schema) -> None:
@@ -95,6 +144,314 @@ def test_start_complete_and_advance_workflow(db_session_factory, migrated_public
     assert completed.latest_attempt.status == "COMPLETE"
     assert completed.state.last_completed_compiled_subtask_id == current_subtask_id
     assert advanced.run.run_status in {"RUNNING", "COMPLETE"}
+
+
+def test_subtask_succeed_registers_summary_and_routes_ordinary_execution_stage(monkeypatch) -> None:
+    node_id = uuid4()
+    run_id = uuid4()
+    compiled_subtask_id = uuid4()
+    summary_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text=None, subtask_type="run_prompt")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=run_id),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration.register_summary",
+        lambda *args, **kwargs: SimpleNamespace(summary_id=summary_id),
+    )
+
+    def _fake_complete(*args, **kwargs):
+        captured["complete_kwargs"] = kwargs
+        return SimpleNamespace()
+
+    def _fake_advance(*args, **kwargs):
+        captured["advance_kwargs"] = kwargs
+        return SimpleNamespace(
+            run=SimpleNamespace(run_status="RUNNING"),
+            state=SimpleNamespace(lifecycle_state="RUNNING"),
+            latest_attempt=SimpleNamespace(status="COMPLETE"),
+        )
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.complete_current_subtask", _fake_complete)
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.advance_workflow", _fake_advance)
+
+    outcome = succeed_current_subtask(
+        object(),
+        logical_node_id=node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        summary_path="summaries/implementation.md",
+        content="# Implemented\n\nLeaf work complete.\n",
+        catalog=load_resource_catalog(),
+    )
+
+    assert outcome.node_id == node_id
+    assert outcome.node_run_id == run_id
+    assert outcome.accepted_compiled_subtask_id == compiled_subtask_id
+    assert outcome.accepted_subtask_type == "run_prompt"
+    assert outcome.recorded_summary_id == summary_id
+    assert outcome.recorded_summary_path == "summaries/implementation.md"
+    assert outcome.outcome == "next_stage"
+    assert captured["complete_kwargs"]["summary"] == "Implemented"
+    assert captured["advance_kwargs"]["logical_node_id"] == node_id
+
+
+def test_subtask_succeed_rejects_command_stages(monkeypatch) -> None:
+    node_id = uuid4()
+    compiled_subtask_id = uuid4()
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="echo nope", subtask_type="run_prompt")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=uuid4()),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    with pytest.raises(DaemonConflictError, match="only supports non-command stages"):
+        succeed_current_subtask(
+            object(),
+            logical_node_id=node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            summary_path="summaries/implementation.md",
+            content="done",
+            catalog=load_resource_catalog(),
+        )
+
+
+def test_report_command_subtask_routes_ordinary_command_success(monkeypatch) -> None:
+    node_id = uuid4()
+    run_id = uuid4()
+    compiled_subtask_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="printf 'ok'", subtask_type="build_docs")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=run_id),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    def _fake_complete(*args, **kwargs):
+        captured["complete_kwargs"] = kwargs
+        return SimpleNamespace()
+
+    def _fake_advance(*args, **kwargs):
+        captured["advance_kwargs"] = kwargs
+        return SimpleNamespace(
+            run=SimpleNamespace(run_status="RUNNING"),
+            state=SimpleNamespace(lifecycle_state="RUNNING", last_completed_compiled_subtask_id=compiled_subtask_id),
+            latest_attempt=SimpleNamespace(status="COMPLETE"),
+        )
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.complete_current_subtask", _fake_complete)
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.advance_workflow", _fake_advance)
+
+    outcome = report_command_subtask(
+        object(),
+        logical_node_id=node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        execution_result_json={"exit_code": 0, "stdout": "ok"},
+        catalog=load_resource_catalog(),
+    )
+
+    assert outcome.node_id == node_id
+    assert outcome.node_run_id == run_id
+    assert outcome.accepted_compiled_subtask_id == compiled_subtask_id
+    assert outcome.accepted_subtask_type == "build_docs"
+    assert outcome.recorded_summary_path == "summaries/command_result.json"
+    assert outcome.outcome == "next_stage"
+    assert captured["complete_kwargs"]["execution_result_json"] == {"exit_code": 0, "stdout": "ok"}
+    assert captured["complete_kwargs"]["summary"] == "Completed command subtask."
+    assert captured["advance_kwargs"]["logical_node_id"] == node_id
+
+
+def test_report_command_subtask_fails_ordinary_command_on_nonzero_exit(monkeypatch) -> None:
+    node_id = uuid4()
+    run_id = uuid4()
+    compiled_subtask_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="make docs", subtask_type="build_docs")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=run_id),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    def _fake_fail(*args, **kwargs):
+        captured["fail_kwargs"] = kwargs
+        return SimpleNamespace(
+            run=SimpleNamespace(run_status="FAILED"),
+            state=SimpleNamespace(lifecycle_state="FAILED_TO_PARENT"),
+            latest_attempt=SimpleNamespace(status="FAILED"),
+        )
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.fail_current_subtask", _fake_fail)
+
+    outcome = report_command_subtask(
+        object(),
+        logical_node_id=node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        execution_result_json={"exit_code": 17, "stderr": "boom"},
+        failure_summary="command failed",
+        catalog=load_resource_catalog(),
+    )
+
+    assert outcome.node_id == node_id
+    assert outcome.node_run_id == run_id
+    assert outcome.accepted_compiled_subtask_id == compiled_subtask_id
+    assert outcome.accepted_subtask_type == "build_docs"
+    assert outcome.outcome == "failed"
+    assert captured["fail_kwargs"]["summary"] == "command failed"
+    assert captured["fail_kwargs"]["execution_result_json"] == {"exit_code": 17, "stderr": "boom"}
+
+
+def test_report_command_subtask_routes_validation_stage_even_on_nonzero_exit(monkeypatch) -> None:
+    node_id = uuid4()
+    run_id = uuid4()
+    compiled_subtask_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="python3 -m pytest -q", subtask_type="validate")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=run_id),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    def _fake_complete(*args, **kwargs):
+        captured["complete_kwargs"] = kwargs
+        return SimpleNamespace()
+
+    def _fake_advance(*args, **kwargs):
+        captured["advance_kwargs"] = kwargs
+        return SimpleNamespace(
+            run=SimpleNamespace(run_status="FAILED"),
+            state=SimpleNamespace(lifecycle_state="FAILED_TO_PARENT"),
+            latest_attempt=SimpleNamespace(status="COMPLETE"),
+        )
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.complete_current_subtask", _fake_complete)
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.advance_workflow", _fake_advance)
+
+    outcome = report_command_subtask(
+        object(),
+        logical_node_id=node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        execution_result_json={"exit_code": 2, "stderr": "tests failed"},
+        catalog=load_resource_catalog(),
+    )
+
+    assert outcome.node_id == node_id
+    assert outcome.node_run_id == run_id
+    assert outcome.accepted_compiled_subtask_id == compiled_subtask_id
+    assert outcome.accepted_subtask_type == "validate"
+    assert captured["complete_kwargs"]["summary"] == "Recorded command result for validate."
+    assert captured["complete_kwargs"]["execution_result_json"] == {"exit_code": 2, "stderr": "tests failed"}
+    assert captured["advance_kwargs"]["logical_node_id"] == node_id
+    assert outcome.outcome == "failed"
+
+
+def test_report_command_subtask_requires_integer_exit_code(monkeypatch) -> None:
+    node_id = uuid4()
+    compiled_subtask_id = uuid4()
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="printf 'ok'", subtask_type="build_docs")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=uuid4()),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    with pytest.raises(DaemonConflictError, match="integer exit_code"):
+        report_command_subtask(
+            object(),
+            logical_node_id=node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            execution_result_json={"exit_code": "0"},
+            catalog=load_resource_catalog(),
+        )
 
 
 def test_complete_and_fail_capture_explicit_execution_result_payloads(db_session_factory, migrated_public_schema) -> None:

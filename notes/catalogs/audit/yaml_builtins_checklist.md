@@ -367,9 +367,6 @@ These are now tracked explicitly because the reviewed docs clearly require autho
 - [x] `prompts/runtime/command_failed.md`
 - [x] `prompts/runtime/missing_required_output.md`
 - [x] `prompts/runtime/idle_nudge.md`
-- [x] `prompts/runtime/pause_for_user.md`
-- [x] `prompts/runtime/resume_existing_session.md`
-- [x] `prompts/runtime/replacement_session_bootstrap.md`
 - [x] `prompts/runtime/delegated_child_session.md`
 - [x] `prompts/runtime/parent_pause_for_user.md`
 - [x] `prompts/runtime/parent_local_replan.md`

@@ -457,9 +457,6 @@ Concrete draft text for these lives in `notes/specs/prompts/prompt_library_plan.
 - `prompts/runtime/command_failed.md`
 - `prompts/runtime/missing_required_output.md`
 - `prompts/runtime/idle_nudge.md`
-- `prompts/runtime/pause_for_user.md`
-- `prompts/runtime/resume_existing_session.md`
-- `prompts/runtime/replacement_session_bootstrap.md`
 - `prompts/runtime/delegated_child_session.md`
 - `prompts/runtime/parent_pause_for_user.md`
 - `prompts/runtime/parent_local_replan.md`

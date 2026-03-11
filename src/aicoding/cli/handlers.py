@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from argparse import Namespace
 from pathlib import Path
+from pathlib import Path
 
 from aicoding.auth import load_auth_token
 from aicoding.bootstrap import bootstrap_status
@@ -400,6 +401,16 @@ def handle_node_materialization(args: Namespace, context: CliContext) -> dict[st
     return client.request("GET", f"/api/nodes/{args.node}/children/materialization")
 
 
+def handle_node_register_layout(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    resolved_file = str(Path(args.file).expanduser().resolve())
+    return client.request(
+        "POST",
+        f"/api/nodes/{args.node}/children/register-layout",
+        json_payload={"file_path": resolved_file},
+    )
+
+
 def handle_node_child_reconciliation(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
     return client.request("GET", f"/api/nodes/{args.node}/children/reconciliation")
@@ -690,6 +701,66 @@ def handle_subtask_progress(args: Namespace, context: CliContext) -> dict[str, o
                 details={"result_path": args.result_file, "reason": str(exc)},
             ) from exc
     return client.request("POST", args.daemon_path, json_payload=payload)
+
+
+def handle_subtask_succeed(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    try:
+        content = Path(args.summary_file).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CommandExecutionError(
+            message="Unable to read summary file.",
+            code="summary_file_unreadable",
+            details={"summary_path": args.summary_file, "reason": str(exc)},
+        ) from exc
+    return client.request(
+        "POST",
+        "/api/subtasks/succeed",
+        json_payload={
+            "node_id": args.node,
+            "compiled_subtask_id": args.compiled_subtask,
+            "summary_path": args.summary_file,
+            "content": content,
+        },
+    )
+
+
+def handle_subtask_report_command(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    try:
+        result_json = json.loads(Path(args.result_file).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise CommandExecutionError(
+            message="Unable to read result file.",
+            code="result_file_unreadable",
+            details={"result_path": args.result_file, "reason": str(exc)},
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise CommandExecutionError(
+            message="Result file must contain valid JSON.",
+            code="result_file_invalid_json",
+            details={"result_path": args.result_file, "reason": str(exc)},
+        ) from exc
+    failure_summary = None
+    if getattr(args, "failure_summary_file", None):
+        try:
+            failure_summary = Path(args.failure_summary_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise CommandExecutionError(
+                message="Unable to read failure summary file.",
+                code="failure_summary_file_unreadable",
+                details={"summary_path": args.failure_summary_file, "reason": str(exc)},
+            ) from exc
+    return client.request(
+        "POST",
+        "/api/subtasks/report-command",
+        json_payload={
+            "node_id": args.node,
+            "compiled_subtask_id": args.compiled_subtask,
+            "execution_result_json": result_json,
+            "failure_summary": failure_summary,
+        },
+    )
 
 
 def handle_subtask_retry(args: Namespace, context: CliContext) -> dict[str, object]:

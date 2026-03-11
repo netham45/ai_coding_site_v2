@@ -38,4 +38,16 @@ Current task index:
 - `2026-03-10_generated_layout_materialization_runtime_phase.md`
 - `2026-03-10_auto_child_run_binding_runtime_phase.md`
 - `2026-03-10_scoped_parent_decomposition_runtime_phase.md`
+- `2026-03-10_db_backed_compile_fixture_stabilization.md`
 - `2026-03-10_automated_full_tree_cat_runtime_e2e_execution_phase.md`
+- `2026-03-10_ai_workflow_command_surface_review_discovery.md`
+- `2026-03-10_ai_workflow_composite_stage_outcome_design.md`
+- `2026-03-10_ai_workflow_composite_stage_outcome_implementation_phase1.md`
+- `2026-03-10_ai_workflow_composite_stage_outcome_implementation_phase2.md`
+- `2026-03-10_ai_workflow_prompt_migration_and_protocol_hardening.md`
+- `2026-03-10_full_ai_prompt_command_surface_review.md`
+- `2026-03-10_ai_command_lifecycle_structural_review.md`
+- `2026-03-10_full_ai_command_lifecycle_note_authoring.md`
+- `2026-03-11_repo_wide_test_audit.md`
+- `2026-03-11_yaml_schema_and_field_rigidity_investigation.md`
+- `2026-03-11_yaml_schema_and_field_rigidity_implementation.md`

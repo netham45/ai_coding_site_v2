@@ -104,7 +104,8 @@ Should expose:
 Implementation staging note:
 
 - `node child-materialization --node <id>` is now implemented as a daemon-backed read of the current layout-materialization state
-- `node materialize-children --node <id>` is now the explicit mutation path for effective layout materialization, preferring `layouts/generated_layout.yaml` under the configured workspace root when present and otherwise falling back to the packaged built-in layout for the parent kind
+- `node register-layout --node <id> --file <path>` is now the explicit parent-facing handoff that validates and registers a generated child layout by filename
+- `node materialize-children --node <id>` is now the explicit mutation path for effective layout materialization, using the registered `layouts/generated_layout.yaml` only when its hash matches the latest durable layout-registration event for the node and otherwise falling back to the packaged built-in layout for the parent kind
 - `node child-reconciliation --node <id>` now exposes the current manual/layout authority mode, available reconciliation decisions, and child-origin counts
 - `node reconcile-children --node <id> --decision preserve_manual` now performs the currently supported explicit hybrid-reconciliation mutation
 - `node child-results --node <id>` now exposes authoritative child finals, deterministic merge order, and blocked-child classification for the current parent version
@@ -548,6 +549,8 @@ Implementation staging note:
 
 - `ai-tool subtask start --compiled-subtask <id>`
 - `ai-tool subtask heartbeat --compiled-subtask <id>`
+- `ai-tool subtask succeed --compiled-subtask <id> --summary-file <path>`
+- `ai-tool subtask report-command --compiled-subtask <id> --result-file result.json`
 - `ai-tool subtask complete --compiled-subtask <id>`
 - `ai-tool subtask complete --compiled-subtask <id> --result-file result.json`
 - `ai-tool subtask fail --compiled-subtask <id> --summary-file <path>`
@@ -555,11 +558,15 @@ Implementation staging note:
 
 Implementation staging note:
 
+- `subtask succeed` is now the first composite AI-facing ordinary-execution success path; the CLI reads the supplied summary file locally, sends its content to the daemon, and receives a routed outcome plus the updated run-progress snapshot
+- `subtask succeed` is intentionally limited to ordinary non-command stages in this phase; review stages still use their existing dedicated composite path
+- `subtask report-command` is now the command-stage composite path; the CLI reads the required result JSON locally, optionally reads a bounded failure-summary file, sends both to the daemon, and receives the routed outcome plus the updated run-progress snapshot
 - `subtask fail` now accepts the documented `--summary-file <path>` contract on the CLI and still allows the existing inline `--summary` compatibility path
 - the CLI reads the failure summary file locally and sends the content to the daemon as the durable failure summary
 - `subtask complete` and `subtask fail` now also accept `--result-file <path>`; the CLI reads JSON locally and sends it as the explicit execution-result payload for the attempt
+- `subtask report-command` requires `--result-file <path>` and treats that file as explicit `execution_result_json` rather than a Markdown artifact
 - the daemon persists that explicit payload in `execution_result_json` and mirrors it into `output_json` for compatibility with already-implemented validation, review, testing, and history logic
-- this slice still does not make ordinary shell or tool execution daemon-owned; it makes session-reported execution results explicit and durably inspectable
+- this slice still does not make ordinary shell or tool execution daemon-owned; it makes session-reported execution results explicit, daemon-routed, and durably inspectable
 - `subtask heartbeat` is now implemented as a durable update on the active attempt and run cursor metadata, not yet as a dedicated heartbeat-history table
 
 ### Summary registration

@@ -13,6 +13,6 @@ subtasks:
     type: run_prompt
     title: Recover Interrupted Session
     description: Reconstruct the current execution state after interruption.
-    prompt: "prompts/runtime/replacement_session_bootstrap.md"
+    prompt: "prompts/recovery/replacement_session_bootstrap.md"
     retry_policy: {max_attempts: 1, backoff_seconds: 0}
     on_failure: {action: pause_for_user}
