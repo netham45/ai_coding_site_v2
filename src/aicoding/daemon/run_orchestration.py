@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.daemon.incremental_parent_merge import record_completed_child_for_incremental_merge_in_session
 from aicoding.daemon.history import record_prompt_delivery, record_summary_history
 from aicoding.daemon.environments import build_execution_environment
 from aicoding.daemon.review_runtime import evaluate_review_subtask
@@ -388,7 +389,7 @@ def heartbeat_current_subtask(
     compiled_subtask_id: UUID,
 ) -> RunProgressSnapshot:
     with session_scope(session_factory) as session:
-        run, state, _ = _load_active_run_bundle(session, logical_node_id)
+        run, state, version = _load_active_run_bundle(session, logical_node_id)
         if state.current_compiled_subtask_id != compiled_subtask_id:
             raise DaemonConflictError("compiled subtask is not the current run cursor")
         attempt = _require_running_attempt(session, run.id, compiled_subtask_id)
@@ -887,7 +888,7 @@ def advance_workflow(
             state.execution_cursor_json = execution_cursor
             session.flush()
     with session_scope(session_factory) as session:
-        run, state, _ = _load_active_run_bundle(session, logical_node_id)
+        run, state, version = _load_active_run_bundle(session, logical_node_id)
         assert current_subtask_id is not None
         next_subtask = _next_subtask(session, run.compiled_workflow_id, current_subtask_id)
         if next_subtask is None:
@@ -898,6 +899,7 @@ def advance_workflow(
             state.current_compiled_subtask_id = None
             state.current_subtask_attempt = None
             state.is_resumable = False
+            record_completed_child_for_incremental_merge_in_session(session, child_node_version_id=version.id)
             _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
             session.flush()
             return _progress_snapshot(session, run.id)

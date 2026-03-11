@@ -34,7 +34,7 @@ def test_revision_identifier_pattern_matches_bootstrap_revision() -> None:
     assert REVISION_ID_PATTERN.match("0025_runtime_state_views")
     assert REVISION_ID_PATTERN.match("0026_session_history_views")
     assert REVISION_ID_PATTERN.match("0027_provenance_docs_audit_views")
-    assert REVISION_ID_PATTERN.match("0028_subtask_execution_results")
+    assert REVISION_ID_PATTERN.match("0029_incr_parent_merge_state")
 
 
 def test_revision_identifiers_are_all_valid() -> None:
@@ -73,7 +73,7 @@ def test_revision_history_and_heads_are_consistent() -> None:
         "0025_runtime_state_views",
         "0026_session_history_views",
         "0027_provenance_docs_audit_views",
-        "0028_subtask_execution_results",
+        "0029_incr_parent_merge_state",
     ]
     assert migration_history(config) == revisions
-    assert expected_database_revision(config) == "0028_subtask_execution_results"
+    assert expected_database_revision(config) == "0029_incr_parent_merge_state"

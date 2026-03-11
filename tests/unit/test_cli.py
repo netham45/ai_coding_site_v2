@@ -188,6 +188,17 @@ def test_workflow_start_argument_parsing_sets_handler() -> None:
     assert args.handler
 
 
+def test_workflow_start_argument_parsing_accepts_project_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["workflow", "start", "--kind", "epic", "--prompt", "boot", "--project", "repo_alpha"])
+
+    assert args.command == "workflow"
+    assert args.workflow_command == "start"
+    assert args.kind == "epic"
+    assert args.project == "repo_alpha"
+    assert args.handler
+
+
 def test_workflow_advance_argument_parsing_sets_handler() -> None:
     parser = build_parser()
     args = parser.parse_args(["workflow", "advance", "--node", "node-123"])

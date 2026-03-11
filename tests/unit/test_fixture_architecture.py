@@ -23,7 +23,7 @@ def test_migrated_public_schema_fixture_applies_head_revision(migrated_public_sc
         revision = connection.execute(text("select version_num from alembic_version")).scalar_one()
         hierarchy_table = connection.execute(text("select to_regclass('public.node_hierarchy_definitions')")).scalar_one()
 
-    assert revision == "0028_subtask_execution_results"
+    assert revision == "0029_incr_parent_merge_state"
     assert hierarchy_table == "node_hierarchy_definitions"
 
 

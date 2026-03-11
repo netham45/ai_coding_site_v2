@@ -9,6 +9,23 @@
     "npm": ">=10.9.4"
   },
   "scripts": {
-    "check:runtime": "node -e \"console.log(process.version)\""
+    "check:runtime": "node -e \"console.log(process.version)\"",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:unit": "node ./scripts/render-shell-check.mjs && node ./scripts/foundation-check.mjs && node ./scripts/mock-daemon-check.mjs && node ./scripts/router-shell-check.mjs && node ./scripts/project-bootstrap-check.mjs && node ./scripts/explorer-tree-check.mjs && node ./scripts/detail-tabs-check.mjs && node ./scripts/prompt-regeneration-check.mjs && node ./scripts/action-surface-check.mjs",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.66.9",
+    "axios": "^1.8.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "@vitejs/plugin-react": "^5.0.2",
+    "vite": "^7.1.3"
   }
 }

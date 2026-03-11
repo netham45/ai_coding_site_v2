@@ -411,7 +411,7 @@ def _child_scheduling_status(
         return "failed"
     if blockers:
         blocker_kind = blockers[0].blocker_kind
-        if blocker_kind == "blocked_on_dependency":
+        if blocker_kind in {"blocked_on_dependency", "blocked_on_incremental_merge", "blocked_on_parent_refresh", "blocked_on_merge_conflict"}:
             return "blocked_on_dependency"
         if blocker_kind in {"pause_gate_active", "user_gate_required"}:
             return "paused_for_user"

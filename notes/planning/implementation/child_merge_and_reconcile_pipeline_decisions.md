@@ -3,39 +3,41 @@
 ## Scope landed in this phase
 
 - The daemon now collects authoritative child results for a parent version from durable child edges, authoritative child selectors, lifecycle state, final commits, and latest summaries.
-- Deterministic child merge order is now computed from sibling dependency edges, child ordinals, child-edge creation time, and logical child id.
+- The authoritative live-parent reconcile path now reads actual applied child merge order from durable `merge_events` and incremental parent-merge history instead of synthesizing a second final-stage merge order.
 - The daemon now exposes a staged child-merge command that records replayable `merge_events` and writes a durable `parent_reconcile_context` snapshot into the active run cursor.
 - The packaged prompt `execution/reconcile_parent_after_merge.md` is now a first-class inspection surface through the daemon and CLI.
 
 ## Explicit staging boundary
 
-- This phase does not yet shell out to live `git reset` or `git merge`.
-- Instead, merge execution is metadata-backed: parent commit progression is represented by deterministic derived commit hashes in `merge_events`.
-- This preserves auditability, replayability, and CLI/operator visibility without pretending the working tree is already under full daemon git control.
+- The authoritative live-parent reconcile path no longer records duplicate child merge events during final reconcile.
+- For the current authoritative lineage, successful incremental merge execution is now the first and only child-to-parent merge point.
+- Candidate-version rectification still retains its own replay path when rebuilding a non-authoritative lineage from seed.
 
 ## Why this boundary was chosen
 
-- The repository already had durable branch metadata, child authority, conflict records, and reconcile prompt assets.
-- It did not yet have a safe live git-execution layer for reset, checkout, merge, and finalize.
-- Implementing a fake working-tree mutator would have created misleading behavior and made the later git-runtime phases harder to reason about.
+- The repository now has a real daemon-owned incremental parent-merge lane for authoritative live children.
+- Keeping final authoritative reconcile as a second merge engine would have double-merged the same child finals and made `merge_events`, `node child-results`, and `node reconcile` internally contradictory.
+- Candidate-version rectification still needs a rebuild-time replay mechanism because those candidate lineages are not advanced by the authoritative live incremental-merge lane.
 
 ## Durable runtime consequence
 
 - After `git merge-children --node <id>`, the active parent run now carries `parent_reconcile_context` in `node_run_state.execution_cursor_json`.
 - `subtask context --node <id>` now includes that reconcile context so the active session can resume the reconcile stage without reconstructing child state from memory.
+- `node child-results --node <id>` and `node reconcile --node <id>` now expose already-applied incremental merge order from durable merge history for the authoritative live parent lineage rather than a synthetic final-stage plan.
 
 ## Newly explicit limitation
 
-- The current runtime still treats child merge as a late parent-owned stage, not as an incremental dependency-unblock mechanism.
-- Dependency readiness is evaluated only from durable sibling lifecycle state, mainly `required_state = COMPLETE`, and the child auto-run loop reacts only by starting newly ready children.
-- Child live git repos inherit parent ancestry at bootstrap time, so a dependent sibling that starts after another sibling completes can still be based on stale parent state if the prerequisite sibling was not merged back first.
-- The declared policy surface already includes `auto_merge_to_parent`, but the current daemon path does not consume that policy during child completion or sibling unblocking.
+- The live authoritative reconcile path is now post-merge parent-local synthesis, but the candidate-version rectification path still replays child merges from seed when rebuilding a non-authoritative lineage.
+- The repo still does not have full real E2E proof for the hierarchy-wide incremental merge plus final parent reconcile narrative.
 
 ## Immediate follow-up expectation
 
-- Add a daemon-owned incremental merge-to-parent path that runs after a prerequisite child reaches a mergeable final state and before any blocked dependent sibling is admitted.
-- Keep this separate from the later full-parent reconcile stage so the runtime can both unblock dependent siblings correctly and still preserve the final all-children reconciliation contract.
+- Extend the real E2E layer so the authoritative live incremental-merge lane and later parent-local reconcile path are proven together through real runtime boundaries.
 
-## Follow-up expectation
+## Accepted design direction for the next implementation slice
 
-- Later git/runtime phases should replace the derived merge-head hashes with real working-tree-backed merge execution while preserving the same operator-facing `merge_events`, `child-results`, and `node reconcile` inspection surfaces.
+- The incremental merge path should follow the repository's existing daemon-owned background-scan model rather than introducing a separate queue/claim worker abstraction.
+- Child completion should make completed-unmerged child merge state durably discoverable, after which a background daemon pass can scan, take a per-parent advisory lock, and process at most one incremental merge step for that parent.
+- Incremental merge ordering should be completion-driven at runtime. The daemon does not need a precomputed deterministic sibling merge sequence for this path; it must persist the actual applied incremental merge order instead.
+- Existing operator surfaces such as `node blockers`, `node dependency-status`, `node child-results`, `node reconcile`, `git merge-events show`, and `git merge-conflicts show` should remain the primary inspection path for this feature unless they prove insufficient in practice.
+- Pause, cancel, supersession, and cutover should stop future incremental merge progression without erasing already-written merge audit history for the affected lineage.

@@ -11,10 +11,12 @@ from aicoding.daemon.orchestration import apply_authority_mutation, load_authori
 from aicoding.daemon.run_orchestration import ensure_node_run_started
 from aicoding.db.models import (
     HierarchyNode,
+    IncrementalChildMergeState,
     LogicalNodeCurrentVersion,
     NodeDependency,
     NodeDependencyBlocker,
     NodeLifecycleState,
+    ParentIncrementalMergeLane,
     NodeVersion,
 )
 from aicoding.db.session import query_session_scope, session_scope
@@ -241,6 +243,16 @@ def check_node_dependency_readiness(
                         },
                     )
                 )
+                continue
+            merge_backed_blocker = _merge_backed_dependency_blocker(
+                session,
+                node_version=node_version,
+                dependency=dependency,
+                target=target,
+                current_state=current_state,
+            )
+            if merge_backed_blocker is not None:
+                blockers.append(merge_backed_blocker)
         blockers = _runtime_blockers(node_version=node_version, lifecycle=lifecycle, blockers=blockers)
         blockers = _persist_blockers(session, node_version_id=node_version.id, blockers=blockers)
         if any(item.blocker_kind == "impossible_wait" for item in blockers):
@@ -557,6 +569,95 @@ def _runtime_blockers(
             )
         )
     return blockers
+
+
+def _merge_backed_dependency_blocker(
+    session: Session,
+    *,
+    node_version: NodeVersion,
+    dependency: NodeDependency,
+    target: NodeVersion,
+    current_state: str | None,
+) -> DependencyBlockerSnapshot | None:
+    if dependency.dependency_type != "sibling":
+        return None
+    if current_state != "COMPLETE":
+        return None
+    if node_version.parent_node_version_id is None:
+        return None
+    if target.parent_node_version_id != node_version.parent_node_version_id:
+        return None
+
+    merge_row = session.execute(
+        select(IncrementalChildMergeState).where(
+            IncrementalChildMergeState.parent_node_version_id == node_version.parent_node_version_id,
+            IncrementalChildMergeState.child_node_version_id == target.id,
+        )
+    ).scalar_one_or_none()
+    lane = session.get(ParentIncrementalMergeLane, node_version.parent_node_version_id)
+    lane_status = None if lane is None else lane.status
+    lane_blocked_reason = None if lane is None else lane.blocked_reason
+
+    if merge_row is None or merge_row.status == "completed_unmerged":
+        return DependencyBlockerSnapshot(
+            blocker_kind="blocked_on_incremental_merge",
+            dependency_id=dependency.id,
+            node_version_id=node_version.id,
+            target_node_version_id=target.id,
+            details_json={
+                "required_state": dependency.required_state,
+                "target_state": current_state,
+                "merge_status": None if merge_row is None else merge_row.status,
+                "lane_status": lane_status,
+                "lane_blocked_reason": lane_blocked_reason,
+            },
+        )
+    if merge_row.status == "conflicted":
+        return DependencyBlockerSnapshot(
+            blocker_kind="blocked_on_merge_conflict",
+            dependency_id=dependency.id,
+            node_version_id=node_version.id,
+            target_node_version_id=target.id,
+            details_json={
+                "required_state": dependency.required_state,
+                "target_state": current_state,
+                "merge_status": merge_row.status,
+                "conflict_id": None if merge_row.conflict_id is None else str(merge_row.conflict_id),
+                "lane_status": lane_status,
+                "lane_blocked_reason": lane_blocked_reason,
+            },
+        )
+    if merge_row.status != "merged":
+        return DependencyBlockerSnapshot(
+            blocker_kind="blocked_on_incremental_merge",
+            dependency_id=dependency.id,
+            node_version_id=node_version.id,
+            target_node_version_id=target.id,
+            details_json={
+                "required_state": dependency.required_state,
+                "target_state": current_state,
+                "merge_status": merge_row.status,
+                "lane_status": lane_status,
+                "lane_blocked_reason": lane_blocked_reason,
+            },
+        )
+    if lane is not None and lane.current_parent_head_commit_sha is not None:
+        child_seed = node_version.seed_commit_sha
+        if child_seed is not None and child_seed != lane.current_parent_head_commit_sha:
+            return DependencyBlockerSnapshot(
+                blocker_kind="blocked_on_parent_refresh",
+                dependency_id=dependency.id,
+                node_version_id=node_version.id,
+                target_node_version_id=target.id,
+                details_json={
+                    "required_state": dependency.required_state,
+                    "target_state": current_state,
+                    "merge_status": merge_row.status,
+                    "child_seed_commit_sha": child_seed,
+                    "required_parent_head_commit_sha": lane.current_parent_head_commit_sha,
+                },
+            )
+    return None
 
 
 def _dependency_snapshot(row: NodeDependency) -> NodeDependencySnapshot:

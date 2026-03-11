@@ -35,6 +35,14 @@ Feature `71_F11_live_git_merge_and_finalize_execution` is now implemented as a r
 - the actual resulting commit SHA is written back to `node_versions.final_commit_sha`
 - finalize failures and successful finalize operations are recorded through workflow-event audit
 
+### 6. Incremental parent merge should extend the same live-git substrate
+
+- the sibling-dependency incremental parent-merge path should reuse the same per-version isolated repos and durable `merge_events` / `merge_conflicts` audit model instead of inventing a second git-mutation substrate
+- incremental merge order for that future path should be the actual daemon-applied completion order recorded durably per merge, not a separately precomputed deterministic sibling order
+- the incremental merge lane should advance its own persisted parent-head pointer and should not overwrite `node_versions.final_commit_sha` during intermediate child merges; final parent finalize/reconcile remains a later explicit step
+- pre-run child refresh may explicitly move a not-yet-started child version's `seed_commit_sha` forward to the current parent merge-lane head before re-bootstrap; this is the accepted refresh exception to the otherwise immutable child bootstrap seed story
+- the daemon background child auto-start loop is now the happy-path owner of that pre-run refresh step; parent AI intervention remains reserved for conflict or later final reconcile paths
+
 ## Notes impact
 
 The git, CLI, runtime, database, and flow-remediation notes were updated in the same slice so the repo no longer describes Flow 11 as staged-only.

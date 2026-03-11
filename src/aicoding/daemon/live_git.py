@@ -12,7 +12,7 @@ from aicoding.daemon.branches import record_final_commit, record_seed_commit
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.git_conflicts import MergeConflictSnapshot, MergeEventSnapshot, record_merge_conflict, record_merge_event
 from aicoding.daemon.workflow_events import record_workflow_event
-from aicoding.db.models import LogicalNodeCurrentVersion, NodeLifecycleState, NodeVersion
+from aicoding.db.models import LogicalNodeCurrentVersion, NodeLifecycleState, NodeVersion, ParentIncrementalMergeLane
 from aicoding.db.session import query_session_scope, session_scope
 
 
@@ -90,6 +90,7 @@ def bootstrap_live_git_repo(
     version_id: UUID,
     files: dict[str, str] | None = None,
     base_version_id: UUID | None = None,
+    source_repo_path: Path | None = None,
     replace_existing: bool = False,
 ) -> LiveGitStatusSnapshot:
     with query_session_scope(session_factory) as session:
@@ -99,9 +100,11 @@ def bootstrap_live_git_repo(
         node_id = version.logical_node_id
         base_version = _resolve_bootstrap_base_version(session, version, explicit_base_version_id=base_version_id)
         target_seed_commit = version.seed_commit_sha
+    if source_repo_path is not None and base_version is not None:
+        raise DaemonConflictError("live git bootstrap may not use both base_version_id and source_repo_path")
     if replace_existing and repo_path.exists():
         shutil.rmtree(repo_path)
-    if base_version is None:
+    if source_repo_path is None and base_version is None:
         repo_path.mkdir(parents=True, exist_ok=True)
         _git(repo_path, "init", "-b", branch_name)
         _git(repo_path, "config", "user.name", "AI Coding")
@@ -115,6 +118,32 @@ def bootstrap_live_git_repo(
             _git(repo_path, "commit", "--allow-empty", "-m", "Bootstrap seed")
         else:
             _git(repo_path, "commit", "-m", "Bootstrap seed")
+    elif source_repo_path is not None:
+        checkout_commit = _require_source_repo_head(source_repo_path)
+        repo_path.parent.mkdir(parents=True, exist_ok=True)
+        clone_result = subprocess.run(
+            ["git", "clone", "--no-hardlinks", str(source_repo_path), str(repo_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if clone_result.returncode != 0:
+            raise DaemonConflictError(
+                clone_result.stderr.strip() or clone_result.stdout.strip() or "git clone failed during source repo bootstrap"
+            )
+        _git(repo_path, "config", "user.name", "AI Coding")
+        _git(repo_path, "config", "user.email", "aicoding@example.invalid")
+        if _git_try(repo_path, "remote", "get-url", "origin").ok:
+            _git(repo_path, "remote", "remove", "origin")
+        _git(repo_path, "checkout", "-B", branch_name, checkout_commit)
+        for relative_path, content in sorted((files or {}).items()):
+            target = repo_path / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        if files:
+            _git(repo_path, "add", ".")
+            if _git_output(repo_path, "status", "--porcelain"):
+                _git(repo_path, "commit", "-m", "Bootstrap seed override")
     else:
         parent_repo_path = _repo_path(base_version.id)
         if not parent_repo_path.exists() or not (parent_repo_path / ".git").exists():
@@ -150,6 +179,36 @@ def bootstrap_live_git_repo(
     record_seed_commit(session_factory, version_id=version_id, commit_sha=seed_commit_sha)
     _set_working_tree_state(session_factory, logical_node_id=node_id, state="seed_ready")
     return show_live_git_status(session_factory, version_id=version_id)
+
+
+def refresh_child_live_git_from_parent_head(
+    session_factory: sessionmaker[Session],
+    *,
+    child_version_id: UUID,
+) -> LiveGitStatusSnapshot:
+    with session_scope(session_factory) as session:
+        child_version = _require_version(session, child_version_id)
+        if child_version.parent_node_version_id is None:
+            raise DaemonConflictError("child refresh requires a parent node version")
+        lifecycle = session.get(NodeLifecycleState, str(child_version.logical_node_id))
+        if lifecycle is not None and lifecycle.run_status in {"PENDING", "RUNNING", "PAUSED"}:
+            raise DaemonConflictError("child refresh requires the child to be inactive")
+        if child_version.final_commit_sha is not None:
+            raise DaemonConflictError("child refresh requires an unfinalized child version")
+        parent_version = _require_version(session, child_version.parent_node_version_id)
+        lane = session.get(ParentIncrementalMergeLane, parent_version.id)
+        target_parent_head = None if lane is None else lane.current_parent_head_commit_sha
+        if target_parent_head is None:
+            target_parent_head = parent_version.final_commit_sha or parent_version.seed_commit_sha
+        if target_parent_head is None:
+            raise DaemonConflictError("child refresh requires a recorded parent head commit")
+        child_version.seed_commit_sha = target_parent_head
+        session.flush()
+    return bootstrap_live_git_repo(
+        session_factory,
+        version_id=child_version_id,
+        replace_existing=True,
+    )
 
 
 def stage_live_git_change(
@@ -365,6 +424,25 @@ def show_live_git_status(session_factory: sessionmaker[Session], *, version_id: 
 
 def _repo_path(version_id: UUID) -> Path:
     return Path.cwd() / ".runtime" / "git" / "node_versions" / str(version_id)
+
+
+def _require_source_repo_head(source_repo_path: Path) -> str:
+    if not source_repo_path.exists() or not source_repo_path.is_dir():
+        raise DaemonConflictError("selected source repo directory does not exist")
+    if not (source_repo_path / ".git").exists():
+        raise DaemonConflictError("selected source repo is not a git repository")
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source_repo_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise DaemonConflictError(
+            result.stderr.strip() or result.stdout.strip() or "selected source repo does not have a readable HEAD commit"
+        )
+    return result.stdout.strip()
 
 
 def _git(repo_path: Path, *args: str) -> str:

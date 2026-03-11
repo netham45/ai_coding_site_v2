@@ -206,6 +206,11 @@ Likely route:
 - `/projects/:projectId/nodes/:nodeId`
 - `/projects/:projectId/nodes/:nodeId/:tab`
 
+Current implementation note:
+
+- `/projects/:projectId` now auto-redirects to the root node overview route when project bootstrap can resolve a current root node
+- if no root node exists yet, the route stays on the project-level top-level creation view
+
 ### 3. Optional focused views later
 
 Purpose:
@@ -336,6 +341,17 @@ The selected node route should default into a tabbed layout.
 - `summaries`
 - `sessions`
 - `provenance`
+
+Current implementation note:
+
+- the current shipped detail-tab slice now covers:
+  - `overview`
+  - `workflow`
+  - `runs`
+  - `summaries`
+  - `sessions`
+  - `provenance`
+- `prompts` still remains deferred to the next website feature phase
 - `actions`
 - optional `raw`
 

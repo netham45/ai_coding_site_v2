@@ -168,6 +168,17 @@ By default, dependency readiness should mean:
 
 This should be simple unless a later use case truly requires more granular dependency states.
 
+Implementation extension note:
+
+- sibling dependencies between materialized children that share a parent lineage now require merge-backed satisfaction rather than raw sibling lifecycle alone
+- for those sibling edges, a prerequisite child reaching `COMPLETE` is not enough; the prerequisite child must also have a durable successful incremental merge row into the authoritative parent lineage the dependent child will start from
+- operator-visible blocker kinds for that path now include:
+  - `blocked_on_incremental_merge`
+  - `blocked_on_merge_conflict`
+  - `blocked_on_parent_refresh`
+- non-sibling dependency edges and sibling edges without a shared parent lineage remain on the existing lifecycle-based `required_state` rule in the current implementation slice
+- if a dependent child was already bootstrapped from an older parent head before the prerequisite sibling merged upward, admission must block that child on `blocked_on_parent_refresh` until the child bootstrap is refreshed against the current parent merge-lane head
+
 ---
 
 ## Scheduling Outcomes
@@ -223,6 +234,7 @@ Implementation staging note:
 - parent-generated child layouts are no longer treated as authoritative merely because `layouts/generated_layout.yaml` exists in the workspace
 - the current runtime requires an explicit parent-side registration step before the generated layout becomes authoritative for materialization
 - after child materialization, the daemon scans authoritative parent-child edges, evaluates readiness from durable child state, and auto-starts only children that are actually `ready`
+- before that auto-start bind step, the daemon now runs a pre-pass that advances pending parent incremental merges and auto-refreshes blocked `blocked_on_parent_refresh` children when they are inactive and covered by auto-run policy
 - the current implementation admits the child run with trigger reason `auto_run_child` and binds a primary session immediately
 - dependency-blocked siblings remain unstarted until their dependencies clear
 - if a blocked sibling depends on another child that will change the parent branch or parent context, the parent must merge that prerequisite child back into parent state before admitting the dependent sibling

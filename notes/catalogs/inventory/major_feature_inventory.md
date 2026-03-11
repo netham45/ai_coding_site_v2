@@ -409,15 +409,15 @@ The largest remaining `needs_review` areas are:
 
 - Status: `identified`
 - Priority: `critical`
-- Description: Parent nodes reconstruct themselves by resetting to seed and merging child finals in deterministic order.
+- Description: Parent nodes reconstruct themselves by resetting to seed, incrementally merging completed child finals upward for sibling visibility when needed, and later performing final parent-local reconcile work.
 - Related specs:
   - `notes/archive/superseded/git_rectification_spec_revised.md`
 - Expected artifacts:
-  - merge-order logic
+  - incremental merge-order audit
   - reconcile task YAML
   - merge event persistence
 - Known gaps:
-  - reconcile algorithm detail is still high-level
+  - incremental merge lane, dependency-backed parent visibility, and final reconcile interaction still need authoritative implementation detail
 
 ## F19. Regeneration and upstream rectification
 

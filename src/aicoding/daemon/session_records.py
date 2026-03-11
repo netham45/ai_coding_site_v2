@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from aicoding.daemon.admission import admit_node_run, check_node_dependency_readiness
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.daemon.incremental_parent_merge import process_pending_incremental_parent_merges
+from aicoding.daemon.live_git import refresh_child_live_git_from_parent_head
 from aicoding.daemon.session_manager import build_primary_session_plan, build_recovery_primary_session_plan
 from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
 from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeRun, NodeRunState, NodeVersion, Session, SessionEvent, SubtaskAttempt
@@ -307,6 +309,18 @@ class AutoStartedChildSnapshot:
             "admission_status": self.admission_status,
             "session_id": None if self.session_id is None else str(self.session_id),
             "session_status": self.session_status,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AutoAdvancedChildRuntimeSnapshot:
+    processed_merge_count: int
+    refreshed_child_node_ids: list[UUID]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "processed_merge_count": self.processed_merge_count,
+            "refreshed_child_node_ids": [str(item) for item in self.refreshed_child_node_ids],
         }
 
 
@@ -1046,31 +1060,11 @@ def auto_bind_ready_child_runs(
     adapter: SessionAdapter,
     poller: SessionPoller,
 ) -> list[AutoStartedChildSnapshot]:
-    effective_policy = resolve_effective_policy(resources, hierarchy_registry=hierarchy_registry)
-    auto_run_children_default = bool(effective_policy.defaults.get("auto_run_children", True))
-    candidate_pairs: list[tuple[UUID, UUID]] = []
-
-    with query_session_scope(session_factory) as session:
-        selectors = session.execute(select(LogicalNodeCurrentVersion)).scalars().all()
-        authoritative_node_ids_by_version = {
-            row.authoritative_node_version_id: row.logical_node_id for row in selectors
-        }
-        edges = session.execute(select(NodeChild).order_by(NodeChild.created_at)).scalars().all()
-        seen_children: set[UUID] = set()
-        for edge in edges:
-            parent_node_id = authoritative_node_ids_by_version.get(edge.parent_node_version_id)
-            child_node_id = authoritative_node_ids_by_version.get(edge.child_node_version_id)
-            if parent_node_id is None or child_node_id is None or child_node_id in seen_children:
-                continue
-            parent = session.get(HierarchyNode, parent_node_id)
-            if parent is None:
-                continue
-            parent_definition = hierarchy_registry.get(parent.kind)
-            auto_run_children = auto_run_children_default and parent_definition.policies.auto_run_children
-            if not auto_run_children:
-                continue
-            candidate_pairs.append((parent_node_id, child_node_id))
-            seen_children.add(child_node_id)
+    candidate_pairs = _list_auto_run_child_candidate_pairs(
+        session_factory,
+        hierarchy_registry=hierarchy_registry,
+        resources=resources,
+    )
 
     snapshots: list[AutoStartedChildSnapshot] = []
     for parent_node_id, child_node_id in candidate_pairs:
@@ -1129,6 +1123,73 @@ def auto_bind_ready_child_runs(
             )
         )
     return snapshots
+
+
+def auto_advance_incremental_parent_merge_and_refresh_children(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    hierarchy_registry: HierarchyRegistry,
+    resources: ResourceCatalog,
+) -> AutoAdvancedChildRuntimeSnapshot:
+    merge_results = process_pending_incremental_parent_merges(session_factory)
+    refreshed_child_node_ids: list[UUID] = []
+    for _, child_node_id in _list_auto_run_child_candidate_pairs(
+        session_factory,
+        hierarchy_registry=hierarchy_registry,
+        resources=resources,
+    ):
+        readiness = check_node_dependency_readiness(session_factory, node_id=child_node_id)
+        if readiness.status != "blocked":
+            continue
+        if not any(item.blocker_kind == "blocked_on_parent_refresh" for item in readiness.blockers):
+            continue
+        try:
+            refresh_child_live_git_from_parent_head(
+                session_factory,
+                child_version_id=readiness.node_version_id,
+            )
+        except DaemonConflictError:
+            continue
+        check_node_dependency_readiness(session_factory, node_id=child_node_id)
+        refreshed_child_node_ids.append(child_node_id)
+    return AutoAdvancedChildRuntimeSnapshot(
+        processed_merge_count=len(merge_results),
+        refreshed_child_node_ids=refreshed_child_node_ids,
+    )
+
+
+def _list_auto_run_child_candidate_pairs(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    hierarchy_registry: HierarchyRegistry,
+    resources: ResourceCatalog,
+) -> list[tuple[UUID, UUID]]:
+    effective_policy = resolve_effective_policy(resources, hierarchy_registry=hierarchy_registry)
+    auto_run_children_default = bool(effective_policy.defaults.get("auto_run_children", True))
+    candidate_pairs: list[tuple[UUID, UUID]] = []
+
+    with query_session_scope(session_factory) as session:
+        selectors = session.execute(select(LogicalNodeCurrentVersion)).scalars().all()
+        authoritative_node_ids_by_version = {
+            row.authoritative_node_version_id: row.logical_node_id for row in selectors
+        }
+        edges = session.execute(select(NodeChild).order_by(NodeChild.created_at)).scalars().all()
+        seen_children: set[UUID] = set()
+        for edge in edges:
+            parent_node_id = authoritative_node_ids_by_version.get(edge.parent_node_version_id)
+            child_node_id = authoritative_node_ids_by_version.get(edge.child_node_version_id)
+            if parent_node_id is None or child_node_id is None or child_node_id in seen_children:
+                continue
+            parent = session.get(HierarchyNode, parent_node_id)
+            if parent is None:
+                continue
+            parent_definition = hierarchy_registry.get(parent.kind)
+            auto_run_children = auto_run_children_default and parent_definition.policies.auto_run_children
+            if not auto_run_children:
+                continue
+            candidate_pairs.append((parent_node_id, child_node_id))
+            seen_children.add(child_node_id)
+    return candidate_pairs
 
 
 def get_session_for_node(

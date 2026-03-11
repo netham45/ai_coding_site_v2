@@ -599,6 +599,48 @@ class ParentChildAuthority(Base):
     )
 
 
+class ParentIncrementalMergeLane(Base):
+    __tablename__ = "parent_incremental_merge_lanes"
+
+    parent_node_version_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("node_versions.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    current_parent_head_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_successful_merge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    blocked_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class IncrementalChildMergeState(Base):
+    __tablename__ = "incremental_child_merge_state"
+    __table_args__ = (
+        UniqueConstraint("parent_node_version_id", "child_node_version_id", name="uq_incremental_child_merge_state_pair"),
+        Index("ix_incremental_child_merge_state_parent_status_created", "parent_node_version_id", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    parent_node_version_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("node_versions.id"), nullable=False, index=True)
+    child_node_version_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("node_versions.id"), nullable=False, index=True)
+    child_final_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed_unmerged", index=True)
+    applied_merge_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_commit_before: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_commit_after: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conflict_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("merge_conflicts.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class MergeEvent(Base):
     __tablename__ = "merge_events"
 

@@ -35,6 +35,24 @@ So this proposed contract should be understood as:
 - a website-oriented evolution of the current top-level workflow-start behavior
 - not a totally unrelated new flow
 
+## Current Implementation Note
+
+The first shipped implementation keeps the project-scoped route shape but does not yet perform repo-backed top-level bootstrap.
+
+Current shipped behavior:
+
+- `POST /api/projects/{project_id}/top-level-nodes` exists
+- it validates the selected project against the daemon-managed project catalog
+- it creates the top-level node/version through the website-owned project-start path
+- it bootstraps the created node version repo from the selected source repo under `repos/`
+- it returns `project`, `source_repo`, `bootstrap`, and `route_hint`
+
+So the repo-backed portion of this contract is now implemented.
+
+Remaining corrective work for the broader project-selector surface lives separately in:
+
+- `plan/web/features/06_project_selector_context_and_bootstrap_readiness.md`
+
 ## Proposed Request
 
 ```json

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 from uuid import uuid4
 
 from aicoding.daemon.hierarchy import create_hierarchy_node
@@ -10,6 +11,7 @@ from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
 from aicoding.daemon.session_records import (
     CODEX_WORKSPACE_TRUST_ACCEPT_MARKER,
     CODEX_WORKSPACE_TRUST_PROMPT,
+    auto_advance_incremental_parent_merge_and_refresh_children,
     attach_primary_session,
     bind_primary_session,
     inspect_primary_session_screen_state,
@@ -239,6 +241,64 @@ def test_provider_specific_recovery_rebinds_restorable_provider_session(db_sessi
     assert decision.session.tmux_session_name == original_session_name
     assert decision.recovery_status.recovery_classification in {"healthy", "detached", "stale_but_recoverable"}
     assert [item.event_type for item in events][-2:] == ["provider_recovery_attempted", "provider_recovery_rebound"]
+
+
+def test_auto_advance_incremental_parent_merge_and_refresh_children_runs_merge_prepass_and_refreshes_stale_children(
+    db_session_factory,
+    migrated_public_schema,
+    monkeypatch,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent_node_id = uuid4()
+    stale_child_node_id = uuid4()
+    ready_child_node_id = uuid4()
+    stale_child_version_id = uuid4()
+    merge_parent_version_id = uuid4()
+
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records.process_pending_incremental_parent_merges",
+        lambda session_factory: [
+            SimpleNamespace(parent_node_version_id=merge_parent_version_id, child_node_version_id=uuid4(), status="merged")
+        ],
+    )
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records._list_auto_run_child_candidate_pairs",
+        lambda session_factory, hierarchy_registry, resources: [
+            (parent_node_id, stale_child_node_id),
+            (parent_node_id, ready_child_node_id),
+        ],
+    )
+
+    refresh_calls: list[object] = []
+    refreshed = {"done": False}
+
+    def fake_check(session_factory, *, node_id):
+        if node_id == stale_child_node_id and not refreshed["done"]:
+            return SimpleNamespace(
+                status="blocked",
+                node_version_id=stale_child_version_id,
+                blockers=[SimpleNamespace(blocker_kind="blocked_on_parent_refresh")],
+            )
+        return SimpleNamespace(status="ready", node_version_id=uuid4(), blockers=[])
+
+    def fake_refresh(session_factory, *, child_version_id):
+        refresh_calls.append(child_version_id)
+        refreshed["done"] = True
+        return SimpleNamespace()
+
+    monkeypatch.setattr("aicoding.daemon.session_records.check_node_dependency_readiness", fake_check)
+    monkeypatch.setattr("aicoding.daemon.session_records.refresh_child_live_git_from_parent_head", fake_refresh)
+
+    snapshot = auto_advance_incremental_parent_merge_and_refresh_children(
+        db_session_factory,
+        hierarchy_registry=registry,
+        resources=catalog,
+    )
+
+    assert snapshot.processed_merge_count == 1
+    assert snapshot.refreshed_child_node_ids == [stale_child_node_id]
+    assert refresh_calls == [stale_child_version_id]
 
 
 def test_screen_classifier_distinguishes_active_quiet_and_idle(db_session_factory, migrated_public_schema) -> None:

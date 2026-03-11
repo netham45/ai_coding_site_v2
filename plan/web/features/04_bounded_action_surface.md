@@ -36,3 +36,13 @@ Read these note files before implementing or revising this phase:
 - Tests: cover action legality, blocked reasons, confirmations, refresh behavior, and action-table completeness.
 - Performance: action-state refresh should be targeted, not broad full-page reloads.
 - Notes: keep the action table and rubric synchronized with actual implementation.
+
+## Current Limitation
+
+This phase establishes the action catalog and first browser action flows.
+
+It does not by itself finish browser execution proof for every agreed v1 action or the shared loading/error-state closure tied to those flows.
+
+That remaining proof work is corrected by:
+
+- `plan/web/verification/03_v1_action_and_shared_state_browser_closure.md`

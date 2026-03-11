@@ -224,6 +224,7 @@ Implementation staging note:
 - `node child-results --node <id>` now exposes authoritative child finals, blocked-child classification, and deterministic merge order
 - `node reconcile --node <id>` now exposes the packaged parent-local reconcile prompt plus the current derived reconcile context
 - `subtask context --node <id>` now includes durable `parent_reconcile_context` when a staged child merge has already run for the active parent node run
+- that same `parent_reconcile_context` channel now also carries daemon-assembled incremental merge conflict handoff context when the parent merge lane blocks on a conflicted child merge
 - `subtask prompt --node <id>` and `subtask context --node <id>` now expose the same daemon-assembled `stage_context_json` bundle so stage startup does not depend on terminal scrollback or ad hoc session memory
 - that bundle currently includes:
   - startup metadata from the authoritative node version and run
@@ -683,7 +684,8 @@ Implementation staging note:
 - the packaged layout-generation prompts now tell parent sessions to write `layouts/generated_layout.yaml` and immediately run `node register-layout --node <id> --file layouts/generated_layout.yaml`; runtime does not promise ambient discovery of unregistered generated layouts
 - materialization creates child hierarchy rows, authoritative child versions, compiled workflows, ready lifecycle state, and sibling dependency edges in durable storage
 - parent-visible scheduling is currently exposed as derived classifications (`ready`, `blocked`, `invalid`, `impossible_wait`) rather than a separate schedule snapshot table
-- the daemon now runs a background child auto-start loop that admits `ready` child nodes with trigger reason `auto_run_child` and binds their primary sessions without an operator `node run start` or `session bind`
+- the daemon now runs a background child auto-start loop that first advances pending incremental parent merges plus stale-child refresh for auto-run children, then admits `ready` child nodes with trigger reason `auto_run_child` and binds their primary sessions without an operator `node run start` or `session bind`
+- final authoritative parent reconcile now happens only after all required children are already merged upward into the parent lineage the daemon is orchestrating; the reconcile stage is parent-local synthesis, not the first child-to-parent merge step
 - dependency-blocked siblings remain unstarted until readiness changes
 
 ### Scheduling rule

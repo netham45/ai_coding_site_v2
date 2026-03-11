@@ -37,6 +37,12 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+aicoding = [
+    "resources/**/*.md",
+    "resources/**/*.yaml",
+]
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]

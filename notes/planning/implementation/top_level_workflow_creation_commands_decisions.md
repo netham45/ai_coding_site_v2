@@ -7,6 +7,12 @@
 - Added CLI entrypoints `workflow start` and top-level `node create --compile [--start-run]`.
 - Added unit, integration, CLI, and performance coverage for the create/compile/start flow.
 
+Follow-up CLI extension:
+
+- `workflow start` now also accepts `--project <repo>` to route startup through the project-scoped repo-backed create path used by the website
+- when `--project` is present, the CLI calls `POST /api/projects/{project_id}/top-level-nodes` instead of `/api/workflows/start`
+- this keeps plain workflow start intact while adding repo-backed startup parity for the CLI
+
 ## Key implementation decisions
 
 - This slice does not add a new database table. The startup request is represented through existing durable artifacts:
@@ -17,6 +23,7 @@
   - the first admitted run when requested
 - The first admitted run now uses `trigger_reason = workflow_start` so startup-originated runs are distinguishable from later manual starts.
 - `workflow start` derives a title from the prompt when none is supplied, but `node create --compile ...` keeps the explicit `--title` requirement of the existing `node` surface.
+- project-scoped `workflow start --project ...` preserves the same title-derivation behavior as plain `workflow start`; the project-scoped daemon request now accepts an omitted title and resolves it server-side.
 - Top-level startup is intentionally limited to kinds whose YAML definition allows `allow_parentless = true`.
 - The system doctrine is that any node kind may be top-level if it has no parent and its hierarchy definition allows `allow_parentless = true`.
 - The current shipped built-in YAML still marks only `epic` as `allow_parentless`, so current startup behavior is narrower than the intended doctrine and should be treated as a reconciliation gap in the packaged hierarchy and tests.

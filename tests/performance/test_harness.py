@@ -152,7 +152,7 @@ def test_migration_status_probe_completes_quickly() -> None:
 
     try:
         payload, elapsed = measure(lambda: migration_status(engine))
-        assert payload["expected_revision"] == "0028_subtask_execution_results"
+        assert payload["expected_revision"] == "0029_incr_parent_merge_state"
         assert elapsed < 0.3
     finally:
         engine.dispose()

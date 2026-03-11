@@ -29,6 +29,7 @@ Supporting:
 - `parent_node_version_id`
 - authoritative child set for the parent
 - child final commit metadata
+- durable child merge history for the current authoritative parent lineage
 - child summary and result records
 - parent policy for required children and reusable healthy children
 
@@ -39,6 +40,7 @@ Supporting:
 - the parent's authoritative child set is known
 - the authoritative version of each child is resolvable
 - child run status, lifecycle state, summaries, and final commits are queryable
+- applied child merge history for the current authoritative parent lineage is queryable
 
 ---
 
@@ -46,6 +48,7 @@ Supporting:
 
 - child result snapshot keyed by child ID
 - per-child reconciliation readiness classification
+- per-child applied incremental merge order when already merged upward
 - parent-level summary of:
   - complete children
   - failed children
@@ -76,6 +79,7 @@ function collect_child_results(parent_node_version_id):
       lifecycle_state: load_node_lifecycle_state(authoritative_child.id),
       run_status: load_latest_run_status(authoritative_child.id),
       final_commit_sha: load_current_final_commit(authoritative_child.id),
+      merge_order: load_applied_incremental_merge_order(parent_node_version_id, authoritative_child.id),
       latest_summary: load_latest_child_summary(authoritative_child.id),
       dependency_impact: load_child_dependency_impact(authoritative_child.id)
     }
@@ -103,6 +107,7 @@ The parent should not treat a child as ready if:
 
 - its authoritative version is ambiguous
 - its final commit is unavailable when one is required
+- its final commit has not yet been incrementally merged into the authoritative parent lineage that final reconcile will consume
 - its status is failed or paused
 
 ---
@@ -139,7 +144,7 @@ The parent should not treat a child as ready if:
 Operators should be able to inspect:
 
 - which child results the parent currently considers authoritative
-- which children are ready to merge
+- which children are already merged upward and in what applied order
 - which children are blocked, failed, or ambiguous
 
 ---
@@ -148,6 +153,7 @@ Operators should be able to inspect:
 
 - whether child result snapshots should be fully persisted or derived on demand
 - whether parent reconciliation should consume only authoritative children or allow candidate-lineage previews in special review modes
+- how much of the candidate-version rebuild path should share this same result surface versus keeping a separate rectification-oriented replay view
 
 ---
 

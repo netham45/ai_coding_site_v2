@@ -49,10 +49,11 @@ The central Axios client should define:
 
 The client should use one central session/auth mechanism.
 
-Likely direction:
+Current direction:
 
-- daemon bearer token read from the website-served session/bootstrap context
-- Axios attaches it consistently on every request
+- daemon-served runtime reads the daemon bearer token from the website-served bootstrap context
+- Vite development and test flows may still use browser storage or env overrides
+- Axios attaches the resolved token consistently on every request
 
 The frontend should not have each feature manage auth separately.
 

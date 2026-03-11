@@ -45,7 +45,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 python3 -m pytest tests/unit
-python3 -m aicoding.cli.main doctor
+python3 -m aicoding.cli.main admin doctor
 python3 -m aicoding.cli.main admin db ping
 python3 -m aicoding.cli.main admin db upgrade
 uvicorn aicoding.daemon.app:create_app --factory --reload

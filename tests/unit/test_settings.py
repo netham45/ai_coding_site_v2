@@ -27,6 +27,14 @@ def test_settings_read_environment(monkeypatch) -> None:
     assert settings.daemon.request_timeout_seconds == 45
 
 
+def test_settings_default_to_tmux_session_backend(monkeypatch) -> None:
+    monkeypatch.delenv("AICODING_SESSION_BACKEND", raising=False)
+    get_settings.cache_clear()
+    settings = Settings(database_url="postgresql+psycopg://user:pass@localhost:5432/aicoding")
+
+    assert settings.session.model_dump()["backend"] == "tmux"
+
+
 def test_settings_build_typed_submodels() -> None:
     settings = Settings(
         database_url="postgresql+psycopg://user:pass@localhost:5432/aicoding",

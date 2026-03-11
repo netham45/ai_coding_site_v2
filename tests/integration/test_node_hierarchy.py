@@ -62,6 +62,14 @@ def test_daemon_lists_node_kinds_and_creates_nodes(app_client, migrated_public_s
 
     assert tree_response.status_code == 200
     assert [item["title"] for item in tree_response.json()["nodes"]] == ["Epic title", "Phase title"]
+    assert tree_response.json()["generated_at"]
+    assert tree_response.json()["nodes"][0]["has_children"] is True
+    assert tree_response.json()["nodes"][0]["child_count"] == 1
+    assert tree_response.json()["nodes"][0]["child_rollups"]["total"] == 1
+    assert tree_response.json()["nodes"][0]["authoritative_node_version_id"] is not None
+    assert tree_response.json()["nodes"][0]["latest_created_node_version_id"] is not None
+    assert tree_response.json()["nodes"][0]["created_at"]
+    assert tree_response.json()["nodes"][0]["last_updated_at"]
     assert siblings_response.status_code == 200
     assert siblings_response.json() == []
     assert summary_response.status_code == 200

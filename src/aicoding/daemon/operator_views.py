@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -76,10 +77,18 @@ class TreeNodeSnapshot:
     kind: str
     tier: str
     title: str
+    authoritative_node_version_id: UUID | None
+    latest_created_node_version_id: UUID | None
     lifecycle_state: str | None
     run_status: str | None
     scheduling_status: str | None = None
     blocker_count: int = 0
+    blocker_state: str = "none"
+    has_children: bool = False
+    child_count: int = 0
+    child_rollups: dict[str, int] | None = None
+    created_at: str = ""
+    last_updated_at: str = ""
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -89,21 +98,31 @@ class TreeNodeSnapshot:
             "kind": self.kind,
             "tier": self.tier,
             "title": self.title,
+            "authoritative_node_version_id": None if self.authoritative_node_version_id is None else str(self.authoritative_node_version_id),
+            "latest_created_node_version_id": None if self.latest_created_node_version_id is None else str(self.latest_created_node_version_id),
             "lifecycle_state": self.lifecycle_state,
             "run_status": self.run_status,
             "scheduling_status": self.scheduling_status,
             "blocker_count": self.blocker_count,
+            "blocker_state": self.blocker_state,
+            "has_children": self.has_children,
+            "child_count": self.child_count,
+            "child_rollups": {} if self.child_rollups is None else dict(self.child_rollups),
+            "created_at": self.created_at,
+            "last_updated_at": self.last_updated_at,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class TreeCatalogSnapshot:
     root_node_id: UUID
+    generated_at: str
     nodes: list[TreeNodeSnapshot]
 
     def to_payload(self) -> dict[str, object]:
         return {
             "root_node_id": str(self.root_node_id),
+            "generated_at": self.generated_at,
             "nodes": [item.to_payload() for item in self.nodes],
         }
 
@@ -207,7 +226,13 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
         selectors = session.execute(
             select(LogicalNodeCurrentVersion).where(LogicalNodeCurrentVersion.logical_node_id.in_([row.node_id for row in rows]))
         ).scalars().all()
+        selector_by_node_id = {item.logical_node_id: item for item in selectors}
         version_by_node_id = {item.logical_node_id: item.authoritative_node_version_id for item in selectors}
+        version_ids = list({version_id for version_id in version_by_node_id.values()})
+        version_by_id = {
+            item.id: item
+            for item in session.execute(select(NodeVersion).where(NodeVersion.id.in_(version_ids))).scalars().all()
+        }
         blocker_rows = session.execute(
             select(NodeDependencyBlocker).where(NodeDependencyBlocker.node_version_id.in_(list(version_by_node_id.values())))
         ).scalars().all()
@@ -221,6 +246,10 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
 
         def visit(node: HierarchyNode, depth: int) -> None:
             lifecycle = lifecycle_by_node_id.get(str(node.node_id))
+            selector = selector_by_node_id.get(node.node_id)
+            version = None if selector is None else version_by_id.get(selector.authoritative_node_version_id)
+            child_nodes = children_by_parent.get(node.node_id, [])
+            blocker_count = len(blockers_by_version_id.get(version_by_node_id.get(node.node_id), []))
             ordered.append(
                 TreeNodeSnapshot(
                     node_id=node.node_id,
@@ -229,20 +258,28 @@ def load_tree_catalog(session_factory: sessionmaker[Session], *, root_node_id: U
                     kind=node.kind,
                     tier=node.tier,
                     title=node.title,
+                    authoritative_node_version_id=None if selector is None else selector.authoritative_node_version_id,
+                    latest_created_node_version_id=None if selector is None else selector.latest_created_node_version_id,
                     lifecycle_state=None if lifecycle is None else lifecycle.lifecycle_state,
                     run_status=None if lifecycle is None else lifecycle.run_status,
                     scheduling_status=_tree_scheduling_status(
                         lifecycle,
-                        blocker_count=len(blockers_by_version_id.get(version_by_node_id.get(node.node_id), [])),
+                        blocker_count=blocker_count,
                     ),
-                    blocker_count=len(blockers_by_version_id.get(version_by_node_id.get(node.node_id), [])),
+                    blocker_count=blocker_count,
+                    blocker_state=_tree_blocker_state(lifecycle, blocker_count=blocker_count),
+                    has_children=bool(child_nodes),
+                    child_count=len(child_nodes),
+                    child_rollups=_tree_child_rollups(children=child_nodes, lifecycle_by_node_id=lifecycle_by_node_id, blockers_by_version_id=blockers_by_version_id, version_by_node_id=version_by_node_id),
+                    created_at=node.created_at.isoformat(),
+                    last_updated_at=_tree_last_updated_at(node=node, lifecycle=lifecycle, selector=selector, version=version),
                 )
             )
-            for child in children_by_parent.get(node.node_id, []):
+            for child in child_nodes:
                 visit(child, depth + 1)
 
         visit(root, 0)
-        return TreeCatalogSnapshot(root_node_id=root_node_id, nodes=ordered)
+        return TreeCatalogSnapshot(root_node_id=root_node_id, generated_at=datetime.now(timezone.utc).isoformat(), nodes=ordered)
 
 
 def _tree_scheduling_status(lifecycle: NodeLifecycleState | None, *, blocker_count: int) -> str | None:
@@ -263,6 +300,60 @@ def _tree_scheduling_status(lifecycle: NodeLifecycleState | None, *, blocker_cou
     if lifecycle.lifecycle_state == "READY":
         return "ready"
     return "not_compiled"
+
+
+def _tree_blocker_state(lifecycle: NodeLifecycleState | None, *, blocker_count: int) -> str:
+    if lifecycle is not None and (lifecycle.run_status == "PAUSED" or lifecycle.pause_flag_name is not None):
+        return "paused_for_user"
+    if blocker_count > 0:
+        return "blocked"
+    return "none"
+
+
+def _tree_child_rollups(
+    *,
+    children: list[HierarchyNode],
+    lifecycle_by_node_id: dict[str, NodeLifecycleState],
+    blockers_by_version_id: dict[UUID, list[NodeDependencyBlocker]],
+    version_by_node_id: dict[UUID, UUID],
+) -> dict[str, int]:
+    buckets = {
+        "total": len(children),
+        "ready": 0,
+        "running": 0,
+        "paused_for_user": 0,
+        "blocked": 0,
+        "failed": 0,
+        "complete": 0,
+        "superseded": 0,
+        "not_compiled": 0,
+    }
+    for child in children:
+        lifecycle = lifecycle_by_node_id.get(str(child.node_id))
+        blocker_count = len(blockers_by_version_id.get(version_by_node_id.get(child.node_id), []))
+        status = _tree_scheduling_status(lifecycle, blocker_count=blocker_count) or "not_compiled"
+        if status in buckets:
+            buckets[status] += 1
+        else:
+            buckets["not_compiled"] += 1
+    return buckets
+
+
+def _tree_last_updated_at(
+    *,
+    node: HierarchyNode,
+    lifecycle: NodeLifecycleState | None,
+    selector: LogicalNodeCurrentVersion | None,
+    version: NodeVersion | None,
+) -> str:
+    candidates = [node.created_at]
+    if lifecycle is not None:
+        candidates.extend([lifecycle.created_at, lifecycle.updated_at])
+    if selector is not None:
+        candidates.append(selector.updated_at)
+    if version is not None:
+        candidates.extend([version.created_at, version.updated_at])
+    return max(candidates).isoformat()
 
 
 def list_sibling_nodes(session_factory: sessionmaker[Session], *, node_id: UUID) -> list[NodeOperatorSummarySnapshot]:

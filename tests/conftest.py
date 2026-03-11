@@ -25,7 +25,8 @@ from tests.fixtures.resources import (
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache():
+def clear_settings_cache(monkeypatch):
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

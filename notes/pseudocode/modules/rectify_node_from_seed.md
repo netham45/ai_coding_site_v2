@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Rebuild one node version from its seed commit by replaying child merges in deterministic order, then rerunning reconcile and quality-gate stages until a new final commit is produced or failure stops the path.
+Rebuild one node version from its seed commit by replaying child merges for that candidate lineage, then rerunning reconcile and quality-gate stages until a new final commit is produced or failure stops the path.
 
 ---
 
@@ -35,7 +35,7 @@ Supporting:
 
 - node version exists and is in candidate or rebuild context
 - seed commit is known
-- deterministic child merge order is derivable
+- child merge replay order is derivable for the rebuilt lineage
 - authoritative child finals are queryable
 
 ---
@@ -117,14 +117,10 @@ function rectify_node_from_seed(node_version_id):
 
 ## Ordering rules
 
-Child merge order should be deterministic and replayable:
-
-1. explicit sibling dependency order
-2. explicit child ordinal
-3. child creation timestamp
-4. child node ID
-
-The chosen order should be persisted or derivable from persisted merge metadata.
+- The authoritative live parent lineage now consumes already-applied incremental child merge history during final reconcile and does not synthesize a second final-stage merge sequence.
+- Candidate-version rectification still needs a replay order for the rebuilt lineage.
+- Where a rebuilt lineage already has merge metadata, replay should follow that persisted order.
+- Where it does not, the daemon may derive a deterministic replay order from sibling dependency order, child ordinal, creation timestamp, and child node ID.
 
 ---
 
@@ -188,7 +184,7 @@ Operators should be able to inspect:
 
 ## Pseudotests
 
-### `rebuilds_from_seed_then_merges_authoritative_child_finals_in_order`
+### `rebuilds_from_seed_then_merges_authoritative_child_finals_in_replay_order`
 
 Given:
 
@@ -197,7 +193,7 @@ Given:
 Expect:
 
 - branch resets to seed
-- children merge in deterministic order
+- children merge in the replay order chosen for the rebuilt lineage
 
 ### `stops_on_merge_conflict_and_records_conflict`
 

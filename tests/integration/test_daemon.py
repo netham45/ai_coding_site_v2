@@ -14,8 +14,15 @@ from aicoding.daemon.admission import admit_node_run
 from aicoding.daemon.branches import record_final_commit, record_seed_commit
 from aicoding.daemon.errors import DaemonUnavailableError
 from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
+from aicoding.daemon.incremental_parent_merge import process_next_incremental_child_merge, record_completed_child_for_incremental_merge
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
-from aicoding.daemon.live_git import abort_live_merge, bootstrap_live_git_repo, execute_live_merge_children, stage_live_git_change
+from aicoding.daemon.live_git import (
+    abort_live_merge,
+    bootstrap_live_git_repo,
+    execute_live_merge_children,
+    show_live_git_status,
+    stage_live_git_change,
+)
 from aicoding.daemon.manual_tree import create_manual_node
 from aicoding.daemon.run_orchestration import register_summary, start_subtask_attempt
 from aicoding.daemon.session_records import inspect_primary_session_screen_state, nudge_primary_session
@@ -146,7 +153,11 @@ def _wait_for_child_auto_start_state(
             for node_id in target_node_ids
         }
         started_ok = all(
-            snapshot["runs"] and snapshot["sessions"] and snapshot["runs"][0]["trigger_reason"] == "auto_run_child"
+            snapshot["sessions"]
+            and (
+                (snapshot["runs"] and snapshot["runs"][0]["trigger_reason"] == "auto_run_child")
+                or any(item["blocker_kind"] == "already_running" for item in snapshot["dependency_blockers"])
+            )
             for node_id, snapshot in last_snapshots.items()
             if node_id in started_node_ids
         )
@@ -317,7 +328,7 @@ def test_db_schema_compatibility_reports_revision_state(app_client, clean_public
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["expected_revision"] == "0028_subtask_execution_results"
+    assert payload["expected_revision"] == "0029_incr_parent_merge_state"
     assert payload["status"] == "up_to_date"
     assert payload["compatible"] is True
 
@@ -330,7 +341,7 @@ def test_daemon_status_reports_background_tasks(app_client) -> None:
     assert payload["authority"] == "daemon"
     assert "session_recovery" in payload["background_tasks"]
     assert payload["write_probe"]["write_path"] == "available"
-    assert payload["schema_compatibility"]["expected_revision"] == "0028_subtask_execution_results"
+    assert payload["schema_compatibility"]["expected_revision"] == "0029_incr_parent_merge_state"
 
 
 def test_background_loops_skip_cleanly_until_runtime_tables_exist(clean_public_schema, daemon_token: str, caplog, monkeypatch) -> None:
@@ -1344,12 +1355,28 @@ def test_background_child_auto_run_loop_blocks_simple_chain_until_dependency_com
             assert first["scheduling_status"] == "ready"
             assert second["scheduling_status"] == "blocked_on_dependency"
 
+            session_factory = client.app.state.db_session_factory
+            parent_version_id = UUID(_current_node_version_id(client, node_id=parent_id))
+            first_version_id = UUID(_current_node_version_id(client, node_id=str(first["node_id"])))
+            second_version_id = UUID(_current_node_version_id(client, node_id=str(second["node_id"])))
+            bootstrap_live_git_repo(session_factory, version_id=parent_version_id, files={"shared.txt": "seed\n"})
+            bootstrap_live_git_repo(session_factory, version_id=first_version_id)
+            bootstrap_live_git_repo(session_factory, version_id=second_version_id)
+
             _wait_for_child_auto_start_state(
                 client,
                 started_node_ids={str(first["node_id"])},
                 blocked_node_ids={str(second["node_id"])},
             )
+            stage_live_git_change(
+                session_factory,
+                version_id=first_version_id,
+                files={"shared.txt": "from sibling one\n"},
+                message="Sibling one final",
+                record_as_final=True,
+            )
             _transition_child_to_complete(client, node_id=str(first["node_id"]))
+            record_completed_child_for_incremental_merge(session_factory, child_node_version_id=first_version_id)
 
             snapshots = _wait_for_child_auto_start_state(
                 client,
@@ -1357,30 +1384,23 @@ def test_background_child_auto_run_loop_blocks_simple_chain_until_dependency_com
                 blocked_node_ids=set(),
             )
 
-            assert "blocked_on_dependency" not in {
+            assert "blocked_on_incremental_merge" not in {
                 item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
             }
-            _transition_child_to_complete(client, node_id=str(second["node_id"]))
+            assert "blocked_on_parent_refresh" not in {
+                item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
+            }
 
-            session_factory = client.app.state.db_session_factory
-            first_version_id = _current_node_version_id(client, node_id=str(first["node_id"]))
-            second_version_id = _current_node_version_id(client, node_id=str(second["node_id"]))
-            record_seed_commit(session_factory, version_id=UUID(first_version_id), commit_sha="1111111")
-            record_final_commit(session_factory, version_id=UUID(first_version_id), commit_sha="1111112")
-            record_seed_commit(session_factory, version_id=UUID(second_version_id), commit_sha="2222221")
-            record_final_commit(session_factory, version_id=UUID(second_version_id), commit_sha="2222222")
-
-            child_results_response = client.get(
-                f"/api/nodes/{parent_id}/child-results",
+            merge_events_response = client.get(
+                f"/api/nodes/{parent_id}/git/merge-events",
                 headers={"Authorization": "Bearer change-me"},
             )
-            assert child_results_response.status_code == 200
-            child_results_payload = child_results_response.json()
-            assert child_results_payload["children"][0]["layout_child_id"] == "sibling_one"
-            assert child_results_payload["children"][1]["layout_child_id"] == "sibling_two"
-            assert child_results_payload["children"][0]["merge_order"] == 1
-            assert child_results_payload["children"][1]["merge_order"] == 2
-            assert child_results_payload["children"][1]["dependency_child_node_ids"] == [str(first["node_id"])]
+            assert merge_events_response.status_code == 200
+            merge_events_payload = merge_events_response.json()
+            assert len(merge_events_payload["events"]) == 1
+            merged_parent_head = merge_events_payload["events"][0]["parent_commit_after"]
+            second_git = show_live_git_status(session_factory, version_id=second_version_id)
+            assert second_git.seed_commit_sha == merged_parent_head
     finally:
         get_settings.cache_clear()
 
@@ -1423,7 +1443,7 @@ def test_background_child_auto_run_loop_unblocks_fan_out_siblings_together_after
     get_settings.cache_clear()
     try:
         with TestClient(create_app()) as client:
-            _, children = _create_parent_with_generated_children(
+            parent_id, children = _create_parent_with_generated_children(
                 client,
                 layout_path=layout_path,
                 title="Fan Out Parent",
@@ -1435,12 +1455,30 @@ def test_background_child_auto_run_loop_unblocks_fan_out_siblings_together_after
             assert second["scheduling_status"] == "blocked_on_dependency"
             assert third["scheduling_status"] == "blocked_on_dependency"
 
+            session_factory = client.app.state.db_session_factory
+            parent_version_id = UUID(_current_node_version_id(client, node_id=parent_id))
+            first_version_id = UUID(_current_node_version_id(client, node_id=str(first["node_id"])))
+            second_version_id = UUID(_current_node_version_id(client, node_id=str(second["node_id"])))
+            third_version_id = UUID(_current_node_version_id(client, node_id=str(third["node_id"])))
+            bootstrap_live_git_repo(session_factory, version_id=parent_version_id, files={"shared.txt": "seed\n"})
+            bootstrap_live_git_repo(session_factory, version_id=first_version_id)
+            bootstrap_live_git_repo(session_factory, version_id=second_version_id)
+            bootstrap_live_git_repo(session_factory, version_id=third_version_id)
+
             _wait_for_child_auto_start_state(
                 client,
                 started_node_ids={str(first["node_id"])},
                 blocked_node_ids={str(second["node_id"]), str(third["node_id"])},
             )
+            stage_live_git_change(
+                session_factory,
+                version_id=first_version_id,
+                files={"shared.txt": "from shared prerequisite\n"},
+                message="Sibling one final",
+                record_as_final=True,
+            )
             _transition_child_to_complete(client, node_id=str(first["node_id"]))
+            record_completed_child_for_incremental_merge(session_factory, child_node_version_id=first_version_id)
 
             snapshots = _wait_for_child_auto_start_state(
                 client,
@@ -1448,10 +1486,16 @@ def test_background_child_auto_run_loop_unblocks_fan_out_siblings_together_after
                 blocked_node_ids=set(),
             )
 
-            assert "blocked_on_dependency" not in {
+            assert "blocked_on_incremental_merge" not in {
                 item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
             }
-            assert "blocked_on_dependency" not in {
+            assert "blocked_on_parent_refresh" not in {
+                item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
+            }
+            assert "blocked_on_incremental_merge" not in {
+                item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
+            }
+            assert "blocked_on_parent_refresh" not in {
                 item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
             }
     finally:
@@ -1496,7 +1540,7 @@ def test_background_child_auto_run_loop_starts_independent_siblings_while_leavin
     get_settings.cache_clear()
     try:
         with TestClient(create_app()) as client:
-            _, children = _create_parent_with_generated_children(
+            parent_id, children = _create_parent_with_generated_children(
                 client,
                 layout_path=layout_path,
                 title="Mixed Sibling Parent",
@@ -1508,12 +1552,30 @@ def test_background_child_auto_run_loop_starts_independent_siblings_while_leavin
             assert second["scheduling_status"] == "ready"
             assert third["scheduling_status"] == "blocked_on_dependency"
 
+            session_factory = client.app.state.db_session_factory
+            parent_version_id = UUID(_current_node_version_id(client, node_id=parent_id))
+            first_version_id = UUID(_current_node_version_id(client, node_id=str(first["node_id"])))
+            second_version_id = UUID(_current_node_version_id(client, node_id=str(second["node_id"])))
+            third_version_id = UUID(_current_node_version_id(client, node_id=str(third["node_id"])))
+            bootstrap_live_git_repo(session_factory, version_id=parent_version_id, files={"shared.txt": "seed\n"})
+            bootstrap_live_git_repo(session_factory, version_id=first_version_id)
+            bootstrap_live_git_repo(session_factory, version_id=second_version_id)
+            bootstrap_live_git_repo(session_factory, version_id=third_version_id)
+
             _wait_for_child_auto_start_state(
                 client,
                 started_node_ids={str(first["node_id"]), str(second["node_id"])},
                 blocked_node_ids={str(third["node_id"])},
             )
+            stage_live_git_change(
+                session_factory,
+                version_id=second_version_id,
+                files={"shared.txt": "from sibling two\n"},
+                message="Sibling two final",
+                record_as_final=True,
+            )
             _transition_child_to_complete(client, node_id=str(second["node_id"]))
+            record_completed_child_for_incremental_merge(session_factory, child_node_version_id=second_version_id)
 
             snapshots = _wait_for_child_auto_start_state(
                 client,
@@ -1521,7 +1583,10 @@ def test_background_child_auto_run_loop_starts_independent_siblings_while_leavin
                 blocked_node_ids=set(),
             )
 
-            assert "blocked_on_dependency" not in {
+            assert "blocked_on_incremental_merge" not in {
+                item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
+            }
+            assert "blocked_on_parent_refresh" not in {
                 item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
             }
     finally:
@@ -1554,19 +1619,22 @@ def test_child_result_and_reconcile_endpoints_report_and_record_merge_state(
         message="Child final",
         record_as_final=True,
     )
+    record_completed_child_for_incremental_merge(db_session_factory, child_node_version_id=child_version)
+    process_next_incremental_child_merge(db_session_factory, parent_node_version_id=parent_version.id)
 
     child_results = app_client.get(f"/api/nodes/{parent.node_id}/child-results", headers={"Authorization": "Bearer change-me"})
     reconcile_before = app_client.get(f"/api/nodes/{parent.node_id}/reconcile", headers={"Authorization": "Bearer change-me"})
-    merge_response = app_client.post(f"/api/nodes/{parent.node_id}/git/merge-children", headers={"Authorization": "Bearer change-me"})
+    merge_events = app_client.get(f"/api/nodes/{parent.node_id}/git/merge-events", headers={"Authorization": "Bearer change-me"})
 
     assert child_results.status_code == 200
     assert child_results.json()["status"] == "ready_for_reconcile"
     assert child_results.json()["children"][0]["merge_order"] == 1
     assert reconcile_before.status_code == 200
     assert reconcile_before.json()["prompt_relative_path"] == "execution/reconcile_parent_after_merge.md"
-    assert merge_response.status_code == 200
-    assert merge_response.json()["status"] == "merged"
-    assert merge_response.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
+    assert reconcile_before.json()["status"] == "ready_for_reconcile"
+    assert reconcile_before.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
+    assert merge_events.status_code == 200
+    assert merge_events.json()["events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
 
 
 def test_illegal_node_mutations_are_rejected(app_client, migrated_public_schema) -> None:

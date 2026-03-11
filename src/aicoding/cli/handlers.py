@@ -1217,6 +1217,17 @@ def handle_workflow_compile(args: Namespace, context: CliContext) -> dict[str, o
 
 def handle_workflow_start(args: Namespace, context: CliContext) -> dict[str, object]:
     client = build_daemon_client(context.settings)
+    if getattr(args, "project", None):
+        return client.request(
+            "POST",
+            f"/api/projects/{args.project}/top-level-nodes",
+            json_payload={
+                "kind": args.kind,
+                "title": getattr(args, "title", None),
+                "prompt": args.prompt,
+                "start_run": not getattr(args, "no_run", False),
+            },
+        )
     return client.request(
         "POST",
         "/api/workflows/start",

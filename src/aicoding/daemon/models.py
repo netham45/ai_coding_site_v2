@@ -313,6 +313,53 @@ class WorkflowStartRequest(AICodingModel):
     start_run: bool = True
 
 
+class ProjectCatalogEntryResponse(AICodingModel):
+    project_id: str
+    label: str
+    source_path: str
+    bootstrap_ready: bool = False
+    readiness_code: str
+    readiness_message: str | None = None
+    default_branch: str | None = None
+    head_commit_sha: str | None = None
+
+
+class ProjectCatalogDaemonContextResponse(AICodingModel):
+    reachability_state: str
+    auth_status: str
+    daemon_app_name: str
+    daemon_version: str
+    authority: str
+    session_backend: str
+
+
+class ProjectCatalogResponse(AICodingModel):
+    daemon_context: ProjectCatalogDaemonContextResponse
+    projects: list[ProjectCatalogEntryResponse]
+
+
+class ProjectBootstrapResponse(AICodingModel):
+    project: ProjectCatalogEntryResponse
+    root_node_id: str | None = None
+    route_hint: ProjectRouteHintResponse | None = None
+
+
+class ProjectTopLevelNodeCreateRequest(AICodingModel):
+    kind: str
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    prompt: str = Field(min_length=1)
+    start_run: bool = True
+
+
+class ProjectRepoBootstrapResponse(AICodingModel):
+    repo_bootstrap_status: str
+    worker_repo_path: str
+    branch_name: str
+    seed_commit_sha: str | None = None
+    head_commit_sha: str | None = None
+    working_tree_state: str
+
+
 class NodeSupersedeRequest(AICodingModel):
     title: str | None = None
     prompt: str | None = None
@@ -421,15 +468,31 @@ class TreeNodeResponse(AICodingModel):
     kind: str
     tier: str
     title: str
+    authoritative_node_version_id: str | None = None
+    latest_created_node_version_id: str | None = None
     lifecycle_state: str | None = None
     run_status: str | None = None
     scheduling_status: str | None = None
     blocker_count: int = 0
+    blocker_state: str = "none"
+    has_children: bool = False
+    child_count: int = 0
+    child_rollups: dict[str, int] = Field(default_factory=dict)
+    created_at: str
+    last_updated_at: str
 
 
 class TreeCatalogResponse(AICodingModel):
     root_node_id: str
+    generated_at: str
     nodes: list[TreeNodeResponse]
+
+
+class ProjectRouteHintResponse(AICodingModel):
+    project_id: str
+    node_id: str
+    tab: str
+    url: str
 
 
 class NodePauseStateResponse(AICodingModel):
@@ -476,6 +539,24 @@ class InterventionActionResponse(AICodingModel):
     action: str
     status: str
     result_json: dict[str, object]
+
+
+class NodeActionResponse(AICodingModel):
+    action_id: str
+    label: str
+    group: str
+    legal: bool
+    blocked_reason: str | None = None
+    confirmation_mode: str = "inline"
+    confirmation_label: str
+    target_scope: str = "selected_node"
+    details_json: dict[str, object] = Field(default_factory=dict)
+
+
+class NodeActionCatalogResponse(AICodingModel):
+    node_id: str
+    node_version_id: str | None = None
+    actions: list[NodeActionResponse]
 
 
 class NodeEventResponse(AICodingModel):
@@ -1469,6 +1550,22 @@ class WorkflowStartResponse(AICodingModel):
     lifecycle: NodeLifecycleStateResponse
     run_admission: NodeRunAdmissionResponse | None = None
     run_progress: RunProgressResponse | None = None
+
+
+class ProjectTopLevelNodeCreateResponse(AICodingModel):
+    status: str
+    requested_start_run: bool
+    resolved_title: str
+    project: ProjectCatalogEntryResponse
+    source_repo: ProjectCatalogEntryResponse
+    bootstrap: ProjectRepoBootstrapResponse
+    node: HierarchyNodeResponse
+    node_version_id: str
+    compile: WorkflowCompileAttemptResponse
+    lifecycle: NodeLifecycleStateResponse
+    run_admission: NodeRunAdmissionResponse | None = None
+    run_progress: RunProgressResponse | None = None
+    route_hint: ProjectRouteHintResponse
 
 
 class EnvironmentPolicyResponse(AICodingModel):

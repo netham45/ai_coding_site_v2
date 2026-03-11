@@ -20,6 +20,13 @@ Task-plan rules:
 
 Current task index:
 
+- `2026-03-11_daemon_import_cycle_fix_plan.md`
+- `2026-03-11_packaged_resource_install_fix_implementation.md`
+- `2026-03-11_packaged_resource_install_fix_plan.md`
+- `2026-03-11_default_tmux_session_backend_implementation.md`
+- `2026-03-11_test_default_fake_session_backend.md`
+- `2026-03-11_default_tmux_session_backend_plan.md`
+- `2026-03-11_getting_started_guide_refresh.md`
 - `2026-03-10_daemon_timeout_idle_nudge_e2e.md`
 - `2026-03-10_full_epic_tree_real_e2e_skeleton.md`
 - `2026-03-10_silent_until_nudged_done_notification_e2e.md`
@@ -53,6 +60,28 @@ Current task index:
 - `2026-03-11_remaining_test_failure_remediation_plan.md`
 - `2026-03-11_testing_doctrine_parallel_execution_requirement.md`
 - `2026-03-11_web_setup_00_node_and_package_runtime_baseline.md`
+- `2026-03-11_web_setup_01_vite_and_react_bootstrap.md`
+- `2026-03-11_web_setup_02_axios_and_query_foundation.md`
+- `2026-03-11_web_setup_03_playwright_bootstrap.md`
+- `2026-03-11_web_setup_04_mock_daemon_harness_bootstrap.md`
+- `2026-03-11_web_setup_05_shell_router_and_shared_primitives.md`
+- `2026-03-11_web_feature_00_project_bootstrap_and_selection.md`
+- `2026-03-11_web_feature_01_explorer_shell_and_hierarchy_tree.md`
+- `2026-03-11_web_feature_02_detail_tabs.md`
+- `2026-03-11_web_feature_03_prompts_and_regeneration_flow.md`
+- `2026-03-11_web_feature_04_bounded_action_surface.md`
+- `2026-03-11_web_feature_05_repo_backed_project_start_and_top_level_bootstrap.md`
+- `2026-03-11_web_feature_06_project_selector_context_and_bootstrap_readiness.md`
+- `2026-03-11_web_feature_07_tree_filter_completion.md`
+- `2026-03-11_web_feature_08_daemon_served_compiled_frontend_and_auth_bootstrap.md`
+- `2026-03-11_web_feature_08_daemon_served_compiled_frontend_and_auth_bootstrap_implementation.md`
+- `2026-03-11_cli_workflow_start_project_flag.md`
+- `2026-03-11_web_repo_backed_project_start_planning.md`
+- `2026-03-11_web_v1_gap_correction_planning.md`
+- `2026-03-11_web_verification_00_browser_harness_and_e2e_matrix.md`
+- `2026-03-11_web_verification_01_missing_test_audit_and_final_verification.md`
+- `2026-03-11_web_hardening_00_browser_gap_closure.md`
+- `2026-03-11_web_hardening_01_residual_browser_gap_closure.md`
 - `2026-03-11_frontend_website_future_plan_capture.md`
 - `2026-03-11_collaborative_design_future_plan_capture.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_investigation.md`

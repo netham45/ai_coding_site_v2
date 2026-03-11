@@ -134,7 +134,8 @@ Current backend constraint:
 
 Backend status:
 
-- partially missing because current top-level workflow start does not yet perform the intended repo-backed bootstrap
+- repo-backed project start is now implemented through the project-scoped website route
+- daemon/context and bootstrap-readiness cues are now implemented on the project selector screen
 
 ### 2. Main Explorer Screen
 
@@ -284,6 +285,10 @@ It should behave as an operator navigation tool, not as a full detail surface.
 - blocked-only filter
 - active-only filter
 - kind filter
+
+Current implementation status:
+
+- these required v1 filters are now implemented in the explorer sidebar over the expanded tree payload
 
 ### Allowed but non-required v1 behavior
 
@@ -587,6 +592,7 @@ Frozen decision:
 - updating the prompt and regenerating the node should use the current version/supersede semantics
 - the result should be a new node version rather than in-place clobbering of the old node version
 - the original node version should remain inspectable and reconstructible
+- regeneration may reuse the latest created candidate version when one already exists for the logical node, so the website can safely do supersede first and regenerate second without a browser-only combined endpoint
 
 ### Prompt update interaction rule
 

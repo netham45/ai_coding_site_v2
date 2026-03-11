@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import inspect
 
 from aicoding.bootstrap import bootstrap_status
@@ -22,6 +22,7 @@ from aicoding.daemon.admission import (
     list_node_dependencies,
     validate_node_dependency_graph,
 )
+from aicoding.daemon.actions import list_node_actions
 from aicoding.daemon.background import BackgroundTaskRegistry
 from aicoding.daemon.branches import (
     load_node_branch_metadata,
@@ -63,12 +64,19 @@ from aicoding.daemon.dependencies import (
     get_settings_dependency,
 )
 from aicoding.daemon.errors import DaemonConflictError, DaemonUnavailableError
+from aicoding.daemon.frontend_runtime import serve_frontend_asset, serve_frontend_index
 from aicoding.daemon.regeneration import (
     list_rebuild_events_for_node,
     rectify_upstream,
     regenerate_node_and_descendants,
 )
 from aicoding.daemon.quality_chain import run_turnkey_quality_chain
+from aicoding.daemon.projects import (
+    build_project_catalog_daemon_context,
+    list_projects,
+    load_project_bootstrap,
+    start_project_top_level_workflow,
+)
 from aicoding.daemon.rebuild_coordination import inspect_cutover_readiness, inspect_rebuild_coordination
 from aicoding.daemon.reproducibility import load_node_audit_snapshot, load_run_audit_snapshot
 from aicoding.daemon.review_runtime import (
@@ -159,6 +167,7 @@ from aicoding.daemon.models import (
     NodeKindDefinitionResponse,
     NodeAuthorityStateResponse,
     NodeAuditResponse,
+    NodeActionCatalogResponse,
     NodeLineageResponse,
     NodeOperatorSummaryResponse,
     NodePauseStateResponse,
@@ -183,8 +192,14 @@ from aicoding.daemon.models import (
     RunProgressResponse,
     OverrideChainResponse,
     PolicyImpactResponse,
+    ProjectCatalogEntryResponse,
+    ProjectCatalogResponse,
+    ProjectBootstrapResponse,
     ProjectPolicyCatalogResponse,
     ProjectPolicyResponse,
+    ProjectRouteHintResponse,
+    ProjectTopLevelNodeCreateRequest,
+    ProjectTopLevelNodeCreateResponse,
     RebuildHistoryResponse,
     CutoverReadinessResponse,
     RebuildEventResponse,
@@ -283,6 +298,7 @@ from aicoding.daemon.run_orchestration import (
 from aicoding.daemon.session_harness import SessionPoller, build_session_adapter
 from aicoding.daemon.session_records import (
     attach_primary_session,
+    auto_advance_incremental_parent_merge_and_refresh_children,
     auto_bind_ready_child_runs,
     bind_primary_session,
     get_session_by_id,
@@ -415,10 +431,22 @@ async def _run_idle_nudge_background_loop(app: FastAPI) -> None:
 
 async def _run_child_auto_start_background_loop(app: FastAPI) -> None:
     settings = app.state.settings
-    required_tables = ("logical_node_current_versions", "node_children", "hierarchy_nodes")
+    required_tables = (
+        "logical_node_current_versions",
+        "node_children",
+        "hierarchy_nodes",
+        "parent_incremental_merge_lanes",
+        "incremental_child_merge_state",
+        "node_dependency_blockers",
+    )
     while True:
         try:
             if _database_has_required_tables(app.state.db_engine, required_tables):
+                auto_advance_incremental_parent_merge_and_refresh_children(
+                    app.state.db_session_factory,
+                    hierarchy_registry=app.state.hierarchy_registry,
+                    resources=app.state.resource_catalog,
+                )
                 auto_bind_ready_child_runs(
                     app.state.db_session_factory,
                     hierarchy_registry=app.state.hierarchy_registry,
@@ -492,6 +520,10 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthcheck() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @app.get("/assets/{asset_path:path}", include_in_schema=False)
+    def frontend_asset(asset_path: str) -> Response:
+        return serve_frontend_asset(asset_path)
 
     @app.get("/bootstrap", dependencies=[Depends(require_bearer_token)])
     def bootstrap() -> dict[str, object]:
@@ -1683,6 +1715,58 @@ def create_app() -> FastAPI:
         ]
         return NodeKindCatalogResponse(definitions=definitions, top_level_kinds=hierarchy_registry.top_level_kinds())
 
+    @app.get("/api/projects", dependencies=[Depends(require_bearer_token)], response_model=ProjectCatalogResponse)
+    def list_projects_endpoint(settings=Depends(get_settings_dependency)) -> ProjectCatalogResponse:
+        return ProjectCatalogResponse(
+            daemon_context=build_project_catalog_daemon_context(
+                settings=settings,
+                daemon_version=app.version,
+                session_backend=app.state.session_adapter.backend_name if hasattr(app, "state") else "unknown",
+            ).to_payload(),
+            projects=[ProjectCatalogEntryResponse.model_validate(project.to_payload()) for project in list_projects(settings=settings)],
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/bootstrap",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ProjectBootstrapResponse,
+    )
+    def show_project_bootstrap(
+        project_id: str,
+        session_factory=Depends(get_db_session_factory),
+        settings=Depends(get_settings_dependency),
+    ) -> ProjectBootstrapResponse:
+        return ProjectBootstrapResponse.model_validate(
+            load_project_bootstrap(session_factory, project_id=project_id, settings=settings).to_payload()
+        )
+
+    @app.post(
+        "/api/projects/{project_id}/top-level-nodes",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=ProjectTopLevelNodeCreateResponse,
+    )
+    def start_project_top_level_node(
+        project_id: str,
+        payload: ProjectTopLevelNodeCreateRequest,
+        session_factory=Depends(get_db_session_factory),
+        hierarchy_registry=Depends(get_hierarchy_registry),
+        resource_catalog=Depends(get_resource_catalog),
+        settings=Depends(get_settings_dependency),
+    ) -> ProjectTopLevelNodeCreateResponse:
+        return ProjectTopLevelNodeCreateResponse.model_validate(
+            start_project_top_level_workflow(
+                session_factory,
+                hierarchy_registry=hierarchy_registry,
+                resource_catalog=resource_catalog,
+                project_id=project_id,
+                kind=payload.kind,
+                title=payload.title,
+                prompt=payload.prompt,
+                start_run=payload.start_run,
+                settings=settings,
+            ).to_payload()
+        )
+
     @app.post(
         "/api/workflows/start",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
@@ -2483,7 +2567,33 @@ def create_app() -> FastAPI:
     )
     def show_tree(node_id: str, session_factory=Depends(get_db_session_factory)) -> TreeCatalogResponse:
         snapshot = load_tree_catalog(session_factory, root_node_id=UUID(node_id))
-        return TreeCatalogResponse(root_node_id=str(snapshot.root_node_id), nodes=[TreeNodeResponse.model_validate(item.to_payload()) for item in snapshot.nodes])
+        return TreeCatalogResponse(
+            root_node_id=str(snapshot.root_node_id),
+            generated_at=snapshot.generated_at,
+            nodes=[TreeNodeResponse.model_validate(item.to_payload()) for item in snapshot.nodes],
+        )
+
+    @app.get(
+        "/api/nodes/{node_id}/actions",
+        dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
+        response_model=NodeActionCatalogResponse,
+    )
+    def show_node_actions(
+        node_id: str,
+        session_factory=Depends(get_db_session_factory),
+        resources=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> NodeActionCatalogResponse:
+        return NodeActionCatalogResponse.model_validate(
+            list_node_actions(
+                session_factory,
+                resources,
+                logical_node_id=UUID(node_id),
+                adapter=adapter,
+                poller=poller,
+            ).to_payload()
+        )
 
     @app.get(
         "/api/nodes/{node_id}/interventions",
@@ -2660,6 +2770,15 @@ def create_app() -> FastAPI:
             current_run_id=str(snapshot.current_run_id),
             last_event_id=str(snapshot.last_event_id),
         )
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/projects", include_in_schema=False)
+    @app.get("/projects/{full_path:path}", include_in_schema=False)
+    def frontend_index(
+        request: Request,
+        settings=Depends(get_settings_dependency),
+    ) -> Response:
+        return serve_frontend_index(request, settings=settings)
 
     return app
 

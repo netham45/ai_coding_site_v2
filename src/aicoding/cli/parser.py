@@ -562,6 +562,7 @@ def add_workflow_group(subparsers) -> None:
     start_parser.add_argument("--kind", required=True)
     start_parser.add_argument("--prompt", required=True)
     start_parser.add_argument("--title")
+    start_parser.add_argument("--project")
     start_parser.add_argument("--no-run", action="store_true")
     start_parser.set_defaults(handler=handle_workflow_start, command_path=["workflow", "start"])
 

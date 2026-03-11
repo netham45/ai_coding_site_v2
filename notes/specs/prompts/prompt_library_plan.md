@@ -30,7 +30,7 @@ Implementation staging note:
 - child-node spawning currently reuses those existing layout-generation prompts and the authored built-in layout YAMLs; no separate prompt family was required just to materialize default children durably
 - manual tree construction currently does not introduce a new prompt family; explicit reconciliation guidance prompts remain deferred until the later remove/replace/reconcile phases
 - conflict detection now adds a dedicated packaged recovery prompt for merge-conflict pause handling so operator-facing conflict summaries do not rely on ad hoc runtime strings
-- parent-child merge/reconcile now uses the packaged `execution/reconcile_parent_after_merge.md` prompt as a first-class daemon-exposed inspection surface; the daemon pairs it with durable child-result and merge-event context rather than ad hoc runtime prose
+- parent-child merge/reconcile now uses the packaged `execution/reconcile_parent_after_merge.md` prompt as a first-class daemon-exposed inspection surface; for the authoritative live lineage, the daemon pairs it with already-applied child merge history and parent-local reconcile context rather than asking the parent AI to perform the first child-to-parent merge itself
 - stage-start prompt retrieval now also carries a daemon-assembled context bundle so prompt consumers can reference durable startup metadata, dependency state, recent summaries, and child/reconcile context without scraping prior terminal output
 - compile-time prompt rendering now uses a shared daemon renderer with deterministic scope precedence; rendered prompt text is frozen into compiled subtasks and durable prompt history, while prompt-template source lineage remains separate for auditability
 - the frozen render stage is now inspectable directly through `workflow rendering`, so prompt-pack debugging does not require opening the full compiled workflow payload
@@ -539,6 +539,7 @@ Prompt-delivery note:
 
 - `ai-tool subtask prompt --node <node_id>` now records a durable prompt-history row containing the rendered prompt content, the originating `source_subtask_key`, and the frozen template identity (`template_path`, `template_hash`) taken from the compiled subtask source metadata
 - the returned prompt payload now also includes `stage_context_json` so runtime prompts can explicitly reference durable startup facts such as the original node prompt, the active trigger reason, dependency blockers, and the most recent run-local summaries without relying on conversational memory
+- when an incremental parent merge blocks on conflict, the daemon now writes a parent-facing `parent_reconcile_context` bundle into the active parent run cursor so `subtask prompt` and `subtask context` expose the conflict id, conflicted child, files, lane state, and later resolution status without the AI session reconstructing those facts from raw merge-conflict tables
 
 If blocked or unable to satisfy the stage:
 - write a concise failure summary

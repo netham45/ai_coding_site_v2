@@ -36,3 +36,13 @@ Read these note files before implementing or revising this phase:
 - Tests: cover project catalog, creation validation, creation success, and redirect behavior.
 - Performance: project bootstrap and creation should feel immediate at operator scale.
 - Notes: keep project-selection and creation notes aligned with actual backend behavior.
+
+## Current Limitation
+
+This phase establishes project discovery, project selection, and the project-scoped browser create route.
+
+It does not by itself complete repo-backed top-level bootstrap from the selected source repo.
+
+That missing v1 behavior is corrected by:
+
+- `plan/web/features/05_repo_backed_project_start_and_top_level_bootstrap.md`

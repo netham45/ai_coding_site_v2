@@ -92,6 +92,15 @@ Use this section for direct feature-plan-to-checklist lookup.
 | `plan/features/71_F11_live_git_merge_and_finalize_execution.md` | `FC-08` |
 | `plan/features/72_F13_expanded_human_intervention_matrix.md` | `FC-13` |
 | `plan/features/73_F30_multilanguage_provenance_expansion.md` | `FC-19` |
+| `plan/features/74_F08_F18_incremental_parent_merge_overview.md` | `FC-08` |
+| `plan/features/75_F08_F18_incremental_parent_merge_phase_01_durable_merge_lane_scaffolding.md` | `FC-08` |
+| `plan/features/76_F18_incremental_parent_merge_phase_02_one_child_incremental_merge_execution.md` | `FC-08` |
+| `plan/features/77_F08_incremental_parent_merge_phase_03_merge_backed_dependency_truth.md` | `FC-07` |
+| `plan/features/78_F15_incremental_parent_merge_phase_04_dependent_child_parent_refresh.md` | `FC-07` |
+| `plan/features/79_F09_incremental_parent_merge_phase_05_background_orchestration_and_autostart.md` | `FC-09` |
+| `plan/features/80_F20_incremental_parent_merge_phase_06_conflict_handoff_and_prompt_context.md` | `FC-08` |
+| `plan/features/81_F18_incremental_parent_merge_phase_07_final_parent_reconcile_redefinition.md` | `FC-08` |
+| `plan/features/82_F08_F18_incremental_parent_merge_full_e2e.md` | `FC-08` |
 
 ## Checklist Entries
 
@@ -139,24 +148,24 @@ Use this section for direct feature-plan-to-checklist lookup.
 
 ## FC-07: Dependencies, Child Materialization, And Tree Editing
 
-- Included feature plans: `plan/features/11_F08_dependency_graph_and_admission_control.md`, `plan/features/20_F15_child_node_spawning.md`, `plan/features/21_F16_manual_tree_construction.md`, `plan/features/64_F08_F15_richer_child_scheduling_and_blocker_explanation.md`, `plan/features/65_F04_layout_replacement_and_hybrid_reconciliation.md`
+- Included feature plans: `plan/features/11_F08_dependency_graph_and_admission_control.md`, `plan/features/20_F15_child_node_spawning.md`, `plan/features/21_F16_manual_tree_construction.md`, `plan/features/64_F08_F15_richer_child_scheduling_and_blocker_explanation.md`, `plan/features/65_F04_layout_replacement_and_hybrid_reconciliation.md`, `plan/features/77_F08_incremental_parent_merge_phase_03_merge_backed_dependency_truth.md`, `plan/features/78_F15_incremental_parent_merge_phase_04_dependent_child_parent_refresh.md`
 - Affected systems: Database, CLI, Daemon, YAML, Notes
 - Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `implemented`; Prompts `not_applicable`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_flow_03_materialize_and_schedule_children_real.py`, `tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py`, `tests/e2e/test_e2e_dependency_and_child_materialization_real.py`, `tests/e2e/test_e2e_child_merge_and_reconciliation_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `implemented`.
 - Known limitations: The repo has real flow coverage for materialization and manual tree edits, and the new full-tree skeleton now drives one real epic -> phase -> plan -> task descent, but richer blocker explanation, hybrid reconciliation, and the full hierarchical merge story still rely on planned or expected-failing suites. For the automated full-tree `cat` narrative specifically, parent-driven generated-layout authority and daemon-owned automatic child start are still planned rather than implemented.
 
 ## FC-08: Branching, Conflicts, And Live Mergeback
 
-- Included feature plans: `plan/features/12_F17_deterministic_branch_model.md`, `plan/features/22_F20_conflict_detection_and_resolution.md`, `plan/features/23_F18_child_merge_and_reconcile_pipeline.md`, `plan/features/71_F11_live_git_merge_and_finalize_execution.md`
+- Included feature plans: `plan/features/12_F17_deterministic_branch_model.md`, `plan/features/22_F20_conflict_detection_and_resolution.md`, `plan/features/23_F18_child_merge_and_reconcile_pipeline.md`, `plan/features/71_F11_live_git_merge_and_finalize_execution.md`, `plan/features/74_F08_F18_incremental_parent_merge_overview.md`, `plan/features/75_F08_F18_incremental_parent_merge_phase_01_durable_merge_lane_scaffolding.md`, `plan/features/76_F18_incremental_parent_merge_phase_02_one_child_incremental_merge_execution.md`, `plan/features/80_F20_incremental_parent_merge_phase_06_conflict_handoff_and_prompt_context.md`, `plan/features/81_F18_incremental_parent_merge_phase_07_final_parent_reconcile_redefinition.md`, `plan/features/82_F08_F18_incremental_parent_merge_full_e2e.md`
 - Affected systems: Database, CLI, Daemon, Prompts, Notes
 - Status: Database `implemented`; CLI `partial`; Daemon `partial`; YAML `not_applicable`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_e2e_branch_identity_and_history_real.py`, `tests/e2e/test_e2e_merge_conflict_and_resolution_real.py`, `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`, `tests/e2e/test_e2e_child_merge_and_reconciliation_real.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `planned`; Performance/resilience `partial`; Overall `partial`.
-- Known limitations: Git-oriented code and bounded tests exist, and the repo now has real E2E proof for the live bootstrap/merge/finalize/status path, clean merged parent-repo file contents on disk, rerun reset/replay of the merge tier against new authoritative child finals, and conflict abort rollback back to seed via `tests/e2e/test_flow_11_finalize_and_merge_real.py` and `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`. It still lacks passing real suites that verify rollback/reset success through the `node rectify-upstream` rebuild path and resolved file contents after conflict reconciliation. The full-tree suite also still names, rather than proves, the hierarchy-wide merge narrative.
+- Known limitations: Git-oriented code and bounded tests exist, and the repo now has real E2E proof for the live bootstrap/merge/finalize/status path, clean merged parent-repo file contents on disk, rerun reset/replay of the merge tier against new authoritative child finals, and conflict abort rollback back to seed via `tests/e2e/test_flow_11_finalize_and_merge_real.py` and `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`. The authoritative live reconcile path now consumes already-applied incremental child merge history instead of recording duplicate final-stage merge events, but it still lacks passing real suites that verify rollback/reset success through the `node rectify-upstream` rebuild path, resolved file contents after conflict reconciliation, and the full hierarchy-wide incremental merge plus final reconcile narrative.
 
 ## FC-09: Node Run Orchestration And Result Capture
 
-- Included feature plans: `plan/features/13_F09_node_run_orchestration.md`, `plan/features/66_F05_execution_orchestration_and_result_capture.md`
+- Included feature plans: `plan/features/13_F09_node_run_orchestration.md`, `plan/features/66_F05_execution_orchestration_and_result_capture.md`, `plan/features/79_F09_incremental_parent_merge_phase_05_background_orchestration_and_autostart.md`
 - Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
 - Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `implemented`; Prompts `partial`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py`, `tests/e2e/test_e2e_core_orchestration_runtime.py`, `tests/e2e/test_e2e_full_epic_tree_runtime_real.py`; E2E status `partial`; Performance/resilience `partial`; Overall `implemented`.
-- Known limitations: The repo now has a real Flow 05 checkpoint for the shipped durable run-control loop, and the full-tree skeleton now uses that control loop at the leaf task layer, but the broader core-orchestration runtime suite and hierarchy-wide mergeback path are still not present. For the automated full-tree `cat` narrative specifically, daemon-owned child auto-start and multi-tier parent decomposition remain planned rather than implemented.
+- Known limitations: The repo now has a real Flow 05 checkpoint for the shipped durable run-control loop, the daemon background loop can advance happy-path incremental parent merges plus stale-child refresh ahead of child auto-start, and the full-tree skeleton now uses that control loop at the leaf task layer, but the broader core-orchestration runtime suite and hierarchy-wide mergeback path are still not present. For the automated full-tree `cat` narrative specifically, multi-tier parent decomposition remains planned rather than implemented.
 
 ## FC-10: AI CLI Runtime Surface
 

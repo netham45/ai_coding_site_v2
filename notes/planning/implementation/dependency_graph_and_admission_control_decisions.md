@@ -26,3 +26,11 @@ Phase: `plan/features/11_F08_dependency_graph_and_admission_control.md`
 - Prompt changes are limited to existing blocked-state/runtime prompts consuming the new truth surface later; no new prompt family was required in this slice.
 - Historical dependency-validation/audit tables remain deferred beyond the latest blocker snapshot.
 - Scheduler-side automatic dependency creation for child materialization remains deferred to the later orchestration phases.
+
+## Accepted extension direction
+
+- The next sibling-dependency extension should keep authoritative-version-based dependency evaluation, but move sibling satisfaction from raw lifecycle `COMPLETE` truth toward merge-backed parent-state truth for cases where a dependent child must bootstrap from prerequisite sibling changes.
+- The existing `node_dependency_blockers` latest-snapshot model should remain the primary blocker surface, expanding blocker kinds rather than introducing a parallel hidden dependency-readiness ledger.
+- The current implementation slice now applies that rewrite to sibling edges that share a parent lineage: those dependencies become ready only after the prerequisite sibling has a durable successful incremental merge into the authoritative parent lineage.
+- The current richer blocker kinds for that path are `blocked_on_incremental_merge`, `blocked_on_parent_refresh`, and `blocked_on_merge_conflict`.
+- The daemon background auto-run pre-pass now owns the happy-path transition from `blocked_on_parent_refresh` to `ready` for inactive auto-run children by refreshing the child bootstrap at the current parent merge-lane head before the existing bind loop runs.

@@ -177,4 +177,12 @@ def test_hierarchy_tree_and_sibling_queries(db_session_factory, migrated_public_
         ("Plan", 2),
         ("Phase Two", 1),
     ]
+    assert tree.generated_at
+    epic_row = tree.nodes[0]
+    assert epic_row.has_children is True
+    assert epic_row.child_count == 2
+    assert epic_row.child_rollups["total"] == 2
+    assert epic_row.blocker_state == "none"
+    assert epic_row.created_at
+    assert epic_row.last_updated_at
     assert [item.title for item in siblings] == ["Phase Two"]

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.db.models import LogicalNodeCurrentVersion, MergeConflict, MergeEvent, NodeVersion
+from aicoding.db.models import LogicalNodeCurrentVersion, MergeConflict, MergeEvent, NodeLifecycleState, NodeRun, NodeRunState, NodeVersion
 from aicoding.db.session import query_session_scope, session_scope
 
 RESOLUTION_STATUSES = {"unresolved", "resolved", "abandoned"}
@@ -80,7 +80,7 @@ def record_merge_conflict(
     if not files_json:
         raise DaemonConflictError("merge conflict must include at least one conflicted file")
     with session_scope(session_factory) as session:
-        event_snapshot = record_merge_event_in_session(
+        return record_merge_conflict_in_session(
             session,
             parent_node_version_id=parent_node_version_id,
             child_node_version_id=child_node_version_id,
@@ -88,19 +88,9 @@ def record_merge_conflict(
             parent_commit_before=parent_commit_before,
             parent_commit_after=parent_commit_after,
             merge_order=merge_order,
-            had_conflict=True,
-        )
-        conflict = MergeConflict(
-            id=uuid4(),
-            merge_event_id=event_snapshot.id,
             files_json=files_json,
             merge_base_sha=merge_base_sha,
-            resolution_summary=None,
-            resolution_status="unresolved",
         )
-        session.add(conflict)
-        session.flush()
-        return _merge_conflict_snapshot(session.get(MergeEvent, event_snapshot.id), conflict)
 
 
 def record_merge_event(
@@ -190,6 +180,11 @@ def resolve_merge_conflict(
             raise DaemonNotFoundError("merge event not found")
         conflict.resolution_summary = resolution_summary
         conflict.resolution_status = resolution_status
+        _persist_resolved_merge_conflict_context_in_session(
+            session,
+            conflict=conflict,
+            event=event,
+        )
         session.flush()
         return _merge_conflict_snapshot(event, conflict)
 
@@ -251,6 +246,43 @@ def record_merge_event_in_session(
     return _merge_event_snapshot(event)
 
 
+def record_merge_conflict_in_session(
+    session: Session,
+    *,
+    parent_node_version_id: UUID,
+    child_node_version_id: UUID,
+    child_final_commit_sha: str,
+    parent_commit_before: str,
+    parent_commit_after: str,
+    merge_order: int,
+    files_json: list[str],
+    merge_base_sha: str | None = None,
+) -> MergeConflictSnapshot:
+    if not files_json:
+        raise DaemonConflictError("merge conflict must include at least one conflicted file")
+    event_snapshot = record_merge_event_in_session(
+        session,
+        parent_node_version_id=parent_node_version_id,
+        child_node_version_id=child_node_version_id,
+        child_final_commit_sha=child_final_commit_sha,
+        parent_commit_before=parent_commit_before,
+        parent_commit_after=parent_commit_after,
+        merge_order=merge_order,
+        had_conflict=True,
+    )
+    conflict = MergeConflict(
+        id=uuid4(),
+        merge_event_id=event_snapshot.id,
+        files_json=files_json,
+        merge_base_sha=merge_base_sha,
+        resolution_summary=None,
+        resolution_status="unresolved",
+    )
+    session.add(conflict)
+    session.flush()
+    return _merge_conflict_snapshot(session.get(MergeEvent, event_snapshot.id), conflict)
+
+
 def _merge_event_snapshot(row: MergeEvent) -> MergeEventSnapshot:
     return MergeEventSnapshot(
         id=row.id,
@@ -277,3 +309,49 @@ def _merge_conflict_snapshot(event: MergeEvent, conflict: MergeConflict) -> Merg
         resolution_status=conflict.resolution_status,
         created_at=conflict.created_at.isoformat(),
     )
+
+
+def _persist_resolved_merge_conflict_context_in_session(
+    session: Session,
+    *,
+    conflict: MergeConflict,
+    event: MergeEvent,
+) -> None:
+    parent_version = session.get(NodeVersion, event.parent_node_version_id)
+    if parent_version is None:
+        return
+    context_json = {
+        "context_kind": "incremental_merge_conflict",
+        "status": "conflict_resolution_recorded",
+        "blocking_reasons": [],
+        "reconcile_prompt_relative_path": "execution/reconcile_parent_after_merge.md",
+        "incremental_merge_conflict": {
+            "conflict_id": str(conflict.id),
+            "parent_node_id": str(parent_version.logical_node_id),
+            "parent_node_version_id": str(parent_version.id),
+            "child_node_version_id": str(event.child_node_version_id),
+            "child_final_commit_sha": event.child_final_commit_sha,
+            "parent_commit_before": event.parent_commit_before,
+            "parent_commit_after": event.parent_commit_after,
+            "merge_order": event.merge_order,
+            "files_json": list(conflict.files_json),
+            "resolution_status": conflict.resolution_status,
+            "resolution_summary": conflict.resolution_summary,
+        },
+    }
+    active_run = session.execute(
+        select(NodeRun)
+        .where(NodeRun.node_version_id == parent_version.id, NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")))
+        .order_by(NodeRun.run_number.desc())
+    ).scalars().first()
+    if active_run is None:
+        return
+    state = session.get(NodeRunState, active_run.id)
+    if state is None:
+        return
+    cursor = dict(state.execution_cursor_json or {})
+    cursor["parent_reconcile_context"] = context_json
+    state.execution_cursor_json = cursor
+    lifecycle = session.get(NodeLifecycleState, str(parent_version.logical_node_id))
+    if lifecycle is not None:
+        lifecycle.execution_cursor_json = dict(cursor)

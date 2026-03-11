@@ -18,6 +18,7 @@ from aicoding.db.models import (
     ChildSessionResult,
     HierarchyNode,
     LogicalNodeCurrentVersion,
+    MergeEvent,
     NodeChild,
     NodeDependency,
     NodeLifecycleState,
@@ -147,7 +148,14 @@ def collect_child_results(
     with query_session_scope(session_factory) as session:
         parent_node, parent_version, authority = _parent_bundle(session, logical_node_id=logical_node_id)
         child_edges = _load_child_edges(session, parent_version.id)
-        children = _build_child_results(session, child_edges, resolve_authoritative=True)
+        merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+        children = _build_child_results(
+            session,
+            child_edges,
+            resolve_authoritative=True,
+            merge_orders_by_child_version_id={event.child_node_version_id: event.merge_order for event in merge_events},
+            merged_child_finals={(event.child_node_version_id, event.child_final_commit_sha) for event in merge_events},
+        )
         return _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
 
 
@@ -159,7 +167,15 @@ def collect_child_results_for_version(
     with query_session_scope(session_factory) as session:
         parent_node, parent_version, authority = _parent_bundle(session, node_version_id=node_version_id)
         child_edges = _load_child_edges(session, parent_version.id)
-        children = _build_child_results(session, child_edges, resolve_authoritative=False)
+        merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+        children = _build_child_results(
+            session,
+            child_edges,
+            resolve_authoritative=False,
+            merge_orders_by_child_version_id={event.child_node_version_id: event.merge_order for event in merge_events},
+            merged_child_finals={(event.child_node_version_id, event.child_final_commit_sha) for event in merge_events},
+            allow_synthetic_merge_orders=True,
+        )
         return _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
 
 
@@ -172,7 +188,14 @@ def inspect_parent_reconcile(
     with query_session_scope(session_factory) as session:
         parent_node, parent_version, authority = _parent_bundle(session, logical_node_id=logical_node_id)
         child_edges = _load_child_edges(session, parent_version.id)
-        children = _build_child_results(session, child_edges, resolve_authoritative=True)
+        merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+        children = _build_child_results(
+            session,
+            child_edges,
+            resolve_authoritative=True,
+            merge_orders_by_child_version_id={event.child_node_version_id: event.merge_order for event in merge_events},
+            merged_child_finals={(event.child_node_version_id, event.child_final_commit_sha) for event in merge_events},
+        )
         collection = _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
         blocking_reasons = _reconcile_blockers(parent_version, children, session=session)
         prompt = resources.load_text(RECONCILE_PROMPT_GROUP, RECONCILE_PROMPT_PATH)
@@ -185,9 +208,9 @@ def inspect_parent_reconcile(
             prompt_text=prompt.content,
             child_results=collection,
             blocking_reasons=blocking_reasons,
-            merge_events=[],
+            merge_events=merge_events,
             last_reconciled_at=None if authority.last_reconciled_at is None else authority.last_reconciled_at.isoformat(),
-            context_json=_build_reconcile_context(parent_version, collection, [], blocking_reasons),
+            context_json=_build_reconcile_context(parent_version, collection, merge_events, blocking_reasons),
         )
 
 
@@ -200,7 +223,15 @@ def inspect_parent_reconcile_for_version(
     with query_session_scope(session_factory) as session:
         parent_node, parent_version, authority = _parent_bundle(session, node_version_id=node_version_id)
         child_edges = _load_child_edges(session, parent_version.id)
-        children = _build_child_results(session, child_edges, resolve_authoritative=False)
+        merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+        children = _build_child_results(
+            session,
+            child_edges,
+            resolve_authoritative=False,
+            merge_orders_by_child_version_id={event.child_node_version_id: event.merge_order for event in merge_events},
+            merged_child_finals={(event.child_node_version_id, event.child_final_commit_sha) for event in merge_events},
+            allow_synthetic_merge_orders=True,
+        )
         collection = _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
         blocking_reasons = _reconcile_blockers(parent_version, children, session=session)
         prompt = resources.load_text(RECONCILE_PROMPT_GROUP, RECONCILE_PROMPT_PATH)
@@ -213,9 +244,9 @@ def inspect_parent_reconcile_for_version(
             prompt_text=prompt.content,
             child_results=collection,
             blocking_reasons=blocking_reasons,
-            merge_events=[],
+            merge_events=merge_events,
             last_reconciled_at=None if authority.last_reconciled_at is None else authority.last_reconciled_at.isoformat(),
-            context_json=_build_reconcile_context(parent_version, collection, [], blocking_reasons),
+            context_json=_build_reconcile_context(parent_version, collection, merge_events, blocking_reasons),
         )
 
 
@@ -267,49 +298,64 @@ def _execute_child_merge_pipeline_for_bundle(
     resolve_authoritative: bool = False,
 ) -> ParentReconcileSnapshot:
     child_edges = _load_child_edges(session, parent_version.id)
-    children = _build_child_results(session, child_edges, resolve_authoritative=resolve_authoritative)
+    merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+    merge_orders_by_child_version_id = {
+        event.child_node_version_id: event.merge_order for event in merge_events
+    }
+    merged_child_finals = {
+        (event.child_node_version_id, event.child_final_commit_sha) for event in merge_events
+    }
+    children = _build_child_results(
+        session,
+        child_edges,
+        resolve_authoritative=resolve_authoritative,
+        merge_orders_by_child_version_id=merge_orders_by_child_version_id,
+        merged_child_finals=merged_child_finals,
+        allow_synthetic_merge_orders=not resolve_authoritative,
+    )
     collection = _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
     blocking_reasons = _reconcile_blockers(parent_version, children, session=session)
     if blocking_reasons:
         raise DaemonConflictError("; ".join(blocking_reasons))
-    mergeable_children = [item for item in children if item.merge_order is not None]
-    ordered_children = sorted(mergeable_children, key=lambda item: int(item.merge_order or 0))
+    if not resolve_authoritative and not merge_events:
+        mergeable_children = [item for item in children if item.merge_order is not None]
+        ordered_children = sorted(mergeable_children, key=lambda item: int(item.merge_order or 0))
 
-    parent_commit_before = parent_version.seed_commit_sha
-    merge_events: list[MergeEventSnapshot] = []
-    for child in ordered_children:
-        child_final_commit_sha = child.final_commit_sha
-        if parent_commit_before is None or child_final_commit_sha is None:
-            raise DaemonConflictError("merge pipeline requires recorded parent seed and child final commits")
-        parent_commit_after = sha256(
-            f"{parent_version.id}:{parent_commit_before}:{child_final_commit_sha}:{child.merge_order}".encode("utf-8")
-        ).hexdigest()
-        merge_events.append(
-            record_merge_event_in_session(
-                session,
-                parent_node_version_id=parent_version.id,
-                child_node_version_id=child.child_node_version_id,
-                child_final_commit_sha=child_final_commit_sha,
-                parent_commit_before=parent_commit_before,
-                parent_commit_after=parent_commit_after,
-                merge_order=int(child.merge_order),
-                had_conflict=False,
+        parent_commit_before = parent_version.seed_commit_sha
+        merge_events = []
+        for child in ordered_children:
+            child_final_commit_sha = child.final_commit_sha
+            if parent_commit_before is None or child_final_commit_sha is None:
+                raise DaemonConflictError("merge pipeline requires recorded parent seed and child final commits")
+            parent_commit_after = sha256(
+                f"{parent_version.id}:{parent_commit_before}:{child_final_commit_sha}:{child.merge_order}".encode("utf-8")
+            ).hexdigest()
+            merge_events.append(
+                record_merge_event_in_session(
+                    session,
+                    parent_node_version_id=parent_version.id,
+                    child_node_version_id=child.child_node_version_id,
+                    child_final_commit_sha=child_final_commit_sha,
+                    parent_commit_before=parent_commit_before,
+                    parent_commit_after=parent_commit_after,
+                    merge_order=int(child.merge_order),
+                    had_conflict=False,
+                )
             )
-        )
-        parent_commit_before = parent_commit_after
+            parent_commit_before = parent_commit_after
 
     authority.last_reconciled_at = datetime.now(timezone.utc)
     _persist_reconcile_context(
         session,
         logical_node_id=parent_node.node_id,
         parent_version_id=parent_version.id,
-        context_json=_build_reconcile_context(parent_version, collection, merge_events, []),
+        context_json=_build_reconcile_context(parent_version, collection, merge_events, [], status="reconciled"),
     )
     session.flush()
     return ParentReconcileSnapshot(
         parent_node_id=parent_node.node_id,
         parent_node_version_id=parent_version.id,
-        status="merged",
+        status="reconciled",
         seed_commit_sha=parent_version.seed_commit_sha,
         prompt_relative_path=RECONCILE_PROMPT_PATH,
         prompt_text=prompt_text,
@@ -317,7 +363,7 @@ def _execute_child_merge_pipeline_for_bundle(
         blocking_reasons=[],
         merge_events=merge_events,
         last_reconciled_at=authority.last_reconciled_at.isoformat(),
-        context_json=_build_reconcile_context(parent_version, collection, merge_events, []),
+        context_json=_build_reconcile_context(parent_version, collection, merge_events, [], status="reconciled"),
     )
 
 
@@ -366,7 +412,12 @@ def _build_child_results(
     child_edges: list[NodeChild],
     *,
     resolve_authoritative: bool,
+    merge_orders_by_child_version_id: dict[UUID, int] | None = None,
+    merged_child_finals: set[tuple[UUID, str]] | None = None,
+    allow_synthetic_merge_orders: bool = False,
 ) -> list[ChildResultSnapshot]:
+    merge_orders_by_child_version_id = merge_orders_by_child_version_id or {}
+    merged_child_finals = merged_child_finals or set()
     provisional: list[dict[str, object]] = []
     node_id_by_version_id: dict[UUID, UUID] = {}
     edge_by_child_node_id: dict[UUID, NodeChild] = {}
@@ -428,13 +479,21 @@ def _build_child_results(
             else None
         )
         dependency_child_node_ids = _dependency_child_node_ids(session, version.id, edge_by_child_node_id)
-        blocking_reasons = _classify_blocking_reasons(version, lifecycle, latest_run)
+        merge_order = merge_orders_by_child_version_id.get(version.id)
+        blocking_reasons = _classify_blocking_reasons(
+            version,
+            lifecycle,
+            latest_run,
+            is_incrementally_merged=(version.final_commit_sha is not None and (version.id, version.final_commit_sha) in merged_child_finals),
+        )
         reconcile_status = _classify_reconcile_status(
             version=version,
             edge=edge,
             lifecycle=lifecycle,
             latest_run=latest_run,
             blocking_reasons=blocking_reasons,
+            merge_order=merge_order,
+            allow_synthetic_merge_order=allow_synthetic_merge_orders,
         )
         node_id_by_version_id[version.id] = version.logical_node_id
         provisional.append(
@@ -455,14 +514,17 @@ def _build_child_results(
                 "reconcile_status": reconcile_status,
                 "dependency_child_node_ids": dependency_child_node_ids,
                 "blocking_reasons": blocking_reasons,
+                "merge_order": merge_order,
                 "created_at": edge.created_at,
             }
         )
-
-    merge_orders = _calculate_merge_orders(provisional)
+    synthetic_merge_orders = _calculate_merge_orders(provisional) if allow_synthetic_merge_orders else {}
     snapshots: list[ChildResultSnapshot] = []
     for item in provisional:
         child_node_id = item["child_node_id"]
+        merge_order = item["merge_order"]
+        if merge_order is None:
+            merge_order = synthetic_merge_orders.get(child_node_id)
         snapshots.append(
             ChildResultSnapshot(
                 layout_child_id=str(item["layout_child_id"]),
@@ -479,7 +541,7 @@ def _build_child_results(
                 latest_summary=item["latest_summary"],
                 latest_child_session_summary=item["latest_child_session_summary"],
                 reconcile_status=str(item["reconcile_status"]),
-                merge_order=merge_orders.get(child_node_id),
+                merge_order=merge_order,
                 dependency_child_node_ids=list(item["dependency_child_node_ids"]),
                 blocking_reasons=list(item["blocking_reasons"]),
             )
@@ -509,6 +571,8 @@ def _classify_blocking_reasons(
     version: NodeVersion,
     lifecycle: NodeLifecycleState | None,
     latest_run: NodeRun | None,
+    *,
+    is_incrementally_merged: bool,
 ) -> list[str]:
     reasons: list[str] = []
     lifecycle_state = None if lifecycle is None else lifecycle.lifecycle_state
@@ -520,6 +584,8 @@ def _classify_blocking_reasons(
     if version.final_commit_sha is None and lifecycle_state == "COMPLETE":
         reasons.append("child final commit missing")
     if version.final_commit_sha is not None and not reasons:
+        if not is_incrementally_merged:
+            reasons.append("child not incrementally merged")
         return reasons
     if lifecycle_state not in {None, "COMPLETE"} and not (
         version.final_commit_sha is not None and lifecycle_state == "SUPERSEDED"
@@ -535,6 +601,8 @@ def _classify_reconcile_status(
     lifecycle: NodeLifecycleState | None,
     latest_run: NodeRun | None,
     blocking_reasons: list[str],
+    merge_order: int | None,
+    allow_synthetic_merge_order: bool,
 ) -> str:
     if blocking_reasons:
         lifecycle_state = None if lifecycle is None else lifecycle.lifecycle_state
@@ -544,8 +612,12 @@ def _classify_reconcile_status(
             return "paused"
         if lifecycle_state == "COMPLETE" and version.final_commit_sha is None:
             return "invalid_authority"
+        if "child not incrementally merged" in blocking_reasons:
+            return "waiting"
         if version.id != edge.child_node_version_id and version.final_commit_sha is not None:
             return "superseded_with_authoritative_replacement"
+        return "waiting"
+    if merge_order is None and not allow_synthetic_merge_order:
         return "waiting"
     if version.id != edge.child_node_version_id:
         return "superseded_with_authoritative_replacement"
@@ -553,7 +625,11 @@ def _classify_reconcile_status(
 
 
 def _calculate_merge_orders(children: list[dict[str, object]]) -> dict[UUID, int]:
-    eligible = [item for item in children if item["reconcile_status"] in MERGEABLE_RECONCILE_STATUSES]
+    eligible = [
+        item
+        for item in children
+        if item["reconcile_status"] in MERGEABLE_RECONCILE_STATUSES and "child not incrementally merged" not in item["blocking_reasons"]
+    ]
     adjacency: dict[UUID, set[UUID]] = {}
     indegree: dict[UUID, int] = {}
     by_id: dict[UUID, dict[str, object]] = {}
@@ -597,7 +673,11 @@ def _collection_snapshot(
     authority: ParentChildAuthority,
     children: list[ChildResultSnapshot],
 ) -> ChildResultCollectionSnapshot:
-    ready_count = sum(1 for item in children if item.reconcile_status in MERGEABLE_RECONCILE_STATUSES)
+    ready_count = sum(
+        1
+        for item in children
+        if item.reconcile_status in MERGEABLE_RECONCILE_STATUSES and "child not incrementally merged" not in item.blocking_reasons
+    )
     waiting_count = sum(1 for item in children if item.reconcile_status == "waiting")
     failed_count = sum(1 for item in children if item.reconcile_status == "failed")
     paused_count = sum(1 for item in children if item.reconcile_status == "paused")
@@ -642,12 +722,14 @@ def _build_reconcile_context(
     child_results: ChildResultCollectionSnapshot,
     merge_events: list[MergeEventSnapshot],
     blocking_reasons: list[str],
+    *,
+    status: str | None = None,
 ) -> dict[str, object]:
     return {
         "parent_node_version_id": str(parent_version.id),
         "seed_commit_sha": parent_version.seed_commit_sha,
         "final_commit_sha": parent_version.final_commit_sha,
-        "status": "ready_for_reconcile" if not blocking_reasons else "blocked",
+        "status": status or ("ready_for_reconcile" if not blocking_reasons else "blocked"),
         "blocking_reasons": blocking_reasons,
         "child_results": child_results.to_payload(),
         "merge_events": [item.to_payload() for item in merge_events],
@@ -678,6 +760,30 @@ def _persist_reconcile_context(
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     if lifecycle is not None:
         lifecycle.execution_cursor_json = dict(cursor)
+
+
+def _load_merge_events_for_parent(session: Session, *, parent_node_version_id: UUID) -> list[MergeEventSnapshot]:
+    rows = session.execute(
+        select(MergeEvent)
+        .where(MergeEvent.parent_node_version_id == parent_node_version_id)
+        .order_by(MergeEvent.merge_order, MergeEvent.created_at)
+    ).scalars().all()
+    return [
+        MergeEventSnapshot(
+            id=row.id,
+            parent_node_version_id=row.parent_node_version_id,
+            child_node_version_id=row.child_node_version_id,
+            child_final_commit_sha=row.child_final_commit_sha,
+            parent_commit_before=row.parent_commit_before,
+            parent_commit_after=row.parent_commit_after,
+            merge_order=row.merge_order,
+            had_conflict=row.had_conflict,
+            created_at=row.created_at.isoformat(),
+        )
+        for row in rows
+    ]
+
+
 
 
 def _latest_child_session_summary(session: Session, node_version_id: UUID) -> str | None:

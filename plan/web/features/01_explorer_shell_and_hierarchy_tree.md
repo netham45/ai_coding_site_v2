@@ -35,3 +35,13 @@ Read these note files before implementing or revising this phase:
 - Tests: cover expanded tree payloads, tree rendering, filters, selection, and route sync.
 - Performance: tree loading and refresh should stay practical for larger hierarchies.
 - Notes: keep tree contract and routing notes synchronized with implementation.
+
+## Current Limitation
+
+This phase establishes the shell, expanded tree payload, and local title filtering.
+
+It does not by itself complete the remaining required v1 filter set.
+
+That missing v1 behavior is corrected by:
+
+- `plan/web/features/07_tree_filter_completion.md`

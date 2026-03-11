@@ -41,6 +41,37 @@ Current tree response already includes:
 
 The website needs a richer version of that same object, not a different concept.
 
+## Current Implementation Note
+
+The first shipped explorer-tree slice now implements this expansion on the existing route.
+
+Current shipped behavior:
+
+- `GET /api/nodes/{node_id}/tree` remains the canonical route
+- the response now includes:
+  - `generated_at`
+  - `authoritative_node_version_id`
+  - `latest_created_node_version_id`
+  - `blocker_state`
+  - `has_children`
+  - `child_count`
+  - `child_rollups`
+  - `created_at`
+  - `last_updated_at`
+
+Current derivation choices:
+
+- child rollups summarize immediate children only
+- blocker state is currently:
+  - `paused_for_user` when the node is paused
+  - `blocked` when dependency blockers exist
+  - `none` otherwise
+- `last_updated_at` currently uses the latest available timestamp from:
+  - hierarchy node creation
+  - lifecycle row create/update
+  - current-version selector update
+  - authoritative version create/update
+
 ## Proposed Response
 
 ```json

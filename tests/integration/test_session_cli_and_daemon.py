@@ -1603,6 +1603,7 @@ def test_cli_child_results_and_reconcile_round_trip(cli_runner, daemon_bridge_cl
 
     from uuid import UUID
 
+    from aicoding.daemon.incremental_parent_merge import process_next_incremental_child_merge, record_completed_child_for_incremental_merge
     from aicoding.daemon.live_git import bootstrap_live_git_repo, stage_live_git_change
 
     factory = daemon_bridge_client.client.app.state.db_session_factory
@@ -1615,25 +1616,23 @@ def test_cli_child_results_and_reconcile_round_trip(cli_runner, daemon_bridge_cl
         message="Child final",
         record_as_final=True,
     )
+    record_completed_child_for_incremental_merge(factory, child_node_version_id=UUID(child_version_id))
+    process_next_incremental_child_merge(factory, parent_node_version_id=UUID(parent_version_id))
 
     child_results = cli_runner(["node", "child-results", "--node", parent_id])
     reconcile_result = cli_runner(["node", "reconcile", "--node", parent_id])
-    merge_result = cli_runner(["git", "merge-children", "--node", parent_id])
-    finalize_result = cli_runner(["git", "finalize-node", "--node", parent_id])
-    status_result = cli_runner(["git", "status", "show", "--version", parent_version_id])
+    merge_events = cli_runner(["git", "merge-events", "show", "--node", parent_id])
 
     assert child_results.exit_code == 0
     assert child_results.json()["status"] == "ready_for_reconcile"
     assert child_results.json()["children"][0]["final_commit_sha"] == child_status.final_commit_sha
+    assert child_results.json()["children"][0]["merge_order"] == 1
     assert reconcile_result.exit_code == 0
     assert reconcile_result.json()["prompt_relative_path"] == "execution/reconcile_parent_after_merge.md"
-    assert merge_result.exit_code == 0
-    assert merge_result.json()["status"] == "merged"
-    assert merge_result.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
-    assert finalize_result.exit_code == 0
-    assert finalize_result.json()["status"] == "finalized"
-    assert status_result.exit_code == 0
-    assert status_result.json()["working_tree_state"] == "finalized_clean"
+    assert reconcile_result.json()["status"] == "ready_for_reconcile"
+    assert reconcile_result.json()["merge_events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
+    assert merge_events.exit_code == 0
+    assert merge_events.json()["events"][0]["child_final_commit_sha"] == child_status.final_commit_sha
 
 
 def test_cli_merge_conflict_round_trip_blocks_then_allows_cutover(

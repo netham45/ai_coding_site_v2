@@ -140,6 +140,11 @@ Current caveat:
 
 - top-level workflow start does not currently perform this repo-backed bootstrap automatically
 - this flow therefore implies explicit backend work
+- the shipped website create flow should therefore be treated as partial until the corrective repo-backed bootstrap feature lands
+
+Corrective implementation target:
+
+- `plan/web/features/05_repo_backed_project_start_and_top_level_bootstrap.md`
 
 Current backend sequence before repo bootstrap is added:
 

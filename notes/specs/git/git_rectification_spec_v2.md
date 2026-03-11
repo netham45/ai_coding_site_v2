@@ -129,21 +129,24 @@ This must align with the lifecycle and runtime v2 specs.
 
 Child merge order must be replayable.
 
-Recommended precedence:
+For the authoritative live parent lineage:
 
-1. explicit sibling dependency order
-2. explicit child ordinal in parent layout
-3. child creation timestamp
-4. child node ID as final tiebreaker
+- child merges now happen incrementally as children complete
+- the daemon persists the actual applied merge sequence in `merge_events`
+- final parent reconcile consumes that recorded applied sequence and does not synthesize a second merge order
 
-The chosen order must be persisted in merge metadata.
+For candidate-version rebuild/rectification lineages:
+
+- replay order may still be derived deterministically when no prior merge history exists
+- the chosen replay order must be persisted or derivable from merge metadata
 
 Implementation staging note:
 
 - the daemon now exposes a runtime-owned repo bootstrap surface for per-version repos before live merge/finalize work begins
-- the current implementation now computes deterministic child merge order from durable sibling dependencies, child ordinals, child-edge creation time, and logical child id
+- the current implementation now records authoritative live child merge order from the daemon-applied incremental merge lane and still derives deterministic replay order only for candidate-version rebuild paths that do not already have merge history
 - merge execution in this phase now shells out to live `git fetch` and `git merge --no-ff --no-edit` against the per-version runtime repos
 - the daemon records replayable `merge_events`, persists `merge_conflicts` on conflict, and writes the derived parent reconcile context into the active run cursor
+- the incremental parent-merge conflict path now uses that same cursor channel to persist daemon-assembled conflict handoff context for the active parent run, and conflict resolution updates that cursor payload rather than relying on the parent AI to rediscover current conflict state from durable tables alone
 
 ---
 
@@ -153,8 +156,8 @@ Parent nodes do not passively inherit child state. They actively reconstruct the
 
 For a node with children, rectification/finalization should follow:
 
-1. reset branch to seed commit
-2. merge all current child final commits in deterministic order
+1. reset branch to seed commit when rebuilding a candidate lineage, or consume already-applied incremental merge history when reconciling the authoritative live lineage
+2. merge or replay all required current child final commits for that lineage
 3. run node-local reconcile subtasks
 4. run validation
 5. run review
@@ -165,8 +168,8 @@ For a node with children, rectification/finalization should follow:
 
 This applies both during:
 
-- initial generation of a parent after children complete
-- rectification after a descendant change
+- authoritative live parent reconcile after all required children have already merged upward
+- candidate-lineage rectification after a descendant change
 
 ---
 

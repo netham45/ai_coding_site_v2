@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     daemon_host: str = "127.0.0.1"
     daemon_port: int = Field(default=8000, ge=1, le=65535)
     daemon_request_timeout_seconds: float = Field(default=30.0, gt=0)
-    session_backend: Literal["fake", "tmux"] = "fake"
+    session_backend: Literal["fake", "tmux"] = "tmux"
     session_poll_interval_seconds: float = Field(default=1.0, gt=0)
     session_idle_threshold_seconds: float = Field(default=30.0, gt=0)
     session_max_nudge_count: int = Field(default=2, ge=1)
