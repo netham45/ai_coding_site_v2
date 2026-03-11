@@ -7,12 +7,26 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from aicoding.config import get_settings
-from aicoding.db.bootstrap import reset_public_schema
+from tests.helpers.e2e import build_e2e_database_name, create_test_database, drop_test_database, migrate_test_database
 
 
 @pytest.fixture
-def db_engine():
-    engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+def isolated_database_url(monkeypatch):
+    base_database_url = get_settings().database_url
+    database_name = build_e2e_database_name(prefix="aicoding_test")
+    database_url = create_test_database(database_url=base_database_url, database_name=database_name)
+    monkeypatch.setenv("AICODING_DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    try:
+        yield database_url
+    finally:
+        get_settings.cache_clear()
+        drop_test_database(database_url=base_database_url, database_name=database_name)
+
+
+@pytest.fixture
+def db_engine(isolated_database_url):
+    engine = create_engine(isolated_database_url, pool_pre_ping=True)
     try:
         yield engine
     finally:
@@ -20,8 +34,8 @@ def db_engine():
 
 
 @pytest.fixture
-def db_session_factory(db_engine):
-    return sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+def db_session_factory(migrated_public_schema):
+    return sessionmaker(bind=migrated_public_schema, expire_on_commit=False, autoflush=False)
 
 
 @pytest.fixture
@@ -47,19 +61,16 @@ def isolated_schema(db_engine):
 
 @pytest.fixture
 def clean_public_schema(db_engine):
-    reset_public_schema(db_engine)
-    db_engine.dispose()
     yield db_engine
-    reset_public_schema(db_engine)
-    db_engine.dispose()
 
 
 @pytest.fixture
 def migrated_public_schema(clean_public_schema):
-    from aicoding.db.migrations import create_alembic_config, upgrade_database
-
-    config = create_alembic_config()
-    config.attributes["override_sqlalchemy_url"] = str(clean_public_schema.url.render_as_string(hide_password=False))
-    upgrade_database("head", config=config)
+    database_url = str(clean_public_schema.url.render_as_string(hide_password=False))
+    migrate_test_database(database_url=database_url)
     clean_public_schema.dispose()
-    return clean_public_schema
+    migrated_engine = create_engine(database_url, pool_pre_ping=True)
+    try:
+        yield migrated_engine
+    finally:
+        migrated_engine.dispose()

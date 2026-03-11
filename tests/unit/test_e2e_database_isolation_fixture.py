@@ -11,6 +11,7 @@ from tests.helpers.e2e import (
     derive_admin_database_url,
     drop_test_database,
     migrate_test_database,
+    reserve_local_listener,
 )
 
 
@@ -36,6 +37,20 @@ def test_build_e2e_database_name_is_unique() -> None:
     assert first != second
     assert first.startswith("aicoding_e2e_")
     assert second.startswith("aicoding_e2e_")
+
+
+def test_reserve_local_listener_returns_unique_bound_ports() -> None:
+    first = reserve_local_listener()
+    second = reserve_local_listener()
+    try:
+        first_port = int(first.getsockname()[1])
+        second_port = int(second.getsockname()[1])
+        assert first_port != second_port
+        assert first_port > 0
+        assert second_port > 0
+    finally:
+        first.close()
+        second.close()
 
 
 def test_create_migrate_and_drop_test_database() -> None:

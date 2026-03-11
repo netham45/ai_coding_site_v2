@@ -6,6 +6,12 @@ This note defines the canonical verification command families for the current re
 
 Use this file when a note, plan, checklist, or README needs to claim that a surface is verified.
 
+Parallel-safe execution is the repository expectation for every test layer in this catalog.
+
+Serial commands remain useful for local debugging and staged bring-up, but they do not imply that serial-only test behavior is acceptable.
+
+A test or suite that fails only because it is run in parallel is defective until the isolation issue is fixed or the environment-capability gate is documented explicitly.
+
 Execution-policy companion:
 
 - `notes/catalogs/checklists/e2e_execution_policy.md`
@@ -71,6 +77,16 @@ Use this for the current performance harness layer:
 python3 -m pytest tests/performance/test_harness.py -q
 ```
 
+### Parallel Bounded Smoke
+
+Use this to prove that unit, integration, and performance suites can execute concurrently without shared database-fixture contention:
+
+```bash
+python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
+```
+
+This command is a normative bounded-layer contract check, not a release-readiness claim by itself.
+
 ### Real E2E Current Checkpoints
 
 Use these commands for the currently implemented real E2E checkpoint set:
@@ -96,7 +112,7 @@ Current git-proof caveat:
 
 The current real-E2E harness now creates one database per test, so DB-backed execution no longer depends on a shared database fixture.
 
-Remaining serialization, if any, should be driven by non-database resources such as tmux, provider credentials, or especially heavy workspace narratives.
+Any remaining inability to run eligible tests in parallel is an open defect unless it is explained by explicit environment-capability gating.
 
 See `notes/catalogs/checklists/e2e_execution_policy.md` for the local, CI, gated/manual, and release-readiness execution expectations around these commands.
 
@@ -109,6 +125,21 @@ python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q
 ```
 
 This command is for full-tree narrative bring-up only. It must not be used to claim `verified`, `flow_complete`, or `release_ready` until the planned mergeback, regeneration, and rebuild stages actually pass.
+
+### Parallel All-Tests Meta-Verifier Bring-Up
+
+Use this gated meta-test to recurse into the eligible `tests/` surface and run the child suite in parallel:
+
+```bash
+AICODING_ENABLE_META_PARALLEL_TEST=1 python3 -m pytest tests/integration/test_parallel_all_tests_meta.py -q
+```
+
+This is the current bring-up target for the repository-wide parallel test architecture.
+
+- it excludes itself from the child run
+- it filters marker-gated tests based on available capabilities
+- it must not be treated as a passing default-local command until the underlying suite is green
+- once the underlying suite is green, it becomes the authoritative proof that all eligible tests can run together in parallel
 
 ## Status Language Rule
 
@@ -124,3 +155,5 @@ If a doc claims a surface is verified, flow-complete, or release-ready, it must 
 
 - cite one of the commands in this catalog
 - or update this catalog in the same change to include the new canonical command
+
+If a doc introduces a test command or suite that is expected to remain serial-only because of shared-state interference, the doctrine and implementation notes must be updated immediately because that is a correctness gap, not an invisible local convention.

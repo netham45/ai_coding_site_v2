@@ -21,6 +21,10 @@ Capture implementation choices made while completing `plan/setup/11_pytest_fixtu
 
 - the repository now tests the fixture architecture directly for determinism, migrated-schema setup, authenticated daemon bridging, and expected misuse behavior
 - integration tests were updated in representative areas to consume shared fixture helpers instead of duplicating setup logic
+- bounded database fixtures now target isolated per-test PostgreSQL databases instead of rebuilding one shared `public` schema, trading some setup cost for worker-safe parallel execution
+- real E2E fixtures now assign a per-test `TMUX_TMPDIR` so tmux-backed runtime tests do not share the default server namespace
+- real E2E daemon fixtures now reserve and hand off an already-bound listener socket to Uvicorn so parallel startup cannot lose the chosen port between discovery and bind
+- fixture isolation is an invariant, not a best-effort optimization: tests must own their database, schema, process, workspace, token, port, and tmux resources tightly enough to remain parallel-safe whenever the required environment capabilities exist
 
 ### Performance posture
 

@@ -5,6 +5,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKLISTS_DIR = REPO_ROOT / "notes" / "catalogs" / "checklists"
 DOC_SCHEMA_PLAN_DIR = REPO_ROOT / "plan" / "doc_schemas"
 SETUP_PLAN_DIR = REPO_ROOT / "plan" / "setup"
+WEB_PLAN_DIR = REPO_ROOT / "plan" / "web"
+WEB_SETUP_PLAN_DIR = WEB_PLAN_DIR / "setup"
+WEB_FEATURE_PLAN_DIR = WEB_PLAN_DIR / "features"
+WEB_VERIFICATION_PLAN_DIR = WEB_PLAN_DIR / "verification"
 TASK_PLAN_DIR = REPO_ROOT / "plan" / "tasks"
 CHECKLIST_PLAN_DIR = REPO_ROOT / "plan" / "checklists"
 E2E_PLAN_DIR = REPO_ROOT / "plan" / "e2e_tests"
@@ -26,7 +30,7 @@ def _section_lines(text: str, heading: str) -> list[str]:
 def test_authoritative_document_family_inventory_lists_key_families() -> None:
     text = (CHECKLISTS_DIR / "authoritative_document_family_inventory.md").read_text(encoding="utf-8")
 
-    for family_id in ["DF-03", "DF-04", "DF-08", "DF-09", "DF-10", "DF-14", "DF-15", "DF-16"]:
+    for family_id in ["DF-03", "DF-04", "DF-08", "DF-09", "DF-10", "DF-14", "DF-15", "DF-16", "DF-18"]:
         assert family_id in text
     assert "Task plans | yes | `plan/tasks/*.md`" in text
     assert "Development logs and operational logs | yes" in text
@@ -69,6 +73,10 @@ def test_family_readmes_link_to_document_schema_surfaces() -> None:
         REPO_ROOT / "plan" / "setup" / "README.md",
         REPO_ROOT / "plan" / "tasks" / "README.md",
         REPO_ROOT / "plan" / "doc_schemas" / "README.md",
+        REPO_ROOT / "plan" / "web" / "README.md",
+        REPO_ROOT / "plan" / "web" / "setup" / "README.md",
+        REPO_ROOT / "plan" / "web" / "features" / "README.md",
+        REPO_ROOT / "plan" / "web" / "verification" / "README.md",
     ]
 
     for path in shared_readmes:
@@ -105,6 +113,17 @@ def test_setup_plans_follow_lightweight_schema() -> None:
     assert plan_files, "Expected setup plan files."
 
     for path in plan_files:
+        text = path.read_text(encoding="utf-8")
+        assert "## Goal\n" in text, f"{path.name} is missing a Goal section."
+        assert "## Scope\n" in text, f"{path.name} is missing a Scope section."
+        assert "## Exit Criteria\n" in text, f"{path.name} is missing an Exit Criteria section."
+        for system in ["Database:", "CLI:", "Daemon:", "YAML:", "Prompts:", "Tests:", "Performance:", "Notes:"]:
+            assert system in text, f"{path.name} should cover {system.rstrip(':')} in Scope."
+
+    web_setup_files = sorted(path for path in WEB_SETUP_PLAN_DIR.glob("*.md") if path.name != "README.md")
+    assert web_setup_files, "Expected web setup plan files."
+
+    for path in web_setup_files:
         text = path.read_text(encoding="utf-8")
         assert "## Goal\n" in text, f"{path.name} is missing a Goal section."
         assert "## Scope\n" in text, f"{path.name} is missing a Scope section."
@@ -176,6 +195,26 @@ def test_e2e_and_update_test_plans_follow_richer_schema() -> None:
                 assert "e2e_execution_policy.md" in text, (
                     f"{path.name} should point to the E2E execution policy."
                 )
+
+    for family_dir in [WEB_FEATURE_PLAN_DIR, WEB_VERIFICATION_PLAN_DIR]:
+        files = sorted(path for path in family_dir.glob("*.md") if path.name != "README.md")
+        assert files, f"Expected plan files under {family_dir}."
+
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            assert "## Goal\n" in text, f"{path.name} is missing a Goal section."
+            assert "## Rationale\n" in text, f"{path.name} is missing a Rationale section."
+            assert "## Related Features\n" in text, f"{path.name} is missing a Related Features section."
+            assert "## Required Notes\n" in text, f"{path.name} is missing a Required Notes section."
+            assert "## Scope\n" in text, f"{path.name} is missing a Scope section."
+            assert "- Rationale: " in text, f"{path.name} is missing the rationale line."
+            assert "- Reason for existence: " in text, f"{path.name} is missing the reason-for-existence line."
+            assert any(
+                line.startswith("- `") for line in _section_lines(text, "Related Features")
+            ), f"{path.name} should include explicit references in Related Features."
+            assert any(
+                line.startswith("- `") for line in _section_lines(text, "Required Notes")
+            ), f"{path.name} should include explicit references in Required Notes."
 
 
 def test_no_notes_logs_directory_is_present_while_log_family_is_deferred() -> None:

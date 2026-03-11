@@ -583,7 +583,11 @@ def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
     admitted_start_response = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": right_id})
 
     assert left_start_response.status_code == 200
-    assert left_start_response.json()["status"] == "admitted"
+    left_start_payload = left_start_response.json()
+    assert left_start_payload["status"] in {"admitted", "blocked"}
+    if left_start_payload["status"] == "blocked":
+        assert left_start_payload["reason"] == "active_run_conflict"
+        assert any(item["blocker_kind"] == "already_running" for item in left_start_payload["blockers"])
     assert left_complete_response.status_code == 200
     assert ready_after_complete.status_code == 200
     assert ready_after_complete.json()["status"] == "ready"

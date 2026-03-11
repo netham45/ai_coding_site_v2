@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import time
 from uuid import UUID, uuid4
 
@@ -24,6 +25,154 @@ from aicoding.db.models import CompiledSubtask, NodeRunState, Session as Durable
 from aicoding.db.session import create_session_factory, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
+
+
+def _write_generated_child_layout(
+    workspace_root: Path,
+    *,
+    layout_id: str,
+    child_specs: list[dict[str, object]],
+) -> Path:
+    layout_path = workspace_root / "drafts" / f"{layout_id}.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "kind: layout_definition",
+        f"id: {layout_id}",
+        "name: Generated Integration Layout",
+        "description: Generated child layout for daemon integration testing.",
+        "children:",
+    ]
+    for index, child in enumerate(child_specs, start=1):
+        dependencies = list(child.get("dependencies", []))
+        lines.extend(
+            [
+                f"  - id: {child['id']}",
+                "    kind: phase",
+                "    tier: 2",
+                f"    name: {child['name']}",
+                f"    ordinal: {index}",
+                f"    goal: {child['goal']}",
+                f"    rationale: {child['rationale']}",
+            ]
+        )
+        if dependencies:
+            lines.append("    dependencies:")
+            lines.extend(f"      - {dependency}" for dependency in dependencies)
+        else:
+            lines.append("    dependencies: []")
+    layout_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return layout_path
+
+
+def _create_parent_with_generated_children(
+    client: TestClient,
+    *,
+    layout_path: Path,
+    title: str,
+) -> tuple[str, dict[str, dict[str, object]]]:
+    headers = {"Authorization": "Bearer change-me"}
+    create_response = client.post(
+        "/api/nodes/create",
+        headers=headers,
+        json={"kind": "epic", "title": title, "prompt": "boot prompt"},
+    )
+    assert create_response.status_code == 200
+    node_id = str(create_response.json()["node_id"])
+    compile_response = client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+    ready_response = client.post(
+        "/api/nodes/lifecycle/transition",
+        headers=headers,
+        json={"node_id": node_id, "target_state": "READY"},
+    )
+    register_response = client.post(
+        f"/api/nodes/{node_id}/children/register-layout",
+        headers=headers,
+        json={"file_path": str(layout_path)},
+    )
+    materialize_response = client.post(
+        f"/api/nodes/{node_id}/children/materialize",
+        headers=headers,
+        json={},
+    )
+    assert compile_response.status_code == 200
+    assert ready_response.status_code == 200
+    assert register_response.status_code == 200
+    assert materialize_response.status_code == 200
+    children = {
+        str(child["layout_child_id"]): child
+        for child in materialize_response.json()["children"]
+    }
+    return node_id, children
+
+
+def _child_runtime_snapshot(client: TestClient, *, node_id: str) -> dict[str, object]:
+    headers = {"Authorization": "Bearer change-me"}
+    runs_response = client.get(f"/api/nodes/{node_id}/runs", headers=headers)
+    sessions_response = client.get(f"/api/nodes/{node_id}/sessions", headers=headers)
+    dependency_response = client.get(f"/api/nodes/{node_id}/dependency-status", headers=headers)
+    assert runs_response.status_code == 200
+    assert sessions_response.status_code == 200
+    assert dependency_response.status_code == 200
+    return {
+        "runs": runs_response.json()["runs"],
+        "sessions": sessions_response.json()["sessions"],
+        "dependency_status": dependency_response.json()["status"],
+        "dependency_blockers": dependency_response.json()["blockers"],
+    }
+
+
+def _current_node_version_id(client: TestClient, *, node_id: str) -> str:
+    response = client.get(
+        f"/api/nodes/{node_id}/versions",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    assert response.status_code == 200
+    return str(response.json()["versions"][0]["id"])
+
+
+def _wait_for_child_auto_start_state(
+    client: TestClient,
+    *,
+    started_node_ids: set[str],
+    blocked_node_ids: set[str],
+    timeout_seconds: float = 5.0,
+) -> dict[str, dict[str, object]]:
+    deadline = time.time() + timeout_seconds
+    last_snapshots: dict[str, dict[str, object]] = {}
+    target_node_ids = started_node_ids | blocked_node_ids
+    while time.time() < deadline:
+        last_snapshots = {
+            node_id: _child_runtime_snapshot(client, node_id=node_id)
+            for node_id in target_node_ids
+        }
+        started_ok = all(
+            snapshot["runs"] and snapshot["sessions"] and snapshot["runs"][0]["trigger_reason"] == "auto_run_child"
+            for node_id, snapshot in last_snapshots.items()
+            if node_id in started_node_ids
+        )
+        blocked_ok = all(
+            snapshot["runs"] == []
+            and snapshot["sessions"] == []
+            and snapshot["dependency_status"] == "blocked"
+            for node_id, snapshot in last_snapshots.items()
+            if node_id in blocked_node_ids
+        )
+        if started_ok and blocked_ok:
+            return last_snapshots
+        time.sleep(0.1)
+    raise AssertionError(
+        f"Timed out waiting for child auto-start state. started={started_node_ids} blocked={blocked_node_ids} snapshots={last_snapshots}"
+    )
+
+
+def _transition_child_to_complete(client: TestClient, *, node_id: str) -> None:
+    headers = {"Authorization": "Bearer change-me"}
+    complete_response = client.post(
+        "/api/nodes/lifecycle/transition",
+        headers=headers,
+        json={"node_id": node_id, "target_state": "COMPLETE"},
+    )
+    assert complete_response.status_code == 200
 
 
 def _pause_gate_catalog(tmp_path):
@@ -159,7 +308,7 @@ def test_db_healthcheck_returns_database_status(app_client, clean_public_schema)
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["database_name"] == "aicoding"
+    assert payload["database_name"] == clean_public_schema.url.database
     assert payload["current_user"] == "aicoding"
 
 
@@ -169,8 +318,8 @@ def test_db_schema_compatibility_reports_revision_state(app_client, clean_public
     assert response.status_code == 200
     payload = response.json()
     assert payload["expected_revision"] == "0028_subtask_execution_results"
-    assert payload["status"] == "uninitialized"
-    assert payload["compatible"] is False
+    assert payload["status"] == "up_to_date"
+    assert payload["compatible"] is True
 
 
 def test_daemon_status_reports_background_tasks(app_client) -> None:
@@ -1014,7 +1163,10 @@ def test_child_materialization_endpoints_materialize_and_report_scheduling(app_c
     assert materialize_response.status_code == 200
     assert materialize_response.json()["status"] == "created"
     assert [item["layout_child_id"] for item in materialize_response.json()["children"]] == ["discovery", "implementation"]
-    assert [item["scheduling_status"] for item in materialize_response.json()["children"]] == ["ready", "blocked"]
+    assert [item["scheduling_status"] for item in materialize_response.json()["children"]] == [
+        "ready",
+        "blocked_on_dependency",
+    ]
     assert children_response.status_code == 200
     assert [item["kind"] for item in children_response.json()] == ["phase", "phase"]
 
@@ -1096,6 +1248,284 @@ def test_background_child_auto_run_loop_binds_ready_child_without_starting_block
     assert blocked_sessions.json()["sessions"] == []
     assert blocked_runs.status_code == 200
     assert blocked_runs.json()["runs"] == []
+
+
+def test_background_child_auto_run_loop_starts_multiple_independent_siblings(
+    monkeypatch, migrated_public_schema, tmp_path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="independent_siblings",
+        child_specs=[
+            {
+                "id": "sibling_one",
+                "name": "Sibling One",
+                "goal": "Run the first sibling independently.",
+                "rationale": "The backend should not wait on unrelated siblings.",
+                "dependencies": [],
+            },
+            {
+                "id": "sibling_two",
+                "name": "Sibling Two",
+                "goal": "Run the second sibling independently.",
+                "rationale": "The backend should admit both ready siblings.",
+                "dependencies": [],
+            },
+        ],
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            _, children = _create_parent_with_generated_children(
+                client,
+                layout_path=layout_path,
+                title="Independent Sibling Parent",
+            )
+            assert {child["scheduling_status"] for child in children.values()} == {"ready"}
+
+            snapshots = _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(child["node_id"]) for child in children.values()},
+                blocked_node_ids=set(),
+            )
+
+            assert all(
+                "blocked_on_dependency"
+                not in {item["blocker_kind"] for item in snapshot["dependency_blockers"]}
+                for snapshot in snapshots.values()
+            )
+    finally:
+        get_settings.cache_clear()
+
+
+def test_background_child_auto_run_loop_blocks_simple_chain_until_dependency_completes(
+    monkeypatch, migrated_public_schema, tmp_path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="simple_chain",
+        child_specs=[
+            {
+                "id": "sibling_one",
+                "name": "Sibling One",
+                "goal": "Finish first.",
+                "rationale": "The dependent sibling must wait.",
+                "dependencies": [],
+            },
+            {
+                "id": "sibling_two",
+                "name": "Sibling Two",
+                "goal": "Wait on sibling one.",
+                "rationale": "Prove dependency gating blocks auto-start.",
+                "dependencies": ["sibling_one"],
+            },
+        ],
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            parent_id, children = _create_parent_with_generated_children(
+                client,
+                layout_path=layout_path,
+                title="Simple Chain Parent",
+            )
+            first = children["sibling_one"]
+            second = children["sibling_two"]
+            assert first["scheduling_status"] == "ready"
+            assert second["scheduling_status"] == "blocked_on_dependency"
+
+            _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"])},
+                blocked_node_ids={str(second["node_id"])},
+            )
+            _transition_child_to_complete(client, node_id=str(first["node_id"]))
+
+            snapshots = _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"]), str(second["node_id"])},
+                blocked_node_ids=set(),
+            )
+
+            assert "blocked_on_dependency" not in {
+                item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
+            }
+            _transition_child_to_complete(client, node_id=str(second["node_id"]))
+
+            session_factory = client.app.state.db_session_factory
+            first_version_id = _current_node_version_id(client, node_id=str(first["node_id"]))
+            second_version_id = _current_node_version_id(client, node_id=str(second["node_id"]))
+            record_seed_commit(session_factory, version_id=UUID(first_version_id), commit_sha="1111111")
+            record_final_commit(session_factory, version_id=UUID(first_version_id), commit_sha="1111112")
+            record_seed_commit(session_factory, version_id=UUID(second_version_id), commit_sha="2222221")
+            record_final_commit(session_factory, version_id=UUID(second_version_id), commit_sha="2222222")
+
+            child_results_response = client.get(
+                f"/api/nodes/{parent_id}/child-results",
+                headers={"Authorization": "Bearer change-me"},
+            )
+            assert child_results_response.status_code == 200
+            child_results_payload = child_results_response.json()
+            assert child_results_payload["children"][0]["layout_child_id"] == "sibling_one"
+            assert child_results_payload["children"][1]["layout_child_id"] == "sibling_two"
+            assert child_results_payload["children"][0]["merge_order"] == 1
+            assert child_results_payload["children"][1]["merge_order"] == 2
+            assert child_results_payload["children"][1]["dependency_child_node_ids"] == [str(first["node_id"])]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_background_child_auto_run_loop_unblocks_fan_out_siblings_together_after_shared_prerequisite(
+    monkeypatch, migrated_public_schema, tmp_path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="fan_out_chain",
+        child_specs=[
+            {
+                "id": "sibling_one",
+                "name": "Sibling One",
+                "goal": "Finish before the fan-out dependents.",
+                "rationale": "The shared prerequisite should gate both followers.",
+                "dependencies": [],
+            },
+            {
+                "id": "sibling_two",
+                "name": "Sibling Two",
+                "goal": "Wait on sibling one.",
+                "rationale": "First follower for fan-out coverage.",
+                "dependencies": ["sibling_one"],
+            },
+            {
+                "id": "sibling_three",
+                "name": "Sibling Three",
+                "goal": "Also wait on sibling one.",
+                "rationale": "Second follower should unblock in the same scheduling window.",
+                "dependencies": ["sibling_one"],
+            },
+        ],
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            _, children = _create_parent_with_generated_children(
+                client,
+                layout_path=layout_path,
+                title="Fan Out Parent",
+            )
+            first = children["sibling_one"]
+            second = children["sibling_two"]
+            third = children["sibling_three"]
+            assert first["scheduling_status"] == "ready"
+            assert second["scheduling_status"] == "blocked_on_dependency"
+            assert third["scheduling_status"] == "blocked_on_dependency"
+
+            _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"])},
+                blocked_node_ids={str(second["node_id"]), str(third["node_id"])},
+            )
+            _transition_child_to_complete(client, node_id=str(first["node_id"]))
+
+            snapshots = _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"]), str(second["node_id"]), str(third["node_id"])},
+                blocked_node_ids=set(),
+            )
+
+            assert "blocked_on_dependency" not in {
+                item["blocker_kind"] for item in snapshots[str(second["node_id"])]["dependency_blockers"]
+            }
+            assert "blocked_on_dependency" not in {
+                item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
+            }
+    finally:
+        get_settings.cache_clear()
+
+
+def test_background_child_auto_run_loop_starts_independent_siblings_while_leaving_dependent_third_blocked(
+    monkeypatch, migrated_public_schema, tmp_path
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="mixed_siblings",
+        child_specs=[
+            {
+                "id": "sibling_one",
+                "name": "Sibling One",
+                "goal": "Run independently.",
+                "rationale": "Independent sibling should not be blocked by sibling three.",
+                "dependencies": [],
+            },
+            {
+                "id": "sibling_two",
+                "name": "Sibling Two",
+                "goal": "Run independently and unblock sibling three later.",
+                "rationale": "Sibling three depends only on this child.",
+                "dependencies": [],
+            },
+            {
+                "id": "sibling_three",
+                "name": "Sibling Three",
+                "goal": "Wait on sibling two.",
+                "rationale": "The third sibling should stay blocked while the first two auto-start.",
+                "dependencies": ["sibling_two"],
+            },
+        ],
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            _, children = _create_parent_with_generated_children(
+                client,
+                layout_path=layout_path,
+                title="Mixed Sibling Parent",
+            )
+            first = children["sibling_one"]
+            second = children["sibling_two"]
+            third = children["sibling_three"]
+            assert first["scheduling_status"] == "ready"
+            assert second["scheduling_status"] == "ready"
+            assert third["scheduling_status"] == "blocked_on_dependency"
+
+            _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"]), str(second["node_id"])},
+                blocked_node_ids={str(third["node_id"])},
+            )
+            _transition_child_to_complete(client, node_id=str(second["node_id"]))
+
+            snapshots = _wait_for_child_auto_start_state(
+                client,
+                started_node_ids={str(first["node_id"]), str(second["node_id"]), str(third["node_id"])},
+                blocked_node_ids=set(),
+            )
+
+            assert "blocked_on_dependency" not in {
+                item["blocker_kind"] for item in snapshots[str(third["node_id"])]["dependency_blockers"]
+            }
+    finally:
+        get_settings.cache_clear()
 
 
 def test_child_result_and_reconcile_endpoints_report_and_record_merge_state(

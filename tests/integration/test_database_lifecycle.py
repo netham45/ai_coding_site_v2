@@ -71,6 +71,11 @@ def test_fixture_reset_clears_bootstrap_tables(db_engine) -> None:
     assert "latest_documentation_outputs" in inspect(db_engine).get_view_names()
     assert "latest_node_entity_changes" in inspect(db_engine).get_view_names()
     assert "latest_code_relations" in inspect(db_engine).get_view_names()
+    with db_engine.connect() as connection:
+        assert connection.execute(text("select version_num from public.alembic_version")).scalar_one() == (
+            "0028_subtask_execution_results"
+        )
+        assert connection.execute(text("select count(*) from public.yaml_schema_validation_records")).scalar_one() == 0
 
     reset_public_schema(db_engine)
     assert "bootstrap_metadata" not in inspect(db_engine).get_table_names()
@@ -142,6 +147,8 @@ def test_runtime_state_views_reflect_live_state(migrated_public_schema) -> None:
     seed_node_lifecycle(factory, node_id=str(blocked_node.node_id), initial_state="DRAFT")
     blocked_version = initialize_node_version(factory, logical_node_id=blocked_node.node_id)
     candidate_version = create_superseding_node_version(factory, logical_node_id=blocked_node.node_id)
+    compile_node_workflow(factory, logical_node_id=blocked_node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(blocked_node.node_id), target_state="READY")
     add_node_dependency(factory, node_id=blocked_node.node_id, depends_on_node_id=running_node.node_id)
     readiness = check_node_dependency_readiness(factory, node_id=blocked_node.node_id)
 

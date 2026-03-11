@@ -49,5 +49,12 @@ Current task index:
 - `2026-03-10_ai_command_lifecycle_structural_review.md`
 - `2026-03-10_full_ai_command_lifecycle_note_authoring.md`
 - `2026-03-11_repo_wide_test_audit.md`
+- `2026-03-11_parallel_all_tests_meta_verifier_plan.md`
+- `2026-03-11_remaining_test_failure_remediation_plan.md`
+- `2026-03-11_testing_doctrine_parallel_execution_requirement.md`
+- `2026-03-11_web_setup_00_node_and_package_runtime_baseline.md`
+- `2026-03-11_frontend_website_future_plan_capture.md`
+- `2026-03-11_collaborative_design_future_plan_capture.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_investigation.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+- `2026-03-11_yaml_schema_and_field_rigidity_priority3.md`

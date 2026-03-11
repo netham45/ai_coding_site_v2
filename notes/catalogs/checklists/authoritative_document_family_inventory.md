@@ -26,6 +26,7 @@ Use this as the DS-01 inventory surface for document-schema adoption.
 | DF-14 | Feature checklist family | yes | `notes/catalogs/checklists/feature_checklist_*.md` | status vocabulary, coverage completeness, and command-link rules |
 | DF-15 | Verification command and execution policy docs | yes | `notes/catalogs/checklists/verification_command_catalog.md`, `notes/catalogs/checklists/e2e_execution_policy.md` | canonical command and execution-tier rules |
 | DF-16 | Development logs and operational logs | yes | `notes/logs/**/*.md` | required field, status-vocabulary, and command/result structure tests |
+| DF-18 | Web planning family | yes | `plan/web/setup/*.md`, `plan/web/features/*.md`, `plan/web/verification/*.md` | setup-plan rules for web setup, richer-plan rules for web features and verification, plus README/schema-link checks |
 | DF-17 | Exploratory and archived notes | no | `notes/explorations/**`, `notes/archive/**` | no schema enforcement beyond basic repository hygiene |
 
 ## Family Rules

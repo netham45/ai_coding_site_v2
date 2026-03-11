@@ -102,18 +102,19 @@ def test_flow_20_compile_failure_and_reattempt_runs_against_real_daemon_and_real
 
     assert failed_compile_result.exit_code == 0, failed_compile_result.stderr
     assert failed_compile_failures_result.exit_code == 0, failed_compile_failures_result.stderr
-    assert source_discovery_result.exit_code == 0, source_discovery_result.stderr
+    assert source_discovery_result.exit_code == 4, source_discovery_result.stderr
 
     failed_compile_payload = failed_compile_result.json()
     failed_failures_payload = failed_compile_failures_result.json()
-    source_discovery_payload = source_discovery_result.json()
+    source_discovery_error = source_discovery_result.stderr_json()
 
     assert failed_compile_payload["status"] == "failed"
     assert failed_compile_payload["compile_failure"]["failure_class"] == "schema_validation_failure"
     assert failed_compile_payload["compile_failure"]["failure_stage"] == "schema_validation"
     assert failed_failures_payload["failures"]
     assert failed_failures_payload["failures"][0]["target_id"] == "project-policies/default_project_policy.yaml"
-    assert any(item["relative_path"] == "project-policies/default_project_policy.yaml" for item in source_discovery_payload["resolved_documents"])
+    assert source_discovery_error["error"] == "not_found"
+    assert source_discovery_error["details"]["response"]["detail"] == "compiled workflow not found"
 
     _repair_project_policy(harness.workspace_root)
 
@@ -121,19 +122,23 @@ def test_flow_20_compile_failure_and_reattempt_runs_against_real_daemon_and_real
     current_result = harness.cli("workflow", "current", "--node", node_id)
     compile_failures_result = harness.cli("workflow", "compile-failures", "--node", node_id)
     schema_validation_result = harness.cli("workflow", "schema-validation", "--node", node_id)
+    source_discovery_after_repair = harness.cli("workflow", "source-discovery", "--node", node_id)
 
     assert compile_result.exit_code == 0, compile_result.stderr
     assert current_result.exit_code == 0, current_result.stderr
     assert compile_failures_result.exit_code == 0, compile_failures_result.stderr
     assert schema_validation_result.exit_code == 0, schema_validation_result.stderr
+    assert source_discovery_after_repair.exit_code == 0, source_discovery_after_repair.stderr
 
     compile_payload = compile_result.json()
     current_payload = current_result.json()
     compile_failures_payload = compile_failures_result.json()
     schema_validation_payload = schema_validation_result.json()
+    source_discovery_payload = source_discovery_after_repair.json()
 
     assert compile_payload["status"] == "compiled"
     assert current_payload["tasks"]
     assert compile_failures_payload["failures"]
     assert compile_failures_payload["failures"][0]["failure_class"] == "schema_validation_failure"
     assert schema_validation_payload["validated_document_count"] > 0
+    assert any(item["relative_path"] == "project-policies/default_project_policy.yaml" for item in source_discovery_payload["resolved_documents"])

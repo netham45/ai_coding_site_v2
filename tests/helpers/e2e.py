@@ -20,10 +20,13 @@ from aicoding.db.migrations import create_alembic_config, upgrade_database
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def allocate_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def reserve_local_listener(*, host: str = "127.0.0.1") -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((host, 0))
+    sock.listen(socket.SOMAXCONN)
+    sock.set_inheritable(True)
+    return sock
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,8 @@ class RealDaemonHarness:
         token_file: Path,
         process: subprocess.Popen[str],
         workspace_root: Path,
+        stdout_log: Path,
+        stderr_log: Path,
     ) -> None:
         self.env = env
         self.base_url = base_url
@@ -62,15 +67,17 @@ class RealDaemonHarness:
         self.token_file = token_file
         self.process = process
         self.workspace_root = workspace_root
+        self.stdout_log = stdout_log
+        self.stderr_log = stderr_log
 
-    def wait_until_ready(self, *, timeout_seconds: float = 20.0) -> None:
+    def wait_until_ready(self, *, timeout_seconds: float = 45.0) -> None:
         deadline = time.time() + timeout_seconds
         last_error: str | None = None
         while time.time() < deadline:
             if self.process.poll() is not None:
                 raise RuntimeError(self.dead_process_message("Real daemon process exited before becoming ready."))
             try:
-                response = httpx.get(f"{self.base_url}/healthz", timeout=0.5)
+                response = httpx.get(f"{self.base_url}/healthz", timeout=1.0)
                 if response.status_code == 200 and self.token_file.exists():
                     return
             except httpx.HTTPError as exc:
@@ -79,8 +86,8 @@ class RealDaemonHarness:
         raise RuntimeError(f"Timed out waiting for daemon readiness at {self.base_url}. Last error: {last_error}")
 
     def dead_process_message(self, prefix: str) -> str:
-        stdout = self.process.stdout.read() if self.process.stdout else ""
-        stderr = self.process.stderr.read() if self.process.stderr else ""
+        stdout = self.stdout_log.read_text(encoding="utf-8") if self.stdout_log.exists() else ""
+        stderr = self.stderr_log.read_text(encoding="utf-8") if self.stderr_log.exists() else ""
         return f"{prefix}\nstdout:\n{stdout}\nstderr:\n{stderr}"
 
     def assert_process_alive(self, *, prefix: str = "Real daemon process exited during E2E.") -> None:
@@ -154,6 +161,9 @@ def build_real_daemon_env(
             "AICODING_DATABASE_URL": database_url,
             "AICODING_DAEMON_HOST": "127.0.0.1",
             "AICODING_DAEMON_PORT": str(port),
+            # Real E2E flows exercise multi-step git merge/reconcile paths that
+            # legitimately exceed the CLI's 30s default request timeout.
+            "AICODING_DAEMON_REQUEST_TIMEOUT_SECONDS": "120",
             "AICODING_AUTH_TOKEN_FILE": str(token_file),
             "AICODING_AUTH_TOKEN": "change-me",
             "AICODING_SESSION_BACKEND": session_backend,
@@ -206,6 +216,7 @@ def drop_test_database(*, database_url: str, database_name: str) -> None:
                     select pg_terminate_backend(pid)
                     from pg_stat_activity
                     where datname = :database_name
+                      and usename = current_user
                       and pid <> pg_backend_pid()
                     """
                 ),

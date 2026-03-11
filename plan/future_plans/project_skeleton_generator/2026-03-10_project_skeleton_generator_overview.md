@@ -99,6 +99,7 @@ The future generator should eventually be able to:
 - emit a concise `AGENTS.md` that points contributors at the active lifecycle stage instead of expanding every stage rule inline
 - emit a reviewable starter `AGENTS.md` template that shows how global doctrine and stage-local doctrine are split
 - emit starter workflow-profile guidance for planning, setup, delivery, docs, and E2E
+- emit starter post-v1 workstream guidance so the generated repo does not stop at first release
 
 ## Non-Goals
 
@@ -128,3 +129,20 @@ The current best direction is:
 - each lifecycle stage contains explicit sub-steps
 - an operational-state checklist records which stage and sub-steps are active
 - stronger claims activate only when the repo reaches the corresponding stage
+
+## Post-V1 Gap
+
+The current bundle is strongest from empty scaffold through first hardening.
+
+The next gap is what happens after that.
+
+Once a generated repository reaches a first `flow_complete` or `release_ready` scope, the lifecycle becomes choice-driven. The repository may need to:
+
+- add a new major feature family
+- introduce a new subsystem or platform surface
+- perform a security, compliance, or resilience audit
+- replace or heavily refactor an existing architecture slice
+- migrate data, traffic, or ownership to another service
+- deprecate or sunset behavior deliberately
+
+The future generator therefore needs to seed a post-v1 operating model that tells contributors how to reopen discovery, architecture, setup, delivery, and E2E work intentionally for the chosen kind of change.

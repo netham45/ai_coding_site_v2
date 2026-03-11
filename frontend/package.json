@@ -1,0 +1,14 @@
+{
+  "name": "aicoding-website-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "npm@10.9.4",
+  "engines": {
+    "node": ">=22.22.0",
+    "npm": ">=10.9.4"
+  },
+  "scripts": {
+    "check:runtime": "node -e \"console.log(process.version)\""
+  }
+}

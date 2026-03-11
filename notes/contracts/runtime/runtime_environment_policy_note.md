@@ -245,6 +245,43 @@ These failures should feed into normal subtask failure handling and parent failu
 
 They should not bypass ordinary retry/pause/escalation behavior.
 
+### Provisioning Failure Handling
+
+Container or namespace provisioning failure should not collapse into a generic task failure.
+
+The runtime should preserve:
+
+- the requested environment contract
+- the resolved launcher/runtime mode
+- the relevant launcher stderr/stdout summary
+- the failure classification
+- whether the failure is retryable, child-fixable, parent-replan-worthy, or operator-blocking
+
+Recommended handling split:
+
+- `retryable_infra`
+  - examples: transient engine timeout, temporary image-pull failure, temporary port allocation failure
+  - expected behavior: daemon-owned retry policy runs first before escalating
+- `child_fixable_spec`
+  - examples: invalid Dockerfile, bad build command, missing dependency declared in the child-owned build spec
+  - expected behavior: fail the current node attempt in an environment-specific state so the same node can revise its runtime definition or implementation inputs
+- `parent_replan_required`
+  - examples: impossible runtime requirements, conflicting policy requests, required capability not satisfiable under the current parent plan
+  - expected behavior: surface a compact structured diagnosis to the parent so the parent can revise or regenerate its plan
+- `operator_blocked`
+  - examples: container engine unavailable, permissions missing, host policy forbids the requested mode
+  - expected behavior: mark the run blocked pending operator action rather than looping between child and parent automatically
+
+Recommended state modeling:
+
+- `environment_provisioning_failed`
+- `environment_blocked_pending_parent`
+- `environment_blocked_pending_operator`
+
+Key rule:
+
+- provisioning failure should remain inspectable as an environment failure first, and only then participate in the broader retry, pause, failure, or escalation pipeline
+
 ---
 
 ## Best-Effort vs Mandatory Isolation

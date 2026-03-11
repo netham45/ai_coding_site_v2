@@ -20,3 +20,9 @@ Current working-note bundles:
 
 - `workflow_overhaul/`
 - `project_skeleton_generator/`
+- `frontend_website_ui/`
+- `application_decompilation/`
+- `containerized_worker_runtime/`
+- `collaborative_design_workflow/`
+- `node_tree_copy_paste/`
+- `sibling_dependency_incremental_parent_merge/`

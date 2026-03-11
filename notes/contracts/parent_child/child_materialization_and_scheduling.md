@@ -225,6 +225,8 @@ Implementation staging note:
 - after child materialization, the daemon scans authoritative parent-child edges, evaluates readiness from durable child state, and auto-starts only children that are actually `ready`
 - the current implementation admits the child run with trigger reason `auto_run_child` and binds a primary session immediately
 - dependency-blocked siblings remain unstarted until their dependencies clear
+- if a blocked sibling depends on another child that will change the parent branch or parent context, the parent must merge that prerequisite child back into parent state before admitting the dependent sibling
+- this incremental merge step is separate from the later full `wait_for_children` plus `reconcile_children` stage; it exists so dependent siblings do not start from stale parent ancestry or stale parent-visible artifacts
 
 ---
 
@@ -245,6 +247,7 @@ Implementation staging note:
 
 - the current scheduling read path derives child readiness from `node_dependencies`, `node_dependency_blockers`, and each child lifecycle row
 - no standalone scheduling snapshot table is currently required because the derived state has been sufficient for operator and parent inspection
+- the final parent-local reconcile stage still waits for all required children, but that does not remove the need for earlier incremental merge-to-parent work when sibling dependencies require later children to see newly produced parent state
 
 ---
 

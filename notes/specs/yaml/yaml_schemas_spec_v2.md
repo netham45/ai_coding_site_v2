@@ -154,6 +154,8 @@ Implementation staging note:
 - schema validation now also checks prompt-bearing review and hook definitions against the packaged prompt catalog so broken prompt refs fail at YAML validation time instead of surfacing later during runtime use
 - the current implementation now also treats `runtime_definition`, `runtime_policy_definition`, and `prompt_reference_definition` as rigid schema families with catalog-backed reference validation
 - runtime definitions now validate declared action refs against packaged subtask assets, runtime-policy docs validate referenced runtime/hook/review/testing/docs YAML assets, and prompt-reference docs validate dotted keys plus prompt-pack-relative markdown targets
+- the current implementation now also validates `project_policy_definition` refs against matching-family built-in or project-local runtime/hook/review/testing/docs/environment YAML assets, validates supported `prompt_pack` values, and rejects `prompt_pack: project` when no project prompt directory exists
+- hook definitions now also reject blank `when` values plus `run_prompt` and command-bearing run steps that omit their required `prompt` or `command` payloads, and the built-in hook/runtime-policy/testing/docs families now have dedicated authored-library rigidity tests in addition to the grouped operational/quality-library surfaces
 
 ---
 

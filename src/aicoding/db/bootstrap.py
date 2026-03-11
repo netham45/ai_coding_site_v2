@@ -19,6 +19,24 @@ def database_status(engine: Engine) -> dict[str, object]:
 
 def reset_public_schema(engine: Engine) -> None:
     with engine.begin() as connection:
-        connection.execute(text("drop schema if exists public cascade"))
-        connection.execute(text("create schema public"))
+        # Tests repeatedly rebuild the shared public schema. Terminate sibling
+        # sessions first so cleanup does not race against stale pooled or
+        # idle-in-transaction connections that still reference public objects.
+        connection.execute(
+            text(
+                """
+                select pg_terminate_backend(pid)
+                from pg_stat_activity
+                where datname = current_database()
+                  and usename = current_user
+                  and pid <> pg_backend_pid()
+                """
+            )
+        )
+        # Preserve the public schema itself. Recreating the namespace can leave
+        # a migrated catalog state where pg_class/to_regclass see relations but
+        # ordinary SELECT/INSERT on those same public tables fail.
+        connection.execute(text("create schema if not exists public"))
+        connection.execute(text("drop owned by current_user cascade"))
+        connection.execute(text("create schema if not exists public"))
         connection.execute(text("grant all on schema public to public"))

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 
+from sqlalchemy.engine import make_url
+
+from aicoding.config import get_settings
+
+
 def test_db_ping_command_reports_connection_details(cli_runner) -> None:
     result = cli_runner(["admin", "db", "ping"])
     payload = result.json()
 
     assert result.exit_code == 0
-    assert payload["database_name"] == "aicoding"
+    assert payload["database_name"] == make_url(get_settings().database_url).database
     assert payload["current_user"] == "aicoding"
 
 

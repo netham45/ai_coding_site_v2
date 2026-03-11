@@ -161,10 +161,25 @@ def test_persist_and_load_latest_yaml_validation_report(db_session_factory, migr
     assert latest.valid is True
 
 
-def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
+def _catalog_with_yaml(
+    tmp_path: Path,
+    *,
+    relative_path: str,
+    content: str,
+    source_group: str = "yaml_builtin_system",
+    create_project_prompt_dir: bool = False,
+):
     base = load_resource_catalog()
     builtin_root = tmp_path / "yaml" / "builtin" / "system-yaml"
-    target_path = builtin_root / relative_path
+    project_root = tmp_path / "yaml" / "project"
+    overrides_root = tmp_path / "yaml" / "overrides"
+    group_roots = {
+        "yaml_builtin_system": builtin_root,
+        "yaml_project": project_root,
+        "yaml_overrides": overrides_root,
+    }
+    target_root = group_roots[source_group]
+    target_path = target_root / relative_path
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(content, encoding="utf-8")
     prompt_root = tmp_path / "prompts" / "packs" / "default"
@@ -173,12 +188,19 @@ def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
         target = prompt_root / path.relative_to(base.prompt_pack_default_dir)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    project_prompt_dir = tmp_path / "prompts" / "project"
+    if create_project_prompt_dir:
+        project_prompt_dir.mkdir(parents=True, exist_ok=True)
     return replace(
         base,
-        yaml_builtin_system_dir=builtin_root,
+        yaml_builtin_system_dir=builtin_root if source_group == "yaml_builtin_system" else base.yaml_builtin_system_dir,
         yaml_builtin_dir=tmp_path / "yaml" / "builtin",
+        yaml_project_dir=project_root,
+        yaml_project_policies_dir=project_root / "project-policies",
+        yaml_overrides_dir=overrides_root,
         root=tmp_path,
         prompt_pack_default_dir=prompt_root,
+        prompt_project_dir=project_prompt_dir,
     )
 
 
@@ -318,6 +340,36 @@ def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
             "runtime definitions must declare at least one command",
         ),
         (
+            "runtime/empty_runtime_command.yaml",
+            "\n".join(
+                [
+                    "kind: runtime_definition",
+                    "id: empty_runtime_command",
+                    "name: Empty Runtime Command",
+                    "description: Contains an empty command entry.",
+                    "commands: ['']",
+                    "thresholds: {heartbeat_seconds: 30}",
+                    "actions: [write_summary]",
+                ]
+            ),
+            "runtime definition commands must not be empty",
+        ),
+        (
+            "runtime/duplicate_runtime_actions.yaml",
+            "\n".join(
+                [
+                    "kind: runtime_definition",
+                    "id: duplicate_runtime_actions",
+                    "name: Duplicate Runtime Actions",
+                    "description: Repeats an action.",
+                    "commands: [ai-tool session bind --node <node_id>]",
+                    "thresholds: {bind_once_per_run: true}",
+                    "actions: [rebind_session, rebind_session]",
+                ]
+            ),
+            "runtime definition actions must be unique",
+        ),
+        (
             "environments/bad_environment_mode.yaml",
             "\n".join(
                 [
@@ -416,6 +468,109 @@ def _catalog_with_yaml(tmp_path: Path, *, relative_path: str, content: str):
                 ]
             ),
             "references missing YAML asset",
+        ),
+        (
+            "policies/duplicate_runtime_policy_refs.yaml",
+            "\n".join(
+                [
+                    "kind: runtime_policy_definition",
+                    "id: duplicate_runtime_policy_refs",
+                    "name: Duplicate Runtime Policy Refs",
+                    "description: Repeats runtime refs.",
+                    "defaults: {auto_run_children: true}",
+                    "runtime_policy_refs: [runtime/session_defaults.yaml, runtime/session_defaults.yaml]",
+                    "hook_refs: []",
+                    "review_refs: []",
+                    "testing_refs: []",
+                    "docs_refs: []",
+                ]
+            ),
+            "runtime_policy_refs entries must be unique",
+        ),
+        (
+            "hooks/empty_when.yaml",
+            "\n".join(
+                [
+                    "kind: hook_definition",
+                    "id: empty_when",
+                    "when: ''",
+                    "applies_to: {tiers: [], node_kinds: [task], task_ids: [], subtask_types: []}",
+                    "if: {changed_entity_types: [], paths_match: []}",
+                    "run:",
+                    "  - type: run_prompt",
+                    '    prompt: "prompts/runtime/session_bootstrap.md"',
+                ]
+            ),
+            "when must not be empty",
+        ),
+        (
+            "hooks/run_prompt_missing_prompt.yaml",
+            "\n".join(
+                [
+                    "kind: hook_definition",
+                    "id: run_prompt_missing_prompt",
+                    "when: before_review",
+                    "applies_to: {tiers: [], node_kinds: [task], task_ids: [], subtask_types: []}",
+                    "if: {changed_entity_types: [], paths_match: []}",
+                    "run:",
+                    "  - type: run_prompt",
+                ]
+            ),
+            "run_prompt hook steps require a non-empty prompt",
+        ),
+        (
+            "hooks/validate_missing_command.yaml",
+            "\n".join(
+                [
+                    "kind: hook_definition",
+                    "id: validate_missing_command",
+                    "when: before_validation",
+                    "applies_to: {tiers: [], node_kinds: [task], task_ids: [validate_node], subtask_types: []}",
+                    "if: {changed_entity_types: [], paths_match: []}",
+                    "run:",
+                    "  - type: validate",
+                ]
+            ),
+            "validate hook steps require a non-empty command",
+        ),
+        (
+            "testing/empty_working_directory.yaml",
+            "\n".join(
+                [
+                    "kind: testing_definition",
+                    "id: empty_working_directory",
+                    "name: Empty Working Directory",
+                    "applies_to: {node_kinds: [task], task_ids: [test_node], lifecycle_points: [after_task]}",
+                    "scope: unit",
+                    "description: Missing working directory text.",
+                    "commands:",
+                    "  - command: python3 -m pytest -q",
+                    "    working_directory: ''",
+                    "    env: {}",
+                    "retry_policy: {max_attempts: 1, rerun_failed_only: false}",
+                    "pass_rules: {require_exit_code_zero: true, max_failed_tests: 0}",
+                    "on_result: {pass_action: continue, fail_action: fail_to_parent}",
+                ]
+            ),
+            "working_directory must not be empty",
+        ),
+        (
+            "docs/empty_view.yaml",
+            "\n".join(
+                [
+                    "kind: docs_definition",
+                    "id: empty_view",
+                    "name: Empty View",
+                    "applies_to: {node_kinds: [task], task_ids: [build_node_docs], lifecycle_points: [after_task]}",
+                    "scope: local",
+                    "description: Missing output view.",
+                    "inputs: {include_node_summaries: true}",
+                    "outputs:",
+                    "  - path: docs/generated/node.md",
+                    "    view: ''",
+                ]
+            ),
+            "view must not be empty",
         ),
         (
             "prompts/bad_prompt_refs.yaml",
@@ -517,6 +672,175 @@ def test_validate_yaml_document_rejects_missing_prompt_reference_asset(tmp_path:
 
     assert report.valid is False
     assert any("references missing prompt asset" in issue.message for issue in report.issues)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_message", "create_project_prompt_dir"),
+    [
+        (
+            "\n".join(
+                [
+                    "project_policy_definition:",
+                    "  id: bad_policy_missing_runtime",
+                    "  description: Missing runtime asset.",
+                    "  defaults: {auto_run_children: true}",
+                    "  runtime_policy_refs: [runtime/not_real.yaml]",
+                    "  hook_refs: []",
+                    "  review_refs: []",
+                    "  testing_refs: []",
+                    "  docs_refs: []",
+                    "  enabled_node_kinds: [epic]",
+                    "  prompt_pack: default",
+                    "  environment_profiles: []",
+                ]
+            ),
+            "references missing YAML asset",
+            False,
+        ),
+        (
+            "\n".join(
+                [
+                    "project_policy_definition:",
+                    "  id: bad_policy_prompt_pack",
+                    "  description: Unsupported prompt pack.",
+                    "  defaults: {auto_run_children: true}",
+                    "  runtime_policy_refs: []",
+                    "  hook_refs: []",
+                    "  review_refs: []",
+                    "  testing_refs: []",
+                    "  docs_refs: []",
+                    "  enabled_node_kinds: [epic]",
+                    "  prompt_pack: imaginary",
+                    "  environment_profiles: []",
+                ]
+            ),
+            "unsupported prompt_pack",
+            False,
+        ),
+        (
+            "\n".join(
+                [
+                    "project_policy_definition:",
+                    "  id: bad_policy_project_prompts",
+                    "  description: Requests project prompts without a project prompt dir.",
+                    "  defaults: {auto_run_children: true}",
+                    "  runtime_policy_refs: []",
+                    "  hook_refs: []",
+                    "  review_refs: []",
+                    "  testing_refs: []",
+                    "  docs_refs: []",
+                    "  enabled_node_kinds: [epic]",
+                    "  prompt_pack: project",
+                    "  environment_profiles: []",
+                ]
+            ),
+            "project prompt pack requested",
+            False,
+        ),
+        (
+            "\n".join(
+                [
+                    "project_policy_definition:",
+                    "  id: bad_policy_environment_profile",
+                    "  description: Missing environment profile asset.",
+                    "  defaults: {auto_run_children: true}",
+                    "  runtime_policy_refs: []",
+                    "  hook_refs: []",
+                    "  review_refs: []",
+                    "  testing_refs: []",
+                    "  docs_refs: []",
+                    "  enabled_node_kinds: [epic]",
+                    "  prompt_pack: default",
+                    "  environment_profiles: [environments/not_real.yaml]",
+                ]
+            ),
+            "environment_profiles[0] references missing YAML asset",
+            False,
+        ),
+    ],
+)
+def test_validate_yaml_document_rejects_invalid_project_policy_fields(
+    tmp_path: Path,
+    content: str,
+    expected_message: str,
+    create_project_prompt_dir: bool,
+) -> None:
+    catalog = _catalog_with_yaml(
+        tmp_path,
+        relative_path="project-policies/bad.yaml",
+        content=content,
+        source_group="yaml_project",
+        create_project_prompt_dir=create_project_prompt_dir,
+    )
+
+    report = validate_yaml_document(catalog, source_group="yaml_project", relative_path="project-policies/bad.yaml")
+
+    assert report.valid is False
+    assert any(expected_message in issue.message for issue in report.issues)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_message"),
+    [
+        (
+            "\n".join(
+                [
+                    "target_family: imaginary_definition",
+                    "target_id: epic",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "merge_mode: replace",
+                    "value:",
+                    "  description: updated",
+                ]
+            ),
+            "unsupported override target family",
+        ),
+        (
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    "target_id: epic",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "merge_mode: patch",
+                    "value:",
+                    "  description: updated",
+                ]
+            ),
+            "unsupported merge_mode",
+        ),
+        (
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    "target_id: epic",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "merge_mode: replace",
+                    "value: {}",
+                ]
+            ),
+            "override value must not be empty",
+        ),
+    ],
+)
+def test_validate_yaml_document_rejects_invalid_override_fields(
+    tmp_path: Path,
+    content: str,
+    expected_message: str,
+) -> None:
+    catalog = _catalog_with_yaml(
+        tmp_path,
+        relative_path="nodes/bad_override.yaml",
+        content=content,
+        source_group="yaml_overrides",
+    )
+
+    report = validate_yaml_document(catalog, source_group="yaml_overrides", relative_path="nodes/bad_override.yaml")
+
+    assert report.valid is False
+    assert any(expected_message in issue.message for issue in report.issues)
 
 
 def test_schema_descriptor_files_cover_higher_order_families() -> None:

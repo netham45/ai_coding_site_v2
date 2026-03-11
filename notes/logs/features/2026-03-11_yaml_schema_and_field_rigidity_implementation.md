@@ -67,3 +67,133 @@
     - `tests/unit/test_yaml_schemas.py::test_persist_and_load_latest_yaml_validation_report`
     - failure: `relation "yaml_schema_validation_records" does not exist`
 - Next step: either fix the migrated-schema fixture so the full canonical YAML-schema test file can pass cleanly, or continue into Priority 2 family rigidity while keeping that DB-backed fixture gap explicit.
+
+## Entry 3
+
+- Timestamp: 2026-03-11
+- Task ID: yaml_schema_and_field_rigidity_implementation
+- Task title: YAML schema and field rigidity implementation
+- Status: bounded_tests_passed
+- Affected systems: database, tests, notes, development logs
+- Summary: Finished the Priority 1 stage by fixing the migrated-schema test harness. The root cause was the `reset_public_schema()` strategy, not the YAML validation code. Dropping and recreating the `public` schema left a pathological catalog state where `pg_class` and `to_regclass()` reported migrated relations in `public`, but ordinary `SELECT` and `INSERT` against those same tables failed with `UndefinedTable`. Preserving the `public` namespace and clearing owned objects inside it resolved the issue.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase1_inventory_note.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase2_gap_taxonomy_note.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase3_test_strategy_note.md`
+  - `AGENTS.md`
+- Files changed:
+  - `src/aicoding/db/bootstrap.py`
+  - `tests/integration/test_database_lifecycle.py`
+  - `notes/logs/features/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/unit/test_yaml_schemas.py::test_persist_and_load_latest_yaml_validation_report -q`
+  - `python3 -m pytest tests/integration/test_database_lifecycle.py -k 'fixture_reset_clears_bootstrap_tables or migrations_are_repeatable or migration_status_reports_uninitialized_then_up_to_date' -q`
+  - `python3 -m pytest tests/unit/test_yaml_schemas.py tests/unit/test_rectification_library.py tests/unit/test_environment_library.py tests/unit/test_validation_library.py tests/unit/test_quality_library.py -q`
+  - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_verification_command_docs.py -q`
+- Result:
+  - passed:
+    - `tests/unit/test_yaml_schemas.py::test_persist_and_load_latest_yaml_validation_report`
+    - targeted database lifecycle regression coverage for repeatable migrations and queryable migrated relations
+    - the full Priority 1 YAML rigidity batch
+    - document-family checks
+  - important verification note:
+    - database-backed commands must be run sequentially while this reset helper is in use because it intentionally terminates sibling sessions before clearing the shared test database state
+- Next step: begin Priority 2 of `2026-03-11_yaml_schema_and_field_rigidity_implementation.md` only after carrying forward the same proving split and sequential DB-backed verification discipline.
+
+## Entry 4
+
+- Timestamp: 2026-03-11
+- Task ID: yaml_schema_and_field_rigidity_implementation
+- Task title: YAML schema and field rigidity implementation
+- Status: in_progress
+- Affected systems: YAML, daemon, tests, notes, development logs
+- Summary: Started the Priority 2 family rigidity batch for `runtime_definition`, `project_policy_definition`, and `override_definition`. The work widened both the schema-validation layer and the family-library layer. It also closed a real runtime policy-resolution gap: project-policy validation and project-policy loading previously did not actually reject missing built-in asset refs.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase2_gap_taxonomy_note.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase3_test_strategy_note.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `AGENTS.md`
+- Files changed:
+  - `src/aicoding/yaml_schemas.py`
+  - `src/aicoding/project_policies.py`
+  - `tests/unit/test_yaml_schemas.py`
+  - `tests/unit/test_runtime_library.py`
+  - `tests/unit/test_project_policy_library.py`
+  - `tests/unit/test_override_rigidity.py`
+  - `tests/unit/test_project_policies.py`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `notes/logs/features/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/unit/test_yaml_schemas.py tests/unit/test_runtime_library.py tests/unit/test_project_policy_library.py tests/unit/test_override_rigidity.py tests/unit/test_project_policies.py tests/unit/test_workflows.py -k 'runtime or project_policy or override or invalid_higher_order_family_fields' -q`
+- Result:
+  - passed:
+    - targeted schema-negative coverage for runtime/project-policy/override families
+    - new family-library rigidity coverage for runtime, project-policy, and fixture-authored override documents
+    - policy-runtime guard coverage for missing project-policy refs
+  - newly frozen invariant:
+    - project-policy refs must fail consistently both at YAML validation time and at project-policy loading/runtime-resolution time
+- Next step: run the full planned Phase 2 verification surface, then record final status for the Priority 2 batch honestly.
+
+## Entry 5
+
+- Timestamp: 2026-03-11
+- Task ID: yaml_schema_and_field_rigidity_implementation
+- Task title: YAML schema and field rigidity implementation
+- Status: bounded_tests_passed
+- Affected systems: database, daemon, YAML, tests, notes, development logs
+- Summary: Finished the Priority 2 family rigidity stage. The remaining blocker was not a new YAML defect; it was shared-test-database interference from overlapping DB-backed pytest processes. After clearing stale sibling pytest jobs and rerunning the canonical integration suite sequentially against an exclusive migrated test database, the full Phase 2 verification surface passed. This also froze an operational invariant for the task: DB-backed verification must be run sequentially while `reset_public_schema()` remains the shared-database reset strategy.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase2_gap_taxonomy_note.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase3_test_strategy_note.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `AGENTS.md`
+- Files changed:
+  - `plan/tasks/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `notes/logs/features/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+- Commands and tests run:
+  - `ps -eo pid,cmd | rg 'python3 -m pytest|/usr/bin/python3 -m pytest|pytest tests/' || true`
+  - `python3 - <<'PY' ... shared test database cleanup ... PY`
+  - `kill 1632478 1632472 || true`
+  - `timeout 240 python3 -m pytest tests/integration/test_yaml_validation.py tests/integration/test_default_yaml_library.py tests/integration/test_flow_yaml_contract_suite.py -x -vv`
+- Result:
+  - passed:
+    - the full planned Phase 2 integration suite:
+      - `tests/integration/test_yaml_validation.py`
+      - `tests/integration/test_default_yaml_library.py`
+      - `tests/integration/test_flow_yaml_contract_suite.py`
+  - newly frozen invariant:
+    - overlapping DB-backed pytest processes against the shared test database invalidate this proving surface by triggering sibling-session termination during schema reset
+- Next step: rerun the document-family checks for the updated task/spec/log artifacts, then either close this task as the Priority 1 and Priority 2 implementation batch or continue into Phase 3 integration supplementation only if additional YAML-family integration gaps remain.
+
+## Entry 6
+
+- Timestamp: 2026-03-11
+- Task ID: yaml_schema_and_field_rigidity_implementation
+- Task title: YAML schema and field rigidity implementation
+- Status: complete
+- Affected systems: database, daemon, YAML, tests, notes, development logs
+- Summary: Closed the task by rechecking the remaining runtime-sensitive Phase 3 surfaces directly. No new integration gaps were left for `environment_policy_definition`, `project_policy_definition`, or `override_definition`; the intended daemon/CLI/runtime proof already existed and still passes on the updated rigidity code. With that confirmation, the Priority 1 and Priority 2 family batches plus the planned integration supplementation are complete for this task.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase2_gap_taxonomy_note.md`
+  - `notes/planning/implementation/yaml_schema_and_field_rigidity_phase3_test_strategy_note.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `AGENTS.md`
+- Files changed:
+  - `notes/logs/features/2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_verification_command_docs.py -q`
+  - `timeout 240 python3 -m pytest tests/integration/test_daemon.py tests/integration/test_session_cli_and_daemon.py tests/integration/test_project_policy_flow.py tests/integration/test_override_flow.py -k 'environment_policy_and_attempt_environment_endpoints_work or cli_environment_policy_and_attempt_environment_round_trip or project_policy or override' -q`
+- Result:
+  - passed:
+    - document-family checks for the updated task/spec/log artifacts
+    - environment-policy daemon and CLI propagation proof
+    - project-policy integration proof
+    - override application and inspection integration proof
+  - final status:
+    - the YAML rigidity implementation task is complete for the planned Priority 1, Priority 2, and integration-supplementation scope
+- Next step: begin a new task only if you want to continue into the deferred Priority 3 families (`hook_definition`, `runtime_policy_definition`, `testing_definition`, `docs_definition`) or widen rigidity to additional authoritative YAML inventories.

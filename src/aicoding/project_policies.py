@@ -232,16 +232,26 @@ def _validate_policy_snapshot(
     catalog: ResourceCatalog,
     hierarchy_registry: HierarchyRegistry,
 ) -> None:
-    for ref in snapshot.runtime_policy_refs:
-        catalog.resolve("yaml_builtin_system", ref)
-    for ref in snapshot.hook_refs:
-        catalog.resolve("yaml_builtin_system", ref)
-    for ref in snapshot.review_refs:
-        catalog.resolve("yaml_builtin_system", ref)
-    for ref in snapshot.testing_refs:
-        catalog.resolve("yaml_builtin_system", ref)
-    for ref in snapshot.docs_refs:
-        catalog.resolve("yaml_builtin_system", ref)
+    ref_groups = {
+        "runtime_policy_refs": ("runtime", snapshot.runtime_policy_refs),
+        "hook_refs": ("hooks", snapshot.hook_refs),
+        "review_refs": ("reviews", snapshot.review_refs),
+        "testing_refs": ("testing", snapshot.testing_refs),
+        "docs_refs": ("docs", snapshot.docs_refs),
+    }
+    for field_name, (directory, refs) in ref_groups.items():
+        for ref in refs:
+            normalized = _normalize_relative_yaml_ref(ref, directory)
+            if not _project_policy_asset_exists(catalog, normalized):
+                raise DaemonConflictError(
+                    f"project policy references missing {field_name} asset '{normalized}'"
+                )
+    for profile in snapshot.environment_profiles:
+        normalized = _normalize_relative_yaml_ref(profile, "environments")
+        if not _project_policy_asset_exists(catalog, normalized):
+            raise DaemonConflictError(
+                f"project policy references missing environment profile '{normalized}'"
+            )
     for node_kind in snapshot.enabled_node_kinds:
         if node_kind not in hierarchy_registry.definitions:
             raise DaemonConflictError(f"project policy references unknown node kind '{node_kind}'")
@@ -261,3 +271,17 @@ def _merge_unique(existing: list[str], additions: list[str]) -> list[str]:
         if item not in merged:
             merged.append(item)
     return merged
+
+
+def _normalize_relative_yaml_ref(reference: str, directory: str) -> str:
+    relative_path = reference.removeprefix(f"{directory}/")
+    if not relative_path.endswith(".yaml"):
+        relative_path = f"{relative_path}.yaml"
+    return f"{directory}/{relative_path}"
+
+
+def _project_policy_asset_exists(catalog: ResourceCatalog, normalized_relative_path: str) -> bool:
+    return (
+        catalog.resolve("yaml_builtin_system", normalized_relative_path).exists()
+        or catalog.resolve("yaml_project", normalized_relative_path).exists()
+    )

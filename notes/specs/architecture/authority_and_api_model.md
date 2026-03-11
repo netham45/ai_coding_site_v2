@@ -7,7 +7,7 @@ This note defines the authoritative runtime ownership model for orchestration, p
 The goal is to remove ambiguity around:
 
 - whether the database or daemon owns live coordination
-- how CLI and future web surfaces talk to the system
+- how CLI and website UI surfaces talk to the system
 - what must be persisted durably
 - what may remain ephemeral at runtime
 
@@ -36,7 +36,7 @@ That means:
 
 - the daemon decides admission, locking, coordination, recovery, cutover, and other live orchestration behavior
 - the database stores durable state, history, lineage, and results needed for recovery, auditability, and operator inspection
-- the CLI and future web/dashboard surfaces should talk to the daemon rather than performing operational coordination directly through database access
+- the CLI and website UI surfaces should talk to the daemon rather than performing operational coordination directly through database access
 
 This model is preferred over direct CLI-to-database coordination because it gives the system one clear live authority while preserving durable explainability.
 
@@ -76,9 +76,9 @@ The database owns the durable canonical record for:
 
 The database must be sufficient to reconstruct what happened and to resume safely after daemon interruption.
 
-### CLI And Web Clients
+### CLI And Website UI Clients
 
-The CLI and future web/dashboard clients should act as daemon clients.
+The CLI and website UI should act as daemon clients.
 
 They should:
 
@@ -86,27 +86,31 @@ They should:
 - receive results assembled from daemon-controlled logic and durable state
 - avoid embedding orchestration rules locally
 
+The CLI remains the scriptable and automation-oriented client.
+
+The website UI remains the visual operator client for navigation, state inspection, and bounded actions.
+
 Direct database access may still exist for debugging, admin work, or offline inspection, but it should not be the default operational interface.
 
 ---
 
 ## Access Model
 
-For now, the daemon should expose its client surface over HTTPS.
+For now, the daemon should expose its client surface over HTTP or HTTPS, depending on the active runtime posture.
 
-Recommended initial access model:
+Recommended initial local-first access model:
 
-- HTTPS transport
-- runtime-generated cookie for authentication
+- local daemon transport
+- bearer-token authentication backed by a local magic-cookie file
 - local-first deployment assumptions
 
 This is intentionally simple and should be treated as an initial access model rather than a final security architecture.
 
-The runtime-generated cookie should be:
+The local auth token should be:
 
 - created at daemon startup
 - scoped to the daemon instance
-- required for CLI and web requests
+- required for CLI and website requests
 - replaceable on daemon restart
 
 Future authentication models can supersede this, but the initial design should still assume authenticated client access rather than unauthenticated local calls.
@@ -149,7 +153,7 @@ Use language like:
 
 - "the daemon is the live orchestration authority"
 - "the database is the durable canonical record"
-- "CLI and web clients interact with the daemon API"
+- "CLI and website UI clients interact with the daemon API"
 
 Avoid ambiguous shorthand like:
 

@@ -176,6 +176,42 @@ Typical outputs:
 - remediation loops
 - operational-state advancement toward flow-complete or release-ready scope
 
+### Post-V1 Evolution
+
+Recommended profile mapping:
+
+- `epic.feature` for major feature expansion programs
+- `epic.review` for audit, resilience, and compliance programs
+- `epic.documentation` for major doctrine, migration, or deprecation alignment work
+- `phase.discovery`
+- `phase.architecture`
+- `phase.implementation`
+- `phase.e2e`
+- `phase.review`
+- `phase.remediation`
+- `plan.execution`
+- `plan.verification`
+- `plan.doc_alignment`
+- `task.implementation`
+- `task.review`
+- `task.e2e`
+- `task.docs`
+
+Typical outputs:
+
+- a named post-v1 workstream with explicit scope
+- governing epic and phase context for the chosen program
+- reopened architecture, migration, rollout, or audit notes as needed
+- explicit proof targets for the changed slice instead of vague maintenance work
+
+Recommended draft workstream vocabulary:
+
+- `workstream.feature_expansion`
+- `workstream.system_overhaul`
+- `workstream.assurance_audit`
+- `workstream.migration_offload`
+- `workstream.sunset_archive`
+
 ## Generated Repo As A Self-Hosting Target
 
 The long-term value is that the generated repository should be able to describe its own development using the same orchestration concepts it was bootstrapped with.
@@ -198,6 +234,7 @@ The future generator should eventually be able to seed:
 - starter operational-state checklist
 - starter workflow-profile suggestions
 - starter layout suggestions for planning and feature-delivery epics
+- starter post-v1 workstream categories
 - examples of which profile families correspond to which lifecycle stages
 
 The first implementation does not need to create working runtime YAML for all of this.

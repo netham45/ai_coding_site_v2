@@ -12,11 +12,14 @@ It is the implementation surface for DS-02, DS-03, and DS-04.
 
 Applies to:
 
+- `plan/web/setup/*.md`
 - `plan/features/*.md`
+- `plan/web/features/*.md`
 - `plan/tasks/*.md`
 - `plan/checklists/*.md`
 - `plan/update_tests/*.md`
 - `plan/e2e_tests/*.md`
+- `plan/web/verification/*.md`
 - `plan/doc_updates/*.md`
 - `plan/doc_schemas/*.md`
 

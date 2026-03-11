@@ -15,9 +15,9 @@ This repository does not permit undocumented behavior, undocumented verification
 
 ## Core Implementation Model
 
-Every feature must be considered across five required systems.
+Every feature must be considered across six required systems.
 
-No feature is complete until its effect on all five systems has been considered explicitly.
+No feature is complete until its effect on all six systems has been considered explicitly.
 
 ### 1. Database
 
@@ -121,6 +121,26 @@ Prompt behavior must remain aligned with:
 - recovery semantics
 - audit expectations
 
+### 6. Website UI
+
+The website UI is the visual operator surface for inspection, navigation, and bounded actions.
+
+Responsibilities include:
+
+- presenting daemon-backed state, lineage, history, and workflow detail clearly
+- exposing bounded operator actions without reimplementing orchestration logic in the browser
+- preserving stable routes, breadcrumbable navigation, and deep-linkable operator views
+- rendering daemon-provided legality, blocked reasons, and confirmations for actions
+- keeping browser-visible state consistent with daemon-owned authority and durable records
+- providing a browser E2E surface for operator flows that matter in real runtime use
+
+Required technology:
+
+- Node.js
+- Vite
+- React
+- Playwright
+
 ---
 
 ## System Coverage Rule
@@ -129,17 +149,18 @@ Tests must cover all applicable systems touched by a feature, flow, or contract.
 
 It is not acceptable to test only the most convenient or fastest surface when the described behavior spans multiple systems.
 
-If the design says a behavior involves the database, CLI, daemon, YAML, or prompts, the test strategy must explicitly account for each affected system.
+If the design says a behavior involves the database, CLI, daemon, website UI, YAML, or prompts, the test strategy must explicitly account for each affected system.
 
 Examples of invalid shortcuts include:
 
 - testing only in-memory logic when durable database behavior is part of the feature
 - testing only direct Python helpers when the CLI contract is part of the feature
 - testing only daemon internals when the user-facing CLI behavior is part of the feature
+- testing only daemon or CLI behavior when the user-facing website behavior is part of the feature
 - testing only compiled structures when YAML loading or schema behavior is part of the feature
 - testing only prompt file existence when prompt/runtime contract behavior is part of the feature
 
-If one of the five systems is truly not affected, that must be a deliberate conclusion stated in the plan, checklist, note, or review context.
+If one of the six systems is truly not affected, that must be a deliberate conclusion stated in the plan, checklist, note, or review context.
 
 A feature is not considered verified if the tests only prove the convenient fast route while leaving the real described system boundary untested.
 
@@ -422,6 +443,7 @@ Each feature checklist must track:
 - database status
 - CLI/API status
 - daemon/backend status
+- website/frontend status
 - YAML/schema status
 - prompt status
 - notes/documentation status
@@ -738,6 +760,18 @@ Do not hide partial status behind vague language.
 
 Tests must be all-encompassing for meaningful behavior.
 
+All tests are expected to be runnable in parallel.
+
+Test isolation is part of correctness, not optional hardening.
+
+A test that passes only when run serially and fails because of parallel execution, shared mutable state, fixture contention, resource collision, or cross-test interference is defective and must be treated as an issue to fix.
+
+External capability gating is a separate concern.
+
+It is acceptable to gate tests on genuinely unavailable requirements such as tmux, git, provider credentials, or similar explicit environment capabilities.
+
+It is not acceptable to normalize serial-only execution because the test or fixture design is not parallel-safe.
+
 That includes:
 
 - normal behavior
@@ -777,6 +811,12 @@ If a feature is difficult to test, that is a sign the design or implementation s
 
 Tests must be written intentionally at the correct layer.
 
+Parallel-safety applies at every layer.
+
+Unit, integration, performance, resilience, document-consistency, and end-to-end tests should all be able to coexist under parallel execution when their required environment capabilities are present.
+
+Layer choice is not an excuse for shared mutable fixtures or cross-test interference.
+
 ### Unit and bounded tests
 
 Use these tests for:
@@ -792,6 +832,8 @@ Use these tests for:
 - fast review-time feedback during implementation
 
 These tests are required during initial implementation but are not final completion proof for real runtime behavior.
+
+They must still be parallel-safe and must not rely on shared mutable process, filesystem, database, or schema state.
 
 ### Integration tests
 
@@ -819,6 +861,8 @@ Critical end-to-end flows must not simulate away the core behavior being claimed
 
 E2E is the final required proving layer for any feature that is supposed to exist in real runtime behavior.
 
+Real-runtime resource needs such as tmux, git, ports, workspaces, tokens, and databases must be isolated so eligible E2E tests can run concurrently.
+
 ### Document consistency tests
 
 Use document consistency tests for:
@@ -831,6 +875,8 @@ Use document consistency tests for:
 - document-family-specific invariants
 
 Document consistency tests are mandatory for authoritative document families and must be rerun after those documents change.
+
+These tests should also remain parallel-safe; document-only verification is not exempt from the repository isolation rule.
 
 ### Performance tests
 
@@ -962,20 +1008,21 @@ For every feature, implementation work should explicitly account for:
 1. database changes
 2. CLI changes
 3. daemon changes
-4. YAML changes
-5. prompt changes
-6. note updates
-7. invariants
-8. affected systems
-9. canonical verification commands
-10. bounded tests
-11. E2E tests
-12. checklist updates
-13. development log updates
-14. document consistency tests
-15. performance impact
-16. observability and auditability impact
-17. recovery and concurrency impact
+4. website UI changes
+5. YAML changes
+6. prompt changes
+7. note updates
+8. invariants
+9. affected systems
+10. canonical verification commands
+11. bounded tests
+12. E2E tests
+13. checklist updates
+14. development log updates
+15. document consistency tests
+16. performance impact
+17. observability and auditability impact
+18. recovery and concurrency impact
 
 If one of those categories is truly not affected, that should be a deliberate conclusion, not an assumption.
 
@@ -988,10 +1035,12 @@ The required implementation stack for this repository is:
 - PostgreSQL for the database
 - Python for the daemon
 - Python for the CLI
+- Node.js + Vite + React for the website UI
 - FastAPI + Uvicorn for the daemon/API server by default
 - SQLAlchemy + Alembic for ORM and migrations by default
 - Pydantic for request/response/config models by default
 - pytest as the default testing framework
+- Playwright as the default browser E2E framework
 
 Do not introduce an alternative primary database or alternative primary daemon/CLI language without first updating the notes and explicitly revisiting the architectural decision.
 Do not swap out the default daemon/API framework stack without first updating the notes and explicitly revisiting the architectural decision.
@@ -1025,20 +1074,21 @@ When implementing or revising a feature, ask:
 1. What changes in PostgreSQL?
 2. What changes in the Python CLI?
 3. What changes in the Python daemon?
-4. What YAML definitions or policies change?
-5. What prompts change?
-6. What notes must be updated?
-7. What invariants are being introduced, changed, or defended?
-8. Which of the five systems are actually affected?
-9. What are the canonical verification commands for this work?
-10. What bounded tests prove the behavior during implementation?
-11. What real E2E test proves the intended runtime behavior?
-12. What checklist entries and statuses must be updated?
-13. What development log entries must be written?
-14. What authoritative document families changed, and which document consistency tests must run?
-15. What performance risks must be measured or guarded?
-16. What recovery, idempotency, or concurrency semantics must be proven?
-17. What operator/audit surfaces must exist to inspect the result?
+4. What changes in the website UI?
+5. What YAML definitions or policies change?
+6. What prompts change?
+7. What notes must be updated?
+8. What invariants are being introduced, changed, or defended?
+9. Which of the six systems are actually affected?
+10. What are the canonical verification commands for this work?
+11. What bounded tests prove the behavior during implementation?
+12. What real E2E test proves the intended runtime behavior?
+13. What checklist entries and statuses must be updated?
+14. What development log entries must be written?
+15. What authoritative document families changed, and which document consistency tests must run?
+16. What performance risks must be measured or guarded?
+17. What recovery, idempotency, or concurrency semantics must be proven?
+18. What operator/audit surfaces must exist to inspect the result?
 
 If those questions are not answered, the feature is not done.
 
@@ -1118,6 +1168,7 @@ The `## Scope` section must explicitly address:
 - Database
 - CLI
 - Daemon
+- Website
 - YAML
 - Prompts
 - Tests

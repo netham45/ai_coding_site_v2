@@ -52,6 +52,7 @@ The generator should create these files on day zero:
 - `notes/lifecycle/03_stage_02_setup.md`
 - `notes/lifecycle/04_stage_03_feature_delivery.md`
 - `notes/lifecycle/05_stage_04_hardening_and_e2e.md`
+- `notes/lifecycle/06_stage_05_post_v1_evolution.md`
 - `plan/checklists/00_project_operational_state.md`
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/checklists/feature_checklist_standard.md`
@@ -153,3 +154,17 @@ That means:
 - leave obvious placeholders
 - seed only the minimum command set needed to begin
 - keep later adoption steps explicit in the lifecycle notes
+
+## Post-V1 Starter Intent
+
+The generated repository should include a visible reminder that first release is not the end of its process model.
+
+The starter lifecycle set should therefore seed one explicit post-v1 note that tells future contributors how to handle:
+
+- new major feature programs
+- architecture or subsystem overhauls
+- assurance and audit passes
+- migrations and offloads
+- deprecation and sunset work
+
+The note can stay lightweight on day zero, but the category names and governing questions should already exist so a later repository does not regress into vague maintenance language for materially different kinds of work.

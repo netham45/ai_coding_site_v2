@@ -256,19 +256,89 @@ Proof surface:
 - readiness docs and checklists are current
 - resilience, audit, and performance expectations are documented and met for the declared release scope
 
-## Post-Release Continuation States
+## Post-V1 Operating Model
 
-The generator should reserve lifecycle space beyond `release_ready`.
+The generator should not treat post-release work as a single new linear stage.
 
-These later states do not need full criteria yet, but the generated repository should know they exist:
+Once a repository has reached a real `flow_complete` or `release_ready` scope, it usually has:
 
-- `maintenance`
-- `hardening`
-- `evolution`
-- `deprecation`
-- `migration`
+- a baseline maturity claim for the already-proven product slice
+- one or more newly opened workstreams that may temporarily reopen discovery, architecture, implementation, migration, or E2E duties
 
-The lifecycle notes should define them later rather than leaving the process to end at first release.
+The operational-state checklist should represent both truths at once:
+
+- what baseline maturity the repo has already earned
+- which post-v1 workstreams are currently active
+
+That prevents two common failures:
+
+- pretending new major work is only `maintenance`
+- pretending the whole repository falls back to day-zero immaturity whenever one new program starts
+
+### Suggested Post-V1 Workstreams
+
+#### `feature_expansion`
+
+Use this when the repository is adding a new major feature family or product surface.
+
+Operational implication:
+
+- the repo keeps its prior baseline claim for already-proven scope
+- the new feature program reopens `feature_delivery_ready`, `bounded_verified`, and `e2e_ready` questions for the new slice
+
+#### `system_overhaul`
+
+Use this when the repository is replacing or deeply reshaping an existing architecture, subsystem boundary, storage model, provider, or runtime surface.
+
+Operational implication:
+
+- architecture notes, invariants, migration notes, and rollback thinking must be reopened explicitly
+- stronger claims remain limited to the scope that still has passing proof after the overhaul begins
+
+#### `assurance_audit`
+
+Use this when the primary goal is security, compliance, resilience, privacy, performance, or operational auditability rather than net-new product behavior.
+
+Operational implication:
+
+- review, verification, audit, and remediation phases become primary
+- feature status language should not be used as a substitute for audit closure
+
+#### `migration_offload`
+
+Use this when behavior, data, ownership, or traffic is being moved to another service, provider, repository, or execution surface.
+
+Operational implication:
+
+- migration plans, cutover proof, rollback proof, and lineage retention become first-class requirements
+
+#### `sunset_archive`
+
+Use this when the repository is intentionally deprecating, retiring, or freezing a feature family, integration, or the full project.
+
+Operational implication:
+
+- deprecation notices, operator guidance, data-retention rules, export paths, and final archive proofs become the governing surface
+
+## Post-V1 Decision Rule
+
+The generated lifecycle guidance should tell contributors:
+
+1. Keep the strongest already-earned baseline maturity claim for proven scope visible.
+2. Open a named post-v1 workstream for the new program.
+3. Re-run only the lifecycle disciplines the chosen workstream actually reopens.
+4. Do not hide major feature waves, overhauls, audits, migrations, or sunsets under generic maintenance language.
+
+## Post-V1 Checklist Shape
+
+The rendered operational-state checklist should eventually include fields like:
+
+- baseline maturity status
+- active post-v1 workstreams
+- scope of each active workstream
+- reopened lifecycle gates
+- blocked stronger claims for the active workstream
+- rollout, cutover, audit, or sunset readiness for the active workstream
 
 ## Relationship To `AGENTS.md`
 

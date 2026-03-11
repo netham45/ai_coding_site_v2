@@ -153,6 +153,38 @@ Suggested future profile alignment:
 - `task.e2e`
 - `task.checklist_alignment`
 
+### `06_stage_05_post_v1_evolution.md`
+
+Purpose:
+
+- define how the repository behaves after the first proven release scope exists
+- explain that post-v1 work is choice-driven and may reopen earlier lifecycle disciplines
+- define workstream categories such as major feature expansion, overhaul, assurance, migration, and sunset
+- define how to decide whether new work needs local feature handling or a larger re-baselining effort
+- define the stage sub-steps that keep post-v1 work governed instead of ad hoc
+
+Expected outputs:
+
+- governing epic or batch-plan context for the selected workstream
+- refreshed architectural or operational notes where the workstream reopens earlier assumptions
+- explicit proof and rollout targets for the chosen workstream
+- current operational-state updates showing both baseline maturity and active post-v1 workstream
+
+Suggested future profile alignment:
+
+- `epic.feature`
+- `epic.review`
+- `epic.documentation`
+- `phase.discovery`
+- `phase.architecture`
+- `phase.implementation`
+- `phase.e2e`
+- `phase.review`
+- `phase.remediation`
+- `plan.execution`
+- `plan.verification`
+- `plan.doc_alignment`
+
 ## Stage Checklist Discipline
 
 Each lifecycle stage note should end with:
@@ -213,15 +245,13 @@ That keeps the generated project honest about its actual maturity.
 
 The lifecycle model should not stop at first release.
 
-Even if the generator does not fully define them yet, it should reserve later lifecycle space for:
+The generator should not stop at placeholder continuation states.
 
-- maintenance
-- hardening
-- evolution
-- deprecation
-- migration
+The better model is:
 
-These later stages can begin as named placeholders with explicit "criteria still to be defined" language.
+- one explicit post-v1 lifecycle note
+- several named post-v1 workstreams inside that note
+- clear rules for when a chosen workstream reopens architecture, setup, documentation, migration, or E2E obligations
 
 ## Concrete Example Set
 
@@ -233,6 +263,7 @@ The future generator should be able to render or adapt these example files direc
 - `lifecycle_note_examples/03_stage_02_setup.md`
 - `lifecycle_note_examples/04_stage_03_feature_delivery.md`
 - `lifecycle_note_examples/05_stage_04_hardening_and_e2e.md`
+- `lifecycle_note_examples/06_stage_05_post_v1_evolution.md`
 
 These examples should be treated as:
 

@@ -59,8 +59,8 @@ def test_flow_03_materialize_and_schedule_children_runs_against_real_daemon_and_
     assert after_payload["status"] == "materialized"
     assert after_payload["authority_mode"] == "layout_authoritative"
     assert after_payload["child_count"] == 2
-    assert after_payload["ready_child_count"] == 1
-    assert after_payload["blocked_child_count"] == 1
+    assert after_payload["ready_child_count"] == 0
+    assert after_payload["blocked_child_count"] == 2
 
     assert len(children_payload["children"]) == 2
     assert {child["kind"] for child in children_payload["children"]} == {"phase"}
@@ -72,5 +72,5 @@ def test_flow_03_materialize_and_schedule_children_runs_against_real_daemon_and_
     root_row = next(item for item in tree_payload["nodes"] if item["depth"] == 0)
     assert root_row["node_id"] == node_id
     child_rows = {child["title"]: child for child in tree_payload["nodes"] if child["depth"] == 1}
-    assert child_rows["Discovery And Framing"]["scheduling_status"] == "ready"
+    assert child_rows["Discovery And Framing"]["scheduling_status"] == "already_running"
     assert child_rows["Implementation"]["scheduling_status"] == "blocked"

@@ -313,6 +313,7 @@ def _attempt_snapshot(row: SubtaskAttempt) -> SubtaskAttemptSnapshot:
         status=row.status,
         input_context_json=None if row.input_context_json is None else dict(row.input_context_json),
         output_json=None if row.output_json is None else dict(row.output_json),
+        execution_result_json=None if row.execution_result_json is None else dict(row.execution_result_json),
         execution_environment_json=None if row.execution_environment_json is None else dict(row.execution_environment_json),
         validation_json=None if row.validation_json is None else dict(row.validation_json),
         review_json=None if row.review_json is None else dict(row.review_json),

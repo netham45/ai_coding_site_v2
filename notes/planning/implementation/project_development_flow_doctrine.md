@@ -217,6 +217,7 @@ At this stage, also define canonical verification commands:
 - integration test command
 - E2E command
 - performance command
+- parallel-safe command posture for the same layers
 
 Primary artifacts to consult or update during this stage:
 
@@ -389,6 +390,8 @@ Rules:
 - tests must cover all applicable systems, not just the convenient fast route
 - bounded tests are required during initial implementation and review
 - real E2E tests are required before a feature is complete
+- tests are expected to be runnable in parallel; parallel-only failures indicate a defect in isolation, fixtures, or runtime resource ownership rather than an acceptable steady-state limitation
+- explicit environment-capability gating is allowed, but shared-state serialization is not a valid long-term exception
 
 If a feature is described as involving:
 

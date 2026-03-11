@@ -24,3 +24,85 @@
   - `python3 -m pytest tests -q`
 - Result: Audit initialized; test inventory and execution are in progress.
 - Next step: Collect the exact pytest inventory, run each suite, and record failures and skips.
+
+## Entry 2
+
+- Timestamp: 2026-03-11
+- Task ID: repo_wide_test_audit
+- Task title: Repo-wide test audit
+- Status: complete
+- Affected systems: cli, daemon, database, yaml, prompts, tests, notes
+- Summary: Collected the full pytest inventory, ran unit, integration, performance, and E2E suites, and recorded the current failure set. An initial parallel attempt introduced shared-database contention, so the final family-level results were taken from sequential reruns.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_repo_wide_test_audit.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/document_schema_rulebook.md`
+  - `notes/catalogs/checklists/document_schema_test_policy.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest --collect-only -q`
+  - `python3 -m pytest tests/unit -q`
+  - `python3 -m pytest tests/integration -q`
+  - `python3 -m pytest tests/performance -q`
+  - `python3 -m pytest tests/e2e -q`
+- Result: `717` tests were collected. Unit finished with `4 failed, 435 passed`. Integration finished with `24 failed, 138 passed, 9 errors`. Performance finished with `24 failed, 26 passed, 24 errors`. E2E finished with `11 failed, 23 passed`. The strongest recurring failures are database migration/setup instability, missing runtime tables in fixtures, and a smaller set of direct behavioral regressions in reproducibility, rendering, and real-runtime flow expectations.
+- Next step: Triage database fixture and migration isolation failures first, then address the smaller behavioral regressions in unit and E2E assertions.
+
+## Entry 3
+
+- Timestamp: 2026-03-11
+- Task ID: repo_wide_test_audit
+- Task title: Repo-wide parallel regression checklist
+- Status: partial
+- Affected systems: cli, daemon, database, yaml, prompts, tests, notes
+- Summary: Re-ran the repository-wide pytest surface under `pytest-xdist` with full-worker scheduling, compared the result against the original serial failure checklist, and confirmed that the parallelization-specific startup/contention regressions are largely resolved.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_parallel_all_tests_meta_verifier_plan.md`
+  - `plan/tasks/2026-03-11_repo_wide_test_audit.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/planning/implementation/pytest_fixture_architecture_decisions.md`
+  - `notes/planning/implementation/resource_and_test_scaffolding_decisions.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `python3 -m pytest tests/unit/test_e2e_database_isolation_fixture.py -q`
+  - `python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -n 2 --dist=loadfile -q`
+  - `python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py tests/e2e/test_flow_03_materialize_and_schedule_children_real.py tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py tests/e2e/test_flow_10_regenerate_and_rectify_real.py tests/e2e/test_flow_12_query_provenance_and_docs_real.py tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py tests/e2e/test_flow_15_to_18_default_blueprints_real.py tests/e2e/test_e2e_compile_variants_and_diagnostics.py tests/e2e/test_e2e_prompt_and_summary_history_real.py tests/e2e/test_e2e_full_epic_tree_runtime_real.py tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -n 2 --dist=loadfile -q`
+  - `python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py -n 2 --dist=loadfile -q`
+  - `python3 -m pytest tests/performance/test_harness.py -k 'quality_library_inspection or environment_policy_listing' -n auto --dist=loadfile -q`
+  - `python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_verification_command_docs.py tests/unit/test_e2e_execution_policy_docs.py -q`
+  - `python3 -m pytest tests -n auto --dist=loadfile -q --ignore tests/integration/test_parallel_all_tests_meta.py -m "not requires_ai_provider"`
+- Result: The full-worker parallel run finished with `16 failed, 729 passed` in `11m35s`. Compared with the original serial checklist, the parallel-only E2E startup failures are gone: the previous daemon-readiness/connection-refused regressions in real E2E no longer appear. The remaining failures are all pre-existing logic or threshold failures from the serial baseline except for the now-resolved xdist-only benchmark sensitivity in `test_quality_library_inspection_completes_quickly` and `test_environment_policy_listing_completes_quickly`.
+- Comparison checklist:
+  - Resolved parallel regressions:
+    - `tests/e2e/test_flow_01_create_top_level_node_real.py::test_flow_01_create_top_level_node_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py::test_flow_02_compile_or_recompile_workflow_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py::test_flow_04_manual_tree_edit_and_reconcile_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_10_regenerate_and_rectify_real.py::test_flow_10_regenerate_and_rectify_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_12_query_provenance_and_docs_real.py::test_flow_12_query_provenance_and_docs_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py::test_flow_14_project_bootstrap_and_yaml_onboarding_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_15_to_18_default_blueprints_real.py::test_default_blueprint_flows_run_against_real_daemon_and_real_cli[15-epic-ancestor_kinds0-expected_task_keys0]`
+    - `tests/e2e/test_e2e_compile_variants_and_diagnostics.py::test_e2e_compile_variants_and_diagnostics`
+    - `tests/e2e/test_e2e_prompt_and_summary_history_real.py::test_e2e_prompt_and_summary_history_real`
+  - Resolved xdist-only benchmark regressions:
+    - `tests/performance/test_harness.py::test_quality_library_inspection_completes_quickly`
+    - `tests/performance/test_harness.py::test_environment_policy_listing_completes_quickly`
+  - Still failing and already present in the original serial audit:
+    - `tests/unit/test_workflows.py::test_compile_task_workflow_renders_canonical_variables_and_invoker_context`
+    - `tests/unit/test_reproducibility.py::test_load_run_audit_snapshot_by_node_includes_attempts_and_prompt_summary_history`
+    - `tests/integration/test_database_lifecycle.py::test_runtime_state_views_reflect_live_state`
+    - `tests/integration/test_daemon.py::test_db_schema_compatibility_reports_revision_state`
+    - `tests/integration/test_daemon.py::test_node_and_run_audit_endpoints_return_reconstructible_history`
+    - `tests/integration/test_daemon.py::test_child_materialization_endpoints_materialize_and_report_scheduling`
+    - `tests/integration/test_session_cli_and_daemon.py::test_cli_node_and_run_audit_round_trip`
+    - `tests/performance/test_harness.py::test_default_prompt_pack_load_and_render_complete_quickly`
+    - `tests/performance/test_harness.py::test_runtime_state_view_queries_complete_quickly`
+    - `tests/performance/test_harness.py::test_turnkey_quality_chain_completes_quickly`
+    - `tests/performance/test_harness.py::test_workflow_compile_with_hook_expansion_completes_quickly`
+    - `tests/performance/test_harness.py::test_provenance_refresh_and_lookup_complete_quickly`
+    - `tests/e2e/test_flow_03_materialize_and_schedule_children_real.py::test_flow_03_materialize_and_schedule_children_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_19_hook_expansion_compile_stage_real.py::test_flow_19_hook_expansion_compile_stage_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py::test_flow_20_compile_failure_and_reattempt_runs_against_real_daemon_and_real_cli`
+    - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py::test_e2e_full_epic_tree_git_merge_propagates_task_changes_to_plan_phase_and_epic`
+- Next step: Treat the remaining `16` failures as ordinary product/test defects rather than parallelization regressions. The parallel infrastructure work should continue only if another full-worker regression appears.

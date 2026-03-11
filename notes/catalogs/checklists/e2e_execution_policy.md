@@ -4,6 +4,12 @@
 
 This note defines how bounded, integration, performance, and real-E2E verification are expected to run in local development, standard CI, gated/manual runs, and release-readiness review.
 
+Parallel-safe execution is the default repository expectation across these tiers.
+
+Serial execution may still be used for local debugging, narrower fault isolation, or staged bring-up, but it does not excuse tests that fail because of cross-test interference.
+
+Environment-capability gating is allowed; serialization caused by shared mutable state is a defect.
+
 Use this together with:
 
 - `notes/catalogs/checklists/verification_command_catalog.md`
@@ -34,6 +40,7 @@ Claim boundary:
 - passing this tier can support `implemented`
 - it can support `verified` for bounded or integration-only claims
 - it cannot support `flow_complete` for a real runtime narrative by itself
+- this tier remains a convenience iteration surface, not a claim that serial-only execution is acceptable
 
 ### Tier 2: Standard CI
 
@@ -54,6 +61,7 @@ python3 -m pytest tests/integration
 python3 -m pytest tests/integration/test_flow_contract_suite.py -q
 python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
 python3 -m pytest tests/performance/test_harness.py -q
+python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
 ```
 
 Environment expectation:
@@ -61,6 +69,8 @@ Environment expectation:
 - PostgreSQL service available
 - no requirement for tmux
 - no requirement for live AI-provider credentials
+- parallel bounded-suite execution now expects isolated per-test databases instead of shared `public`-schema resets
+- bounded suites are expected to remain worker-safe; any parallel-only failures are open issues rather than accepted CI limitations
 
 Claim boundary:
 
@@ -92,8 +102,10 @@ Current runtime policy:
 
 - the shared real-E2E harness no longer defaults to the fake session backend; tmux-backed session handling is now the default harness posture
 - the real E2E harness now creates one database per test, so DB-backed execution is isolated at the database layer
+- the real E2E harness now uses a per-test `TMUX_TMPDIR` namespace so default-server tmux state is not shared across tests
+- the real E2E harness now reserves the daemon listener socket before process launch and hands that socket to Uvicorn, so parallel startup no longer relies on a free-port probe race
 - parallel execution is no longer blocked by the old shared-database fixture
-- other real-resource constraints such as tmux, provider credentials, ports, and workspace-heavy narratives may still justify selective or staged parallelism
+- staged or selective execution may still be used while diagnosing failures or when explicit environment capabilities are absent, but any eligible test that fails only because of parallel execution remains a defect to fix
 
 Additional gated markers:
 
@@ -129,7 +141,10 @@ Claim boundary:
 - Real PostgreSQL is required for standard CI and real-E2E runs.
 - Real daemon subprocess and real CLI invocation are required for real-E2E runs.
 - Real-E2E runs now have per-test database isolation; any remaining serialization should be justified by non-database resource constraints rather than shared database state.
+- Unit, integration, and performance fixtures now also aim to avoid shared-database mutation by using isolated test databases rather than one shared migrated `public` schema.
 - Provider-backed, tmux-backed, and live-git-backed suites are gated by explicit environment availability and should not silently downgrade to fake backends.
+- When those required capabilities are present, eligible tests are expected to run safely in parallel.
+- If they do not, the result is a correctness gap in isolation or resource ownership that must be tracked and fixed.
 
 ## Maintenance Rule
 

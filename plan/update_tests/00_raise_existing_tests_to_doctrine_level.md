@@ -43,6 +43,7 @@ Read these note files before implementing or revising this phase:
 - Database: identify every currently implemented database-backed behavior that is only partially proven and add or strengthen tests so durable writes, reads, views, and migration/current-head assumptions are asserted through the real persistence layer where applicable.
 - CLI: identify command families that currently have parser or internal proof only and add or strengthen tests so the user-facing contract is verified through the CLI boundary where applicable.
 - Daemon: identify daemon-owned runtime, mutation, scheduling, recovery, and inspection behavior that is only internally proven and raise it to real daemon/API contract proof where applicable.
+- Website: identify browser-visible operator flows that currently stop at daemon/API proof and extend verification to real website routes and browser behavior where the product claims a website surface.
 - YAML: identify YAML families that are only existence- or schema-validated and extend tests so declarative assets are proven through compile or runtime behavior where the product claims they matter.
 - Prompts: identify prompt assets that are only existence- or render-tested and extend tests so prompt/runtime selection, delivery, or history behavior is proven where applicable.
 - Notes: update README, notes, checklists, and flow coverage docs so canonical verification commands, completion labels, and current support levels match actual runnable proof.
@@ -55,7 +56,7 @@ Read these note files before implementing or revising this phase:
 - a gap list showing where existing proof relies on the convenient fast route
 - canonical verification commands for the current test and hardening surfaces
 - a batch-execution plan that groups remediation work by shared prerequisites and dependency order
-- new or revised tests that prove affected database/CLI/daemon/YAML/prompt boundaries where currently missing
+- new or revised tests that prove affected database/CLI/daemon/website/YAML/prompt boundaries where currently missing
 - updated notes, checklists, and README entries that match actual runnable verification commands
 - a final hardening report stating what is implemented, verified, partial, flow-complete, or intentionally deferred
 
@@ -64,7 +65,7 @@ Read these note files before implementing or revising this phase:
 ### Phase 1: Coverage Audit
 
 - inventory all current test files under `tests/`
-- map major implemented surfaces to affected systems: database, CLI, daemon, YAML, prompts
+- map major implemented surfaces to affected systems: database, CLI, daemon, website, YAML, prompts
 - record the current proving layer for each surface
 - record where the current proof relies on the convenient fast route
 - record the current canonical command, if any
@@ -244,7 +245,7 @@ Every task created from this plan should include:
 
 ## Canonical Questions For Each Remediation Task
 
-1. Which of the five systems are affected by the described behavior?
+1. Which of the six systems are affected by the described behavior?
 2. Which of those systems are currently unproven or only proven through a shortcut?
 3. What is the lowest test layer that can prove the missing behavior clearly?
 4. What higher-layer test is still required because the boundary itself matters?

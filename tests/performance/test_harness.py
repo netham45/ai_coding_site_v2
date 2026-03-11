@@ -302,12 +302,32 @@ def test_default_prompt_pack_load_and_render_complete_quickly() -> None:
     )
     context = build_render_context(
         scopes={
-            "node": {"id": "node-123", "title": "Prompt Pack Performance"},
+            "node": {"id": "node-123", "title": "Prompt Pack Performance", "prompt": "Author the prompt pack."},
+            "task": {
+                "key": "execute_node",
+                "name": "Execute Node",
+                "description": "Render the default prompt pack.",
+                "definition_yaml": "kind: task_definition",
+            },
+            "subtask": {
+                "key": "execute_node.run_leaf_prompt",
+                "id": "execute_node.run_leaf_prompt",
+            },
+            "prompt": {
+                "pack": "default",
+                "template_path": "execution/implement_leaf_task.md",
+            },
+            "command": {
+                "template_path": "inline/execute_node/execute_node.run_leaf_prompt",
+            },
             "compat": {
                 "node_id": "node-123",
                 "compiled_subtask_id": "subtask-456",
                 "user_request": "Author the prompt pack.",
                 "acceptance_criteria": "Prompts are authored and renderable.",
+                "task_key": "execute_node",
+                "source_subtask_key": "execute_node.run_leaf_prompt",
+                "node_prompt": "Author the prompt pack.",
             },
         }
     )
@@ -483,6 +503,8 @@ def test_runtime_state_view_queries_complete_quickly(migrated_public_schema) -> 
     blocked_node = create_hierarchy_node(factory, registry, kind="epic", title="Perf Blocked", prompt="boot prompt")
     seed_node_lifecycle(factory, node_id=str(blocked_node.node_id), initial_state="DRAFT")
     blocked_version = initialize_node_version(factory, logical_node_id=blocked_node.node_id)
+    compile_node_workflow(factory, logical_node_id=blocked_node.node_id, catalog=catalog)
+    transition_node_lifecycle(factory, node_id=str(blocked_node.node_id), target_state="READY")
     add_node_dependency(factory, node_id=blocked_node.node_id, depends_on_node_id=running_node.node_id)
     check_node_dependency_readiness(factory, node_id=blocked_node.node_id)
 

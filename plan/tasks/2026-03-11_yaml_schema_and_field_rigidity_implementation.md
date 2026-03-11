@@ -83,6 +83,10 @@ Read these note files before implementing or revising this phase:
 
 ## Verification
 
+Operational note:
+
+- Database-backed pytest commands in this task must be run sequentially against the shared test database. The migrated-schema reset helper intentionally terminates sibling same-user sessions before clearing state.
+
 - Unit and family-library tests:
   - `python3 -m pytest tests/unit/test_yaml_schemas.py tests/unit/test_rectification_library.py tests/unit/test_environment_library.py tests/unit/test_validation_library.py tests/unit/test_runtime_library.py tests/unit/test_project_policy_library.py tests/unit/test_override_rigidity.py -q`
 - Existing grouped-library tests after updates:

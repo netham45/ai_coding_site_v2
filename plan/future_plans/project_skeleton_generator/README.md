@@ -13,6 +13,7 @@ Nothing in this folder should be read as an implementation, verification, or com
 - `2026-03-10_generated_repository_shape.md`
 - `2026-03-10_project_lifecycle_note_set.md`
 - `2026-03-10_project_operational_state_checklist.md`
+- `2026-03-11_post_v1_lifecycle_model.md`
 - `2026-03-10_rendered_operational_state_example.md`
 - `2026-03-10_rendered_agents_template.md`
 - `2026-03-10_generated_repo_bootstrap_checklist.md`
@@ -40,6 +41,8 @@ The notes here assume the eventual implementation could be either:
 That choice is intentionally left open for later authoritative planning.
 
 The lifecycle examples under `lifecycle_note_examples/` are intentionally written as concrete starter-note bodies for a future generated repository, not just as abstract guidance.
+
+The bundle also needs to cover what happens after a first proven release scope exists. Shipping `v1` should hand the repository into a post-v1 operating model for feature expansion, overhauls, audit work, migration, and sunset decisions rather than ending the lifecycle story.
 
 The bundle assumes a generated repository will keep `AGENTS.md` concise and put stage-specific rigor in:
 

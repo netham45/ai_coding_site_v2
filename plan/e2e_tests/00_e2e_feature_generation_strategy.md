@@ -36,6 +36,7 @@ Read these note files before implementing or revising this phase:
 - Database: every E2E plan must include durable-state assertions when the feature mutates or depends on persisted state.
 - CLI: every CLI-facing feature must be exercised through the real CLI subprocess path in its strongest E2E proof.
 - Daemon: every daemon-owned mutation or inspection feature must be exercised through the real daemon process and real API boundary where applicable.
+- Website: every website-facing feature must be exercised through the real browser and website route in its strongest E2E proof where applicable.
 - YAML: every YAML-defined behavior claimed as product behavior must be exercised through actual load/compile/runtime effects instead of only schema or file-presence proof.
 - Prompts: prompt-linked behavior must be exercised through actual prompt selection, delivery, and/or prompt-history effects where applicable.
 - Notes: update E2E notes and coverage checklists so they reflect real-code proof status rather than bounded flow assumptions.
@@ -47,11 +48,12 @@ Read these note files before implementing or revising this phase:
 Generate E2E tests for existing features using this method:
 
 1. Start from the existing feature plan.
-2. Identify the feature's affected systems: database, CLI, daemon, YAML, prompts.
+2. Identify the feature's affected systems: database, CLI, daemon, website, YAML, prompts.
 3. Identify the strongest user-visible or operator-visible trigger for the feature.
 4. Identify the real-code path that should exercise that trigger:
    - CLI subprocess
    - daemon HTTP API through a real daemon subprocess
+   - website UI through a real browser and website process where the feature has a browser surface
    - real PostgreSQL state
    - real filesystem workspace
    - real git repo if git is part of the feature

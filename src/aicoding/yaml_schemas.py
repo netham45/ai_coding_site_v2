@@ -307,6 +307,18 @@ class HookRunStep(AICodingModel):
     render_context: RenderContextDefinition | None = None
     checks: list[ValidationCheckDefinition] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_hook_run_step(self) -> "HookRunStep":
+        if not self.type.strip():
+            raise ValueError("hook run step type must not be empty")
+        if self.type in {"run_command", "validate"}:
+            if self.command is None or not self.command.strip():
+                raise ValueError(f"{self.type} hook steps require a non-empty command")
+        if self.type == "run_prompt":
+            if self.prompt is None or not self.prompt.strip():
+                raise ValueError("run_prompt hook steps require a non-empty prompt")
+        return self
+
 
 class HookDefinitionDocument(AICodingModel):
     kind: str = "hook_definition"
@@ -315,6 +327,12 @@ class HookDefinitionDocument(AICodingModel):
     applies_to: HookAppliesTo
     if_: HookCondition = Field(alias="if")
     run: list[HookRunStep] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_hook_definition(self) -> "HookDefinitionDocument":
+        if not self.when.strip():
+            raise ValueError("when must not be empty")
+        return self
 
 
 class RectificationDefinitionDocument(AICodingModel):
@@ -418,6 +436,25 @@ class ProjectPolicyDefinitionDocument(AICodingModel):
     enabled_node_kinds: list[str] = Field(default_factory=list)
     prompt_pack: str = "default"
     environment_profiles: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_project_policy_definition(self) -> "ProjectPolicyDefinitionDocument":
+        ref_fields = (
+            "runtime_policy_refs",
+            "hook_refs",
+            "review_refs",
+            "testing_refs",
+            "docs_refs",
+            "enabled_node_kinds",
+            "environment_profiles",
+        )
+        for field_name in ref_fields:
+            values = getattr(self, field_name)
+            if len(set(values)) != len(values):
+                raise ValueError(f"{field_name} entries must be unique")
+        if self.prompt_pack not in {"default", "project"}:
+            raise ValueError(f"unsupported prompt_pack '{self.prompt_pack}'")
+        return self
 
 
 class OverrideCompatibility(AICodingModel):
@@ -620,6 +657,7 @@ def validate_yaml_document(catalog: ResourceCatalog, *, source_group: str, relat
         payload = FAMILY_MODELS[family].model_validate(raw)
         _validate_prompt_assets(catalog, family=family, payload=payload)
         _validate_runtime_policy_assets(catalog, family=family, payload=payload)
+        _validate_project_policy_assets(catalog, family=family, payload=payload)
         valid = True
     except ValidationError as exc:
         valid = False
@@ -688,6 +726,36 @@ def _validate_runtime_policy_assets(catalog: ResourceCatalog, *, family: str, pa
             normalized = _normalize_relative_yaml_ref(ref, directory)
             if not catalog.resolve("yaml_builtin_system", normalized).exists():
                 raise ValueError(f"{field_name}[{index}] references missing YAML asset '{normalized}'")
+
+
+def _validate_project_policy_assets(catalog: ResourceCatalog, *, family: str, payload: AICodingModel) -> None:
+    if family != "project_policy_definition":
+        return
+    ref_groups = {
+        "runtime_policy_refs": "runtime",
+        "hook_refs": "hooks",
+        "review_refs": "reviews",
+        "testing_refs": "testing",
+        "docs_refs": "docs",
+    }
+    for field_name, directory in ref_groups.items():
+        for index, ref in enumerate(getattr(payload, field_name)):  # type: ignore[attr-defined]
+            normalized = _normalize_relative_yaml_ref(ref, directory)
+            if not _project_policy_asset_exists(catalog, normalized):
+                raise ValueError(f"{field_name}[{index}] references missing YAML asset '{normalized}'")
+    for index, profile in enumerate(payload.environment_profiles):  # type: ignore[attr-defined]
+        normalized = _normalize_relative_yaml_ref(profile, "environments")
+        if not _project_policy_asset_exists(catalog, normalized):
+            raise ValueError(f"environment_profiles[{index}] references missing YAML asset '{normalized}'")
+    if payload.prompt_pack == "project" and not catalog.prompt_project_dir.exists():  # type: ignore[attr-defined]
+        raise ValueError("project prompt pack requested but no project prompt directory exists")
+
+
+def _project_policy_asset_exists(catalog: ResourceCatalog, normalized_relative_path: str) -> bool:
+    return (
+        catalog.resolve("yaml_builtin_system", normalized_relative_path).exists()
+        or catalog.resolve("yaml_project", normalized_relative_path).exists()
+    )
 
 
 def _normalize_relative_yaml_ref(reference: str, directory: str) -> str:

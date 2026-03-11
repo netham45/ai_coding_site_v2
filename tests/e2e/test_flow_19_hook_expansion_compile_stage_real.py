@@ -67,19 +67,15 @@ def test_flow_19_hook_expansion_compile_stage_runs_against_real_daemon_and_real_
     expanded_step_keys = [item["source_subtask_key"] for item in hooks_payload["expanded_steps"]]
 
     assert selected_hook_ids == [
-        "default_hooks",
-        "before_validation_default",
         "before_review_default",
+        "before_testing_default",
+        "before_validation_default",
         "after_node_complete_build_docs",
         "after_node_complete_update_provenance",
     ]
-    assert hook_policy_payload["selected_hooks"][0]["hook_id"] == "default_hooks"
+    assert hook_policy_payload["selected_hooks"][0]["hook_id"] == "before_review_default"
     assert hook_policy_payload["policy_impact"]["node_kind"] == "task"
     assert expanded_step_keys == [
-        "execute_node.hook.default_hooks.1",
-        "execute_node.hook.default_hooks.2",
         "validate_node.hook.before_validation_default.1",
         "review_node.hook.before_review_default.1",
-        "review_node.hook.after_node_complete_build_docs.1",
-        "review_node.hook.after_node_complete_update_provenance.1",
     ]
