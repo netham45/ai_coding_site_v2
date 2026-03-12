@@ -68,6 +68,7 @@ Root-shell wrappers for the current frontend/runtime workflows:
 ./scripts/reset-db.sh --yes
 ./scripts/run-node-dev.sh
 ./scripts/run-server.sh
+./scripts/test-e2e-bringup.sh
 ./scripts/test-unit.sh
 ./scripts/test-integration.sh
 ./scripts/test-e2e.sh
@@ -93,6 +94,7 @@ cd frontend && npm run test:e2e
 ./scripts/reset-db.sh --yes
 ./scripts/run-node-dev.sh
 ./scripts/run-server.sh
+./scripts/test-e2e-bringup.sh
 ./scripts/test-unit.sh
 ./scripts/test-integration.sh
 ./scripts/test-e2e.sh

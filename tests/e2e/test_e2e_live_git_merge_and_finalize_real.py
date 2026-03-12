@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -26,10 +27,12 @@ def _write_json(path: Path, payload: dict[str, str]) -> None:
 
 @pytest.mark.e2e_real
 @pytest.mark.requires_git
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_e2e_live_git_merge_and_finalize_verifies_parent_repo_contents(real_daemon_harness, tmp_path: Path) -> None:
     parent_create = real_daemon_harness.cli(
-        "node",
-        "create",
+        "workflow",
+        "start",
         "--kind",
         "epic",
         "--title",
@@ -38,7 +41,37 @@ def test_e2e_live_git_merge_and_finalize_verifies_parent_repo_contents(real_daem
         "Create the merge parent node.",
     )
     assert parent_create.exit_code == 0, parent_create.stderr
-    parent_id = str(parent_create.json()["node_id"])
+    parent_id = str(parent_create.json()["node"]["node_id"])
+
+    parent_bind = real_daemon_harness.cli("session", "bind", "--node", parent_id)
+    assert parent_bind.exit_code == 0, parent_bind.stderr
+    parent_session_name = str(parent_bind.json()["session_name"])
+    parent_run_show_payload = None
+    parent_last_pane_text = ""
+    parent_deadline = time.time() + 60.0
+    while time.time() < parent_deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", parent_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        parent_run_show_payload = run_show.json()
+        parent_last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", parent_session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            parent_run_show_payload["latest_attempt"] is not None
+            or parent_run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or parent_run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
+    assert parent_run_show_payload is not None, (
+        "Expected the live git merge parent flow to produce durable run state after binding a real tmux/provider session.\n"
+        f"session_name={parent_session_name}\n"
+        f"pane_text=\n{parent_last_pane_text}"
+    )
 
     child_a_create = real_daemon_harness.cli(
         "node",
@@ -70,6 +103,15 @@ def test_e2e_live_git_merge_and_finalize_verifies_parent_repo_contents(real_daem
     assert child_b_create.exit_code == 0, child_b_create.stderr
     child_a_id = str(child_a_create.json()["node_id"])
     child_b_id = str(child_b_create.json()["node_id"])
+
+    child_a_start = real_daemon_harness.cli("node", "run", "start", "--node", child_a_id)
+    child_b_start = real_daemon_harness.cli("node", "run", "start", "--node", child_b_id)
+    assert child_a_start.exit_code == 0, child_a_start.stderr
+    assert child_b_start.exit_code == 0, child_b_start.stderr
+    child_a_bind = real_daemon_harness.cli("session", "bind", "--node", child_a_id)
+    child_b_bind = real_daemon_harness.cli("session", "bind", "--node", child_b_id)
+    assert child_a_bind.exit_code == 0, child_a_bind.stderr
+    assert child_b_bind.exit_code == 0, child_b_bind.stderr
 
     parent_versions = real_daemon_harness.cli("node", "versions", "--node", parent_id)
     child_a_versions = real_daemon_harness.cli("node", "versions", "--node", child_a_id)

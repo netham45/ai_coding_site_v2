@@ -9,6 +9,8 @@ from uuid import uuid4
 
 import pytest
 
+pytestmark = [pytest.mark.e2e_bringup]
+
 
 def _git(repo_path: Path, *args: str) -> str:
     result = subprocess.run(
@@ -234,6 +236,47 @@ def _write_workspace_leaf_task_fixture(workspace_root: Path) -> None:
     subprocess.run(["git", "commit", "-m", "seed workspace"], cwd=workspace_root, check=True, capture_output=True, text=True)
 
 
+def _write_scoped_parent_overrides(workspace_root: Path) -> None:
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    for node_kind in ("epic", "phase", "plan"):
+        (overrides_root / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (overrides_root / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
 def _write_json(path: Path, payload: dict[str, str]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -279,40 +322,23 @@ def _repo_path_for_version(real_daemon_harness, version_id: str) -> Path:
     return Path(str(status_payload["repo_path"]))
 
 
-def _transition_finalized_node_to_complete(real_daemon_harness, *, node_id: str) -> dict[str, object]:
-    lifecycle = _cli_json(real_daemon_harness, "node", "lifecycle", "show", "--node", node_id)
-    state = str(lifecycle["lifecycle_state"])
-    if state == "FAILED_TO_PARENT":
-        _cli_dump(
-            real_daemon_harness,
-            f"{node_id} lifecycle wait after failure",
-            "node",
-            "lifecycle",
-            "transition",
-            "--node",
-            node_id,
-            "--state",
-            "WAITING_ON_SIBLING_DEPENDENCY",
-        )
-        state = "WAITING_ON_SIBLING_DEPENDENCY"
-    if state == "COMPILED":
-        _cli_dump(real_daemon_harness, f"{node_id} lifecycle ready", "node", "lifecycle", "transition", "--node", node_id, "--state", "READY")
-        state = "READY"
-    if state == "WAITING_ON_SIBLING_DEPENDENCY":
-        _cli_dump(real_daemon_harness, f"{node_id} lifecycle ready after wait", "node", "lifecycle", "transition", "--node", node_id, "--state", "READY")
-        state = "READY"
-    if state == "READY":
-        _cli_dump(real_daemon_harness, f"{node_id} lifecycle running", "node", "lifecycle", "transition", "--node", node_id, "--state", "RUNNING")
-    return _cli_dump(
-        real_daemon_harness,
-        f"{node_id} lifecycle complete",
-        "node",
-        "lifecycle",
-        "transition",
-        "--node",
-        node_id,
-        "--state",
-        "COMPLETE",
+def _transition_finalized_node_to_complete(
+    real_daemon_harness,
+    *,
+    node_id: str,
+    timeout_seconds: float = 60.0,
+) -> dict[str, object]:
+    deadline = time.time() + timeout_seconds
+    last_lifecycle: dict[str, object] | None = None
+    while time.time() < deadline:
+        last_lifecycle = _cli_json(real_daemon_harness, "node", "lifecycle", "show", "--node", node_id)
+        if str(last_lifecycle["lifecycle_state"]) == "COMPLETE":
+            return last_lifecycle
+        time.sleep(2.0)
+    raise AssertionError(
+        "Timed out waiting for the finalized node to reach COMPLETE through runtime-owned progression.\n"
+        f"node_id={node_id}\n"
+        f"last_lifecycle={last_lifecycle}"
     )
 
 
@@ -352,6 +378,7 @@ def _setup_bootstrapped_full_tree_git_hierarchy(
     title: str,
     root_prompt: str | None = None,
 ) -> dict[str, object]:
+    _write_scoped_parent_overrides(real_daemon_harness.workspace_root)
     start_payload = _cli_json(
         real_daemon_harness,
         "workflow",
@@ -363,10 +390,9 @@ def _setup_bootstrapped_full_tree_git_hierarchy(
         "--prompt",
         root_prompt
         or "Create a hierarchy that can prove real git merge propagation and rectification from task to plan to phase to epic.",
-        "--no-run",
     )
     _print_payload(
-        "workflow start no-run",
+        "workflow start",
         {
             "node": start_payload["node"],
             "node_version_id": start_payload["node_version_id"],
@@ -374,18 +400,53 @@ def _setup_bootstrapped_full_tree_git_hierarchy(
         },
     )
     epic_id = str(start_payload["node"]["node_id"])
-    epic_materialize = _cli_json(real_daemon_harness, "node", "materialize-children", "--node", epic_id)
-    _print_payload("epic materialize", epic_materialize)
-    discovery_phase = next(child for child in epic_materialize["children"] if child["layout_child_id"] == "discovery")
-    implementation_phase = next(child for child in epic_materialize["children"] if child["layout_child_id"] == "implementation")
-    phase_id = str(discovery_phase["node_id"])
-    implementation_phase_id = str(implementation_phase["node_id"])
-    phase_materialize = _cli_json(real_daemon_harness, "node", "materialize-children", "--node", phase_id)
-    _print_payload("phase materialize", phase_materialize)
-    plan_id = str(phase_materialize["children"][0]["node_id"])
-    plan_materialize = _cli_json(real_daemon_harness, "node", "materialize-children", "--node", plan_id)
-    _print_payload("plan materialize", plan_materialize)
-    task_id = str(plan_materialize["children"][0]["node_id"])
+    epic_bind = _cli_json(real_daemon_harness, "session", "bind", "--node", epic_id)
+    epic_session_name = str(epic_bind["session_name"])
+
+    def _runtime_created_git_hierarchy():
+        tree_payload = _cli_json(real_daemon_harness, "tree", "show", "--node", epic_id, "--full")
+        nodes = tree_payload["nodes"]
+        phase_nodes = [node for node in nodes if node["parent_node_id"] == epic_id and node["kind"] == "phase"]
+        if len(phase_nodes) < 2:
+            return None
+        discovery_phase = phase_nodes[0]
+        implementation_phase = phase_nodes[1]
+        plan_node = next(
+            (node for node in nodes if node["parent_node_id"] == discovery_phase["node_id"] and node["kind"] == "plan"),
+            None,
+        )
+        if plan_node is None:
+            return None
+        task_node = next(
+            (node for node in nodes if node["parent_node_id"] == plan_node["node_id"] and node["kind"] == "task"),
+            None,
+        )
+        if task_node is None:
+            return None
+        return {
+            "tree": tree_payload,
+            "discovery_phase": discovery_phase,
+            "implementation_phase": implementation_phase,
+            "plan_node": plan_node,
+            "task_node": task_node,
+        }
+
+    runtime_tree = _wait_for(
+        _runtime_created_git_hierarchy,
+        timeout_seconds=180.0,
+        sleep_seconds=2.0,
+        failure_message=(
+            "Timed out waiting for the real epic session to create the git hierarchy without manual "
+            f"materialize-children commands.\n"
+            f"epic_session_name={epic_session_name}\n"
+            f"epic_pane=\n{_tmux_capture(epic_session_name)}"
+        ),
+    )
+    _print_payload("runtime tree", runtime_tree["tree"])
+    phase_id = str(runtime_tree["discovery_phase"]["node_id"])
+    implementation_phase_id = str(runtime_tree["implementation_phase"]["node_id"])
+    plan_id = str(runtime_tree["plan_node"]["node_id"])
+    task_id = str(runtime_tree["task_node"]["node_id"])
 
     epic_version_id = _authoritative_version_id(real_daemon_harness, epic_id)
     phase_version_id = _authoritative_version_id(real_daemon_harness, phase_id)
@@ -434,6 +495,7 @@ def _setup_bootstrapped_full_tree_git_hierarchy(
 @pytest.mark.requires_ai_provider
 def test_e2e_full_epic_tree_runtime_real(real_daemon_harness) -> None:
     _write_workspace_leaf_task_fixture(real_daemon_harness.workspace_root)
+    _write_scoped_parent_overrides(real_daemon_harness.workspace_root)
     print("\n=== workspace_root ===")
     print(real_daemon_harness.workspace_root)
     start_payload = _cli_dump(
@@ -448,63 +510,81 @@ def test_e2e_full_epic_tree_runtime_real(real_daemon_harness) -> None:
         "--prompt",
         "In the workspace, update src/app.py so greet() returns 'hello from runtime' and tests/test_app.py passes. "
         "Descend through phase, plan, and task, then execute the leaf task through real runtime commands.",
-        "--no-run",
     )
     epic_id = str(start_payload["node"]["node_id"])
+    epic_bind = _cli_dump(real_daemon_harness, "epic session bind", "session", "bind", "--node", epic_id)
+    epic_session_name = str(epic_bind["session_name"])
 
-    epic_tree_before = _cli_dump(real_daemon_harness, "epic tree before", "tree", "show", "--node", epic_id, "--full")
-    epic_materialize = _cli_dump(real_daemon_harness, "epic materialize", "node", "materialize-children", "--node", epic_id)
-    epic_children = _cli_dump(real_daemon_harness, "epic children", "node", "children", "--node", epic_id, "--versions")
+    def _runtime_created_full_tree():
+        tree_payload = _cli_json(real_daemon_harness, "tree", "show", "--node", epic_id, "--full")
+        nodes = tree_payload["nodes"]
+        if len(nodes) < 5:
+            return None
+        discovery_phase = next(
+            (node for node in nodes if node["parent_node_id"] == epic_id and node["kind"] == "phase"),
+            None,
+        )
+        if discovery_phase is None:
+            return None
+        plan_node = next(
+            (node for node in nodes if node["parent_node_id"] == discovery_phase["node_id"] and node["kind"] == "plan"),
+            None,
+        )
+        if plan_node is None:
+            return None
+        task_node = next(
+            (node for node in nodes if node["parent_node_id"] == plan_node["node_id"] and node["kind"] == "task"),
+            None,
+        )
+        if task_node is None:
+            return None
+        return {
+            "tree": tree_payload,
+            "discovery_phase": discovery_phase,
+            "plan_node": plan_node,
+            "task_node": task_node,
+        }
 
-    assert epic_tree_before["root_node_id"] == epic_id
-    assert len(epic_tree_before["nodes"]) == 1
-    assert epic_materialize["child_count"] == 2
-    assert {child["layout_child_id"] for child in epic_materialize["children"]} == {"discovery", "implementation"}
-    assert len(epic_children["children"]) == 2
+    runtime_tree = _wait_for(
+        _runtime_created_full_tree,
+        timeout_seconds=180.0,
+        sleep_seconds=2.0,
+        failure_message=(
+            "Timed out waiting for the real epic session to create the phase -> plan -> task tree without manual "
+            f"materialize-children commands.\n"
+            f"epic_session_name={epic_session_name}\n"
+            f"epic_pane=\n{_tmux_capture(epic_session_name)}"
+        ),
+    )
 
-    discovery_phase = next(child for child in epic_materialize["children"] if child["layout_child_id"] == "discovery")
-    discovery_phase_id = str(discovery_phase["node_id"])
+    full_tree = _cli_dump(real_daemon_harness, "full tree", "tree", "show", "--node", epic_id, "--full")
+    discovery_phase_id = str(runtime_tree["discovery_phase"]["node_id"])
+    plan_id = str(runtime_tree["plan_node"]["node_id"])
+    task_id = str(runtime_tree["task_node"]["node_id"])
     phase_show = _cli_dump(real_daemon_harness, "phase show", "node", "show", "--node", discovery_phase_id)
     phase_workflow = _cli_dump(real_daemon_harness, "phase workflow", "workflow", "current", "--node", discovery_phase_id)
-    phase_materialize = _cli_dump(real_daemon_harness, "phase materialize", "node", "materialize-children", "--node", discovery_phase_id)
-
-    assert phase_show["kind"] == "phase"
-    assert phase_show["parent_node_id"] == epic_id
-    assert phase_workflow["logical_node_id"] == discovery_phase_id
-    assert phase_materialize["child_count"] == 1
-
-    plan_node = phase_materialize["children"][0]
-    plan_id = str(plan_node["node_id"])
     plan_show = _cli_dump(real_daemon_harness, "plan show", "node", "show", "--node", plan_id)
     plan_workflow = _cli_dump(real_daemon_harness, "plan workflow", "workflow", "current", "--node", plan_id)
-    plan_materialize = _cli_dump(real_daemon_harness, "plan materialize", "node", "materialize-children", "--node", plan_id)
-
-    assert plan_show["kind"] == "plan"
-    assert plan_show["parent_node_id"] == discovery_phase_id
-    assert plan_workflow["logical_node_id"] == plan_id
-    assert plan_materialize["child_count"] == 1
-
-    task_node = plan_materialize["children"][0]
-    task_id = str(task_node["node_id"])
     task_show = _cli_dump(real_daemon_harness, "task show", "node", "show", "--node", task_id)
     task_workflow = _cli_dump(real_daemon_harness, "task workflow", "workflow", "current", "--node", task_id)
-    full_tree = _cli_dump(real_daemon_harness, "full tree", "tree", "show", "--node", epic_id, "--full")
 
     assert task_show["kind"] == "task"
     assert task_show["parent_node_id"] == plan_id
-    assert task_show["lifecycle_state"] == "READY"
     assert task_workflow["logical_node_id"] == task_id
     assert len(full_tree["nodes"]) == 5
     assert {node["kind"] for node in full_tree["nodes"]} == {"epic", "phase", "plan", "task"}
+    assert phase_show["kind"] == "phase"
+    assert phase_show["parent_node_id"] == epic_id
+    assert phase_workflow["logical_node_id"] == discovery_phase_id
+    assert plan_show["kind"] == "plan"
+    assert plan_show["parent_node_id"] == discovery_phase_id
+    assert plan_workflow["logical_node_id"] == plan_id
 
-    run_start = _cli_dump(real_daemon_harness, "task run start", "node", "run", "start", "--node", task_id)
     subtask_current = _cli_dump(real_daemon_harness, "subtask current", "subtask", "current", "--node", task_id)
     subtask_prompt = _cli_dump(real_daemon_harness, "subtask prompt", "subtask", "prompt", "--node", task_id)
     subtask_context = _cli_dump(real_daemon_harness, "subtask context", "subtask", "context", "--node", task_id)
     compiled_subtask_id = str(subtask_current["state"]["current_compiled_subtask_id"])
 
-    assert run_start["status"] == "admitted"
-    assert run_start["current_state"] == "RUNNING"
     assert subtask_current["run"]["logical_node_id"] == task_id
     assert subtask_prompt["compiled_subtask_id"] == compiled_subtask_id
     assert subtask_prompt["prompt_text"]
@@ -754,7 +834,6 @@ def test_e2e_full_epic_tree_git_merge_propagates_task_changes_to_plan_phase_and_
 
     task_finalize = _cli_dump(real_daemon_harness, "task finalize", "git", "finalize-node", "--node", task_id)
     task_final_commit_sha = str(task_finalize["final_commit_sha"])
-    _transition_finalized_node_to_complete(real_daemon_harness, node_id=task_id)
 
     _wait_for(
         lambda: _cli_json(real_daemon_harness, "git", "merge-events", "show", "--node", plan_id)
@@ -790,13 +869,11 @@ def test_e2e_full_epic_tree_git_merge_propagates_task_changes_to_plan_phase_and_
         implementation_phase_id,
     )
     implementation_phase_final_commit_sha = str(implementation_phase_finalize["final_commit_sha"])
-    _transition_finalized_node_to_complete(real_daemon_harness, node_id=implementation_phase_id)
 
     plan_finalize = _cli_dump(real_daemon_harness, "plan finalize", "git", "finalize-node", "--node", plan_id)
     plan_final_show = _cli_dump(real_daemon_harness, "plan final show", "git", "final", "show", "--node", plan_id)
     plan_final_commit_sha = str(plan_final_show["final_commit_sha"])
     assert plan_finalize["final_commit_sha"] == plan_final_commit_sha
-    _transition_finalized_node_to_complete(real_daemon_harness, node_id=plan_id)
 
     _wait_for(
         lambda: _cli_json(real_daemon_harness, "git", "merge-events", "show", "--node", phase_id)
@@ -827,7 +904,6 @@ def test_e2e_full_epic_tree_git_merge_propagates_task_changes_to_plan_phase_and_
     phase_final_show = _cli_dump(real_daemon_harness, "phase final show", "git", "final", "show", "--node", phase_id)
     phase_final_commit_sha = str(phase_final_show["final_commit_sha"])
     assert phase_finalize["final_commit_sha"] == phase_final_commit_sha
-    _transition_finalized_node_to_complete(real_daemon_harness, node_id=phase_id)
 
     _wait_for(
         lambda: _cli_json(real_daemon_harness, "git", "merge-events", "show", "--node", epic_id)

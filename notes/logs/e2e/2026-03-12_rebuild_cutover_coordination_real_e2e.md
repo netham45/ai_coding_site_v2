@@ -43,3 +43,20 @@
   - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q`
 - Result: The new suite now proves both dedicated live blocker narratives through the real CLI/daemon/tmux path: upstream rectification stays blocked while the authoritative run is active, and candidate cutover stays blocked while the authoritative run still owns an active primary tmux session.
 - Next step: rerun document-family checks after the final log/checklist/note state is written, then leave FC-15 marked partial only for the broader remaining rectification/full-tree narratives.
+
+## Entry 3
+
+- Timestamp: 2026-03-12T10:05:00-06:00
+- Task ID: rebuild_cutover_coordination_real_e2e
+- Task title: Tighten upstream rectification blocker proof to require a bound authoritative primary session
+- Status: partial
+- Affected systems: cli, daemon, session_runtime, tests, notes
+- Summary: Converted the upstream-rectification blocker case to bind a real primary tmux session before asserting the rebuild-coordination blockers. The stricter live run now exposes a gap in the blocker surface instead of the older weaker admitted-run proof.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_full_real_e2e_workflow_enforcement.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q -k blocks_upstream_rectify`
+- Result: The converted test binds a real primary tmux session successfully, but `node rebuild-coordination --scope upstream` still reports only `active_or_paused_run`. It does not add a dedicated `active_primary_sessions` blocker even though the authoritative runtime now owns a bound primary session. The stricter E2E therefore fails for a real blocker-surface mismatch.
+- Next step: keep the converted stricter assertion in the bring-up suite and fix the upstream rebuild-coordination blocker surface so it reflects active primary sessions explicitly under live runtime conditions.

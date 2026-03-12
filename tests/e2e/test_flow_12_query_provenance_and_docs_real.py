@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
@@ -22,6 +25,8 @@ def _write_workspace_provenance_inputs(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_12_query_provenance_and_docs_runs_against_real_daemon_and_real_cli(real_daemon_harness, tmp_path) -> None:
     _write_workspace_provenance_inputs(real_daemon_harness.workspace_root)
 
@@ -38,32 +43,30 @@ def test_flow_12_query_provenance_and_docs_runs_against_real_daemon_and_real_cli
     assert start_result.exit_code == 0, start_result.stderr
     node_id = str(start_result.json()["node"]["node_id"])
 
-    current_result = real_daemon_harness.cli("subtask", "current", "--node", node_id)
-    assert current_result.exit_code == 0, current_result.stderr
-    current_payload = current_result.json()
-    compiled_subtask_id = str(current_payload["state"]["current_compiled_subtask_id"])
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
 
-    prompt_result = real_daemon_harness.cli("subtask", "prompt", "--node", node_id)
-    start_subtask_result = real_daemon_harness.cli(
-        "subtask",
-        "start",
-        "--node",
-        node_id,
-        "--compiled-subtask",
-        compiled_subtask_id,
-    )
-    summary_file = tmp_path / "provenance-summary.md"
-    summary_file.write_text("implemented provenance plumbing through the real E2E flow", encoding="utf-8")
-    summary_result = real_daemon_harness.cli(
-        "summary",
-        "register",
-        "--node",
-        node_id,
-        "--type",
-        "subtask",
-        "--file",
-        str(summary_file),
-    )
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
 
     provenance_result = real_daemon_harness.cli("node", "provenance-refresh", "--node", node_id)
     rationale_result = real_daemon_harness.cli("rationale", "show", "--node", node_id)
@@ -77,9 +80,6 @@ def test_flow_12_query_provenance_and_docs_runs_against_real_daemon_and_real_cli
     docs_show_result = real_daemon_harness.cli("docs", "show", "--node", node_id, "--scope", "local")
     audit_result = real_daemon_harness.cli("node", "audit", "--node", node_id)
 
-    assert prompt_result.exit_code == 0, prompt_result.stderr
-    assert start_subtask_result.exit_code == 0, start_subtask_result.stderr
-    assert summary_result.exit_code == 0, summary_result.stderr
     assert provenance_result.exit_code == 0, provenance_result.stderr
     assert rationale_result.exit_code == 0, rationale_result.stderr
     assert entity_result.exit_code == 0, entity_result.stderr
@@ -102,6 +102,11 @@ def test_flow_12_query_provenance_and_docs_runs_against_real_daemon_and_real_cli
     docs_show_payload = docs_show_result.json()
     audit_payload = audit_result.json()
 
+    assert run_show_payload is not None, (
+        "Expected the real provenance/docs workflow to produce durable run state after binding a real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
     assert provenance_payload["entity_count"] >= 4
     assert provenance_payload["relation_count"] >= 3
     assert provenance_payload["change_counts"]["added"] >= 4

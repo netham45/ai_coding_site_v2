@@ -17,9 +17,9 @@
   - `plan/future_plans/workflow_overhaul/rich_layout_examples/README.md`
   - `AGENTS.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f | sort`
-  - `find plan/future_plans/workflow_overhaul/starter_workflow_profiles -maxdepth 1 -type f | sort`
-  - `find plan/future_plans/workflow_overhaul/rich_layout_examples -maxdepth 1 -type f | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/starter_workflow_profiles -maxdepth 1 -type f | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/rich_layout_examples -maxdepth 1 -type f | sort`
 - Result: Confirmed that the design bundle still lacked lower-tier starter profiles and plan-to-task layout examples, and that some current example YAMLs referenced nonexistent workflow profiles.
 - Next step: Add the missing prompt and YAML artifacts, normalize the profile/layout contracts, and then run the targeted document-schema checks.
 

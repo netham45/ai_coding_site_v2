@@ -31,7 +31,7 @@
 - Task title: Capture workflow overhaul future-plan note
 - Status: complete
 - Affected systems: notes, plans, development logs
-- Summary: Added a non-authoritative `plan/future_plans/` working-notes area and captured the workflow-overhaul idea under `plan/future_plans/workflow_overhaul/` without promoting it into the authoritative plan families.
+- Summary: Added a non-authoritative `plan/future_plans/` working-notes area and captured the workflow-overhaul idea under `plan/future_plans/workflow_overhaul/draft/` without promoting it into the authoritative plan families.
 - Plans and notes consulted:
   - `plan/tasks/2026-03-10_capture_workflow_overhaul_future_plan_note.md`
   - `notes/specs/architecture/code_vs_yaml_delineation.md`

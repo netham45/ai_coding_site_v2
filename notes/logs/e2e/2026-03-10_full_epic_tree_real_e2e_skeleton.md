@@ -133,3 +133,39 @@
   - `ps --ppid <pytest_pid> -o pid=,etime=,cmd=`
 - Result: The pre-existing live-runtime slice still passes. The new hierarchy git-merge slice is implemented in the authoritative file, but it is not yet proven: the live run stalls during real CLI or daemon git inspection work, specifically at `python3 -m aicoding.cli.main git status show --version <version_id>` while the daemon subprocess remains alive. This is a real runtime blocker, not a mocked boundary, and conflict resolution is also still known-broken upstream.
 - Next step: Isolate the daemon-side live-git inspection stall for bootstrapped hierarchy descendants, then continue with clean merge proof before attempting redo or known-broken conflict-resolution coverage.
+
+## Entry 7
+
+- Timestamp: 2026-03-12
+- Task ID: full_epic_tree_real_e2e_skeleton
+- Task title: Full epic tree real E2E skeleton bring-up
+- Status: partial
+- Affected systems: database, CLI, daemon, YAML, prompts, tests, notes, development logs
+- Summary: Converted the first full-tree narrative away from manual `node materialize-children` calls for `epic`, `phase`, and `plan` so it now starts a real epic session, applies scoped parent-node overrides, and waits for runtime-created `phase -> plan -> task` descendants to appear through the normal CLI tree surface.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_full_real_e2e_workflow_enforcement.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q -k 'full_epic_tree_runtime_real and not live_ai_workspace and not git_merge'`
+- Result: The converted narrative now fails for a real runtime reason instead of a manual-child shortcut. The test timed out waiting for `tree show --full` to expose the runtime-created `phase -> plan -> task` chain, with `last_value=None` and a blank captured epic tmux pane at assertion time, but the daemon stdout from the same run shows real `children/register-layout`, `review/run`, and `children/materialize` activity for the epic node. That leaves a live runtime/visibility gap in descendant creation or publication, not a simulated test step.
+- Next step: Continue converting the remaining bring-up E2E files in place and record the next runtime blocker each conversion exposes, while keeping the full-tree runtime-created-descendant visibility gap in the checklist until the daemon/CLI path is fixed.
+
+## Entry 8
+
+- Timestamp: 2026-03-12
+- Task ID: full_epic_tree_real_e2e_skeleton
+- Task title: Full epic tree real E2E skeleton bring-up
+- Status: partial
+- Affected systems: database, CLI, daemon, YAML, prompts, git, tests, notes, development logs
+- Summary: Converted the bootstrapped full-tree git helper away from `workflow start --no-run` plus chained `node materialize-children` calls so the git-backed hierarchy narratives now require a real epic tmux session to create descendants before repo bootstrap and merge propagation assertions continue.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_full_real_e2e_workflow_enforcement.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q -k live_ai_workspace_merge_propagates_repo_files`
+- Result: Failed in `179.90s`. The converted git-hierarchy helper no longer uses manual child creation, but the real epic session never created the descendant hierarchy at all. The wait for two phase children plus plan and task descendants expired with `last_value=None`, `tree show --full` never exposed the hierarchy, and the captured epic tmux pane was blank.
+- Next step: Keep converting the remaining bring-up E2E files in place while this full-tree git-hierarchy runtime-creation gap remains tracked as a daemon/session blocker rather than a test shortcut.

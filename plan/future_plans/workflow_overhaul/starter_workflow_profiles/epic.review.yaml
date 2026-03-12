@@ -30,6 +30,28 @@ child_profile_defaults:
   review: phase.review
   remediation: phase.remediation
   re_review: phase.review
+compiled_subtask_template:
+  chain_family: non_leaf_decomposition
+  child_target_kind: phase
+  ordered_steps:
+    - load_workflow_brief
+    - review_required_child_roles
+    - compose_phase_layout
+    - validate_role_coverage
+    - materialize_phase_children
+    - confirm_child_spawn_summary
+    - wait_for_children
+    - merge_children
+    - publish_parent_summary
+  blocked_transitions:
+    - action: complete
+      code: children_required_before_completion
+      message: you did not spawn children before attempting merge or completion
+  completion_predicates:
+    - scope_freeze, review, remediation, and re_review child roles exist
+    - phase children were materialized from the accepted layout
+    - merged child outputs are available for parent closure
+    - parent summary was published
 required_repository_updates:
   - notes
   - checklist

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
@@ -124,6 +127,8 @@ def _write_workspace_project_bootstrap_inputs(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_14_project_bootstrap_and_yaml_onboarding_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
     _write_workspace_project_bootstrap_inputs(real_daemon_harness.workspace_root)
 
@@ -190,6 +195,32 @@ def test_flow_14_project_bootstrap_and_yaml_onboarding_runs_against_real_daemon_
     assert effective_policy_result.exit_code == 0, effective_policy_result.stderr
     assert policy_impact_result.exit_code == 0, policy_impact_result.stderr
 
+    start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
+    assert start_result.exit_code == 0, start_result.stderr
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
     compile_payload = compile_result.json()
     current_payload = current_result.json()
     sources_payload = sources_result.json()
@@ -206,6 +237,11 @@ def test_flow_14_project_bootstrap_and_yaml_onboarding_runs_against_real_daemon_
     assert override_result.json()["family"] == "override_definition"
     assert override_result.json()["valid"] is True
     assert compile_payload["status"] == "compiled"
+    assert run_show_payload is not None, (
+        "Expected the project bootstrap/onboarding flow to produce durable run state after a real started run and bound tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
     assert compile_payload["compiled_workflow"]["resolved_yaml"]["effective_policy"]["project_policy_ids"] == [
         "default_project_policy"
     ]

@@ -17,7 +17,7 @@
   - `notes/specs/architecture/code_vs_yaml_delineation.md`
   - `AGENTS.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f | sort`
   - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/plan.yaml`
   - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/task.yaml`
 - Result: Confirmed that the planning-stage prompt bundle had generic and profile-specific draft files for epic and phase-like tiers only, while the lower-tier profile names existed only in prose.

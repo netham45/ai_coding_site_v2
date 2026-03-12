@@ -16,6 +16,7 @@ The schema should let the system declare:
 - which layout the profile prefers
 - which child roles are required
 - which lower-tier profiles are implied
+- which compiled subtask chain the future compiler is expected to emit
 - which updates and verification categories are mandatory
 - which completion claims are restricted
 - whether a compiler-generated brief or work packet is required
@@ -57,6 +58,31 @@ child_profile_defaults:
   implementation: phase.implementation
   documentation: phase.documentation
   e2e: phase.e2e
+compiled_subtask_template:
+  chain_family: non_leaf_decomposition
+  child_target_kind: phase
+  ordered_steps:
+    - load_workflow_brief
+    - review_required_child_roles
+    - compose_phase_layout
+    - validate_role_coverage
+    - materialize_phase_children
+    - confirm_child_spawn_summary
+    - wait_for_children
+    - merge_children
+    - publish_parent_summary
+  blocked_transitions:
+    - action: merge_children
+      code: children_not_ready_for_merge
+      message: child closure predicates are not yet satisfied for merge
+    - action: complete
+      code: children_required_before_completion
+      message: you did not spawn children before attempting merge or completion
+  completion_predicates:
+    - required child-role coverage exists
+    - required child nodes were materialized
+    - child closure state allows merge
+    - parent summary was durably written
 required_repository_updates:
   - notes
   - checklist
@@ -100,6 +126,7 @@ metadata:
 - `compatible_layouts`
 - `layout_tags`
 - `child_profile_defaults`
+- `compiled_subtask_template`
 - `required_repository_updates`
 - `required_verification`
 - `completion_restrictions`
@@ -159,6 +186,36 @@ Runtime interpretation:
 - this section declares obligation inputs for the compiler and daemon
 - it does not make YAML the sole enforcement layer
 - for non-leaf profiles with required child generation, the daemon should treat missing child materialization or missing required child-role coverage as a hard legality failure for the forbidden statuses
+
+### `compiled_subtask_template`
+
+Purpose:
+
+- define the exact ordered compiled subtask chain the future compiler should emit for the profile
+- expose blocked transitions and completion predicates in the same draft YAML surface as child-generation policy
+- eliminate drift between profile YAML and the compiled-chain simulations
+
+Suggested fields:
+
+- `chain_family`
+- `child_target_kind`
+- `ordered_steps`
+- `blocked_transitions`
+- `completion_predicates`
+
+Runtime interpretation:
+
+- this section is still declarative input, not the sole runtime authority
+- the compiler should turn `ordered_steps` into immutable compiled subtask records
+- the daemon should reject skipped-step mutations and illegal completion attempts using the declared blocked-transition contract
+- the CLI and website should surface the same ordered step list and blocked reasons for inspection
+
+Recommended starter interpretation:
+
+- `epic`, `phase`, and `plan` profiles use a `non_leaf_decomposition` chain family
+- `task` profiles use a `leaf_execution` chain family
+- non-leaf templates should always encode child materialization before `wait_for_children`, `merge_children`, or any completion-capable action
+- leaf templates should always encode a final `validate_completion_predicates` stage before `complete_or_block`
 
 ### `brief_generation`
 

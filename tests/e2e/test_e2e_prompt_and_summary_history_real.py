@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_e2e_prompt_and_summary_history_real(real_daemon_harness, tmp_path) -> None:
     start_result = real_daemon_harness.cli(
         "workflow",
@@ -17,6 +22,36 @@ def test_e2e_prompt_and_summary_history_real(real_daemon_harness, tmp_path) -> N
     )
     assert start_result.exit_code == 0, start_result.stderr
     node_id = str(start_result.json()["node"]["node_id"])
+
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
+    assert run_show_payload is not None, (
+        "Expected the prompt/summary history flow to produce durable run state after binding a real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
 
     current_result = real_daemon_harness.cli("subtask", "current", "--node", node_id)
     assert current_result.exit_code == 0, current_result.stderr

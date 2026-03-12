@@ -6,6 +6,24 @@ applies_to_kind: task
 profile_family: task
 status: draft
 main_prompt_ref: prompts/task/review.md
+compiled_subtask_template:
+  chain_family: leaf_execution
+  ordered_steps:
+    - load_task_context
+    - inspect_declared_surfaces
+    - run_evidence_commands
+    - classify_findings
+    - register_outputs_and_summary
+    - validate_completion_predicates
+    - complete_or_block
+  blocked_transitions:
+    - action: complete
+      code: completion_predicates_not_met
+      message: review evidence or findings are still missing
+  completion_predicates:
+    - declared evidence commands ran
+    - findings were classified honestly
+    - outputs and summary were durably written
 required_repository_updates:
   - notes
   - checklist

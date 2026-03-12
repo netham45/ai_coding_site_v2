@@ -60,7 +60,7 @@
   - `plan/future_plans/workflow_overhaul/2026-03-10_self_hosted_workflow_overhaul_notes.md`
   - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
   - `plan/future_plans/workflow_overhaul/2026-03-12_workflow_profile_persistence_and_surface_decisions.md`
-  - planning-stage prompt drafts and starter workflow profiles under `plan/future_plans/workflow_overhaul/`
+  - planning-stage prompt drafts and starter workflow profiles under `plan/future_plans/workflow_overhaul/draft/`
 - Commands and tests run:
   - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
 - Result:

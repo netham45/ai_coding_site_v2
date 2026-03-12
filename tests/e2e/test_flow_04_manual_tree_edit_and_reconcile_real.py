@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_04_manual_tree_edit_and_reconcile_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
     parent_result = real_daemon_harness.cli(
-        "node",
-        "create",
+        "workflow",
+        "start",
         "--kind",
         "epic",
         "--title",
@@ -16,7 +21,37 @@ def test_flow_04_manual_tree_edit_and_reconcile_runs_against_real_daemon_and_rea
         "Create a parent node and then mix layout-generated and manual children through the real daemon and real CLI path.",
     )
     assert parent_result.exit_code == 0, parent_result.stderr
-    parent_id = str(parent_result.json()["node_id"])
+    parent_id = str(parent_result.json()["node"]["node_id"])
+
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", parent_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", parent_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
+    assert run_show_payload is not None, (
+        "Expected the manual tree edit/reconcile flow to produce durable run state after binding a real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
 
     materialize_result = real_daemon_harness.cli("node", "materialize-children", "--node", parent_id)
     assert materialize_result.exit_code == 0, materialize_result.stderr

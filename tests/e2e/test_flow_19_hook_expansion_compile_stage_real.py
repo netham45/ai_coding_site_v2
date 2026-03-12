@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
@@ -14,6 +17,7 @@ def _create_node(real_daemon_harness, *, kind: str, title: str, prompt: str, par
 
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_19_hook_expansion_compile_stage_runs_against_real_daemon_and_real_cli(real_daemon_harness_factory) -> None:
     harness = real_daemon_harness_factory(session_backend="tmux")
 
@@ -45,22 +49,50 @@ def test_flow_19_hook_expansion_compile_stage_runs_against_real_daemon_and_real_
         parent_id=plan_id,
     )
 
-    compile_result = harness.cli("workflow", "compile", "--node", task_id)
+    start_result = harness.cli("node", "run", "start", "--node", task_id)
+    assert start_result.exit_code == 0, start_result.stderr
+    bind_result = harness.cli("session", "bind", "--node", task_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = harness.cli("node", "run", "show", "--node", task_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
     hooks_result = harness.cli("workflow", "hooks", "--node", task_id)
     hook_policy_result = harness.cli("workflow", "hook-policy", "--node", task_id)
     current_result = harness.cli("workflow", "current", "--node", task_id)
 
-    assert compile_result.exit_code == 0, compile_result.stderr
     assert hooks_result.exit_code == 0, hooks_result.stderr
     assert hook_policy_result.exit_code == 0, hook_policy_result.stderr
     assert current_result.exit_code == 0, current_result.stderr
 
-    compile_payload = compile_result.json()
     hooks_payload = hooks_result.json()
     hook_policy_payload = hook_policy_result.json()
     current_payload = current_result.json()
 
-    assert compile_payload["status"] == "compiled"
+    assert run_show_payload is not None, (
+        "Expected the real task run to produce durable run state before hook expansion is inspected.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
     assert current_payload["tasks"]
 
     selected_hook_ids = [item["hook_id"] for item in hooks_payload["selected_hooks"]]

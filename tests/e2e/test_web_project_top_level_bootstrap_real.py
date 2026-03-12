@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,8 @@ def _init_source_repo(repo_dir: Path) -> str:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_web_project_top_level_create_bootstraps_from_selected_source_repo(real_daemon_harness) -> None:
     repos_root = real_daemon_harness.workspace_root / "repos"
     source_repo = repos_root / "repo_alpha"
@@ -71,3 +74,35 @@ def test_web_project_top_level_create_bootstraps_from_selected_source_repo(real_
     assert (Path(status_payload["repo_path"]) / "README.md").exists()
     assert (Path(status_payload["repo_path"]) / "app.py").exists()
     assert audit_payload["authoritative_version_id"] == version_id
+
+    start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
+    assert start_result.exit_code == 0, start_result.stderr
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
+    assert run_show_payload is not None, (
+        "Expected the website bootstrap API flow to produce durable run state after a real started run and bound tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )

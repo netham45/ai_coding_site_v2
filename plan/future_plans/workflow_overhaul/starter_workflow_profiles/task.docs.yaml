@@ -6,6 +6,24 @@ applies_to_kind: task
 profile_family: task
 status: draft
 main_prompt_ref: prompts/task/docs.md
+compiled_subtask_template:
+  chain_family: leaf_execution
+  ordered_steps:
+    - load_task_context
+    - inspect_authoritative_docs
+    - edit_declared_documentation_surfaces
+    - run_doc_schema_or_supporting_checks
+    - register_outputs_and_summary
+    - validate_completion_predicates
+    - complete_or_block
+  blocked_transitions:
+    - action: complete
+      code: completion_predicates_not_met
+      message: declared documentation outputs or checks are still missing
+  completion_predicates:
+    - declared documentation surfaces were updated
+    - required documentation checks were recorded
+    - outputs and summary were durably written
 required_repository_updates:
   - notes
   - checklist

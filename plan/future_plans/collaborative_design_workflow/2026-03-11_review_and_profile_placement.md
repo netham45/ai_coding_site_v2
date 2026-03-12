@@ -8,7 +8,7 @@ This is still a working note, not an implementation plan.
 
 ## Position In The Roadmap
 
-This idea should come after `plan/future_plans/workflow_overhaul/`.
+This idea should come after `plan/future_plans/workflow_overhaul/draft/`.
 
 Reason:
 

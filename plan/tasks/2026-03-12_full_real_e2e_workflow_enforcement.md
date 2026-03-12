@@ -25,6 +25,27 @@ That means:
 
 A test is either a full live-run-equivalent E2E or it is not an E2E checkpoint.
 
+## No-Shortcut Repair Rule
+
+This task is specifically to fix the E2E tests so they become true E2E tests.
+
+That means the required path is:
+
+- keep the affected tests in `tests/e2e/`
+- remove the synthetic workflow steps
+- fix the runtime and/or rewrite the test so the workflow becomes live-run-equivalent
+- keep iterating until the E2E itself is truly end to end
+
+The following do not count as progress toward completing this task:
+
+- moving an E2E file out of `tests/e2e/`
+- downgrading an E2E to integration or bounded coverage as a substitute for repairing it
+- relabeling a broken E2E as a non-E2E artifact without also creating the real E2E replacement
+- treating quarantine, demotion, relocation, or command-list removal as completion of the task
+- using policy, marker, or documentation cleanup as a substitute for repairing the live workflow
+
+Quarantine and honest status labeling may still be used to prevent false claims while repair is underway, but they are not the task goal and must never replace in-place E2E repair.
+
 ## Rationale
 
 - Rationale: The repository currently still contains E2E narratives that use operator-driven progression, explicit API completion shortcuts, or manual materialization in places where the claimed behavior is supposed to come from the live runtime itself.
@@ -98,6 +119,12 @@ If a feature cannot satisfy that rule yet, the test must either:
 
 There is no third category where a partially simulated workflow is still allowed to count as E2E.
 
+For this task specifically, the required outcome is not “move to integration/bounded coverage.”
+
+For this task specifically, the required outcome is:
+
+- repair the E2E in place until it becomes a true E2E
+
 ## Scope
 
 - Database: prove durable runtime state only through the real daemon/runtime path, not by injected records or test-only forcing.
@@ -123,6 +150,12 @@ There is no third category where a partially simulated workflow is still allowed
 3. Mark any still-broken full-real narratives as bring-up targets, not verified checkpoints.
 4. Treat every file with even one synthetic workflow step as invalid for canonical E2E status until rewritten or moved.
 
+Phase 1 is a truthfulness gate only.
+
+It is not allowed to become the end state for this task.
+
+The output of Phase 1 must feed direct repair of the affected E2E files.
+
 ### Phase 2: Eliminate simulated progression from E2E files
 
 1. Remove every use of:
@@ -134,10 +167,13 @@ There is no third category where a partially simulated workflow is still allowed
    - test-side `workflow advance`
    - `node lifecycle transition` used to stand in for runtime work
 2. Replace those files with one of:
-   - a true runtime-driven E2E narrative
-   - an integration test that honestly covers the bounded/operator-assisted slice
+   - a true runtime-driven E2E narrative in the same `tests/e2e/` file or an immediately adjacent replacement E2E file in `tests/e2e/`
 3. Keep the feature-to-E2E matrix current as tests move or change status.
 4. Do not preserve any partially simulated E2E just because it is convenient, fast, historically present, or already referenced by a checklist.
+
+For this task, Phase 2 must repair the E2E surface itself.
+
+It must not satisfy the work by downgrading the workflow to a lower layer and stopping there.
 
 ### Phase 3: Fix runtime blockers preventing full workflows
 
@@ -145,6 +181,8 @@ There is no third category where a partially simulated workflow is still allowed
 2. Fix parent decomposition/runtime behavior so AI-created `phase -> plan -> task` descendants are proven through the live runtime, not explicit test-side materialization, in the tests that claim that behavior.
 3. Fix leaf-session progression/reporting so a live tmux/provider session can move from implementation through validation/review/testing/final summary without hidden operator rescue.
 4. Fix any daemon/product defects exposed by those reruns before restoring the affected tests to canonical status.
+
+Phase 3 is mandatory whenever the reason a test is not truly E2E is that the real runtime cannot yet perform the workflow.
 
 ### Phase 4: Rebuild the canonical E2E command set from truth
 
@@ -179,3 +217,9 @@ rg -n "/api/subtasks/complete|subtask\", \"(start|complete|fail)|summary\", \"re
 - at least one canonical full-real E2E proves AI-driven `phase -> plan -> task` descendant creation and leaf completion without manual descendant materialization
 - every workflow claimed in the canonical real-E2E command set has been rerun successfully through the exact real workflow it names
 - notes, checklists, feature-to-E2E mappings, and command catalogs are updated to match the actual rerun results
+
+Additional task-specific exit criteria:
+
+- no affected E2E is considered “fixed” merely because it was moved, renamed, relabeled, or excluded from canonical commands
+- any E2E that was broken at task start remains in `tests/e2e/` and has a direct repair path tracked until it becomes live-run-equivalent
+- this task is not complete until the work is expressed as repaired E2E workflows, not just cleaner documentation about broken ones

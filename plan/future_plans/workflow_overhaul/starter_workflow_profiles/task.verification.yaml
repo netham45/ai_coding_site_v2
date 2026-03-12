@@ -6,6 +6,24 @@ applies_to_kind: task
 profile_family: task
 status: draft
 main_prompt_ref: prompts/task/verification.md
+compiled_subtask_template:
+  chain_family: leaf_execution
+  ordered_steps:
+    - load_task_context
+    - prepare_verification_environment
+    - run_declared_commands
+    - capture_command_results
+    - register_outputs_and_summary
+    - validate_completion_predicates
+    - complete_or_block
+  blocked_transitions:
+    - action: complete
+      code: completion_predicates_not_met
+      message: declared command results are still missing
+  completion_predicates:
+    - declared verification commands ran
+    - command results were captured honestly
+    - outputs and summary were durably written
 required_repository_updates:
   - checklist
   - development_log

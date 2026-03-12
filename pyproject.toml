@@ -49,6 +49,7 @@ testpaths = ["tests"]
 markers = [
     "performance: performance-oriented harnesses and smoke checks",
     "e2e_real: full real end-to-end flow tests using a real daemon process and real CLI/API boundaries",
+    "e2e_bringup: real-runtime end-to-end bring-up tests that are excluded from canonical passing E2E checkpoints because the workflow still contains synthetic steps or currently exposes live runtime gaps",
     "requires_git: tests that require git binaries and real repository operations",
     "requires_tmux: tests that require tmux-backed session orchestration",
     "requires_ai_provider: tests that require live AI-provider credentials and responses",

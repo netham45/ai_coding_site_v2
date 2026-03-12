@@ -80,3 +80,41 @@
   - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_document_schema_docs.py -q`
 - Result: The specific manual/hybrid dependency-invalidated restart proving gap is now closed with real E2E coverage for both explicit unblock paths, and the authoritative documents passed their family checks after the status update.
 - Next step: move on to the broader FC-15 dedicated rectification and rebuild-cutover suites.
+
+## Entry 5
+
+- Timestamp: 2026-03-12T12:40:00-06:00
+- Task ID: dependency_invalidated_manual_restart_real_e2e
+- Task title: Dependency-invalidated manual restart real E2E
+- Status: partial
+- Affected systems: database, cli, daemon, prompts, sessions, tests, notes
+- Summary: Tightened the `manual_restart_requires_explicit_reconcile` branch by removing `node materialize-children` from the blocked sibling's initial automatic child-tree setup. The test still creates the extra manual child explicitly, but the pre-reconciliation automatic child tree now has to come from a real started/bound sibling phase.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_dependency_invalidated_manual_restart_real_e2e.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k manual_restart_requires_explicit_reconcile`
+- Result: Failed in `185.35s`. The stricter version no longer seeds the blocked sibling's automatic child tree from test code, but the live sibling phase still never created the expected `plan` child. The captured tmux pane showed the run failing during `execute_node.run_leaf_prompt` because the workspace contained no repository checkout or implementation files to reconcile, and `node children --node <right_id> --versions` stayed empty for the entire wait window. The earlier “passed” status for this branch does not hold under live-run-equivalent descendant creation.
+- Next step: Continue converting the remaining manual-restart branch the same way and keep recording the real runtime failures until the parent/phase decomposition path is fixed.
+
+## Entry 6
+
+- Timestamp: 2026-03-12T12:55:00-06:00
+- Task ID: dependency_invalidated_manual_restart_real_e2e
+- Task title: Dependency-invalidated manual restart real E2E
+- Status: partial
+- Affected systems: database, cli, daemon, prompts, sessions, tests, notes
+- Summary: Tightened the `manual_restart_clears_after_fresh_manual_child_create` branch by removing `node materialize-children` from the blocked sibling's initial automatic child-tree setup. The test still creates the fresh manual replacement child explicitly later, but the pre-restart automatic child tree now has to come from a real started/bound sibling phase.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_dependency_invalidated_manual_restart_real_e2e.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k manual_restart_clears_after_fresh_manual_child_create`
+- Result: Failed in `184.55s`. The stricter version no longer seeds the blocked sibling's automatic child tree from test code, but the live sibling phase still never created the expected `plan` child. The captured tmux pane showed the run completing `research_context` and then failing to parent during `execute_node.run_leaf_prompt` because the request was for fresh manual child creation rather than an actionable implementation slice. `node children --node <right_id> --versions` stayed empty for the entire wait window. The earlier “passed” status for this branch also does not hold under live-run-equivalent descendant creation.
+- Next step: Continue converting any remaining non-live-run setup patterns outside this family and keep recording the runtime failures until parent/phase decomposition actually creates descendants in live runs.

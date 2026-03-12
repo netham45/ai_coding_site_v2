@@ -1,0 +1,106 @@
+kind: checklist_instance
+schema_version: 1
+id: checklist.route_05.001
+template_id: e2e_route_plan_v1
+owner:
+  node_id: "00000000-0000-0000-0000-000000000001"
+  node_version_id: "00000000-0000-0000-0000-000000000002"
+  workflow_profile_id: task.e2e
+overall_goal: Prove blocked completion before spawn through a real E2E route.
+overall_status: in_progress
+execution:
+  item_ordering: sequential
+  max_active_items: 1
+  allow_reordering: false
+  return_to_orchestrator_after_each_item: true
+  require_explicit_item_completion: true
+  allow_not_applicable_items: true
+selection_guidance:
+  when_to_use:
+    - task has multiple ordered steps
+    - each step needs its own durable completion predicate
+    - orchestrator should regain control after each step
+  when_not_to_use:
+    - task is single-step and bounded
+    - decomposition into child nodes is the correct behavior
+active_item_id: draft_route_plan
+items:
+  - id: inspect_runtime_contract
+    kind: inspect
+    title: Inspect runtime contract
+    goal: Confirm the current daemon and CLI contract for blocked completion behavior.
+    status: completed
+    depends_on: []
+    inputs:
+      required_refs:
+        - notes/specs/runtime/node_lifecycle_spec_v2.md
+        - plan/future_plans/workflow_overhaul/draft/2026-03-12_workflow_overhaul_e2e_route_plan.md
+    allowed_options:
+      - inspect_files
+      - record_summary
+      - mark_completed
+      - mark_blocked
+      - mark_not_applicable
+    completion:
+      required_artifacts:
+        - summary
+      required_evidence:
+        - file_refs
+    result:
+      summary: Runtime contract inspected and summarized.
+      artifacts:
+        - type: summary
+          path: notes/logs/features/runtime_contract_summary.md
+      evidence:
+        - type: file_ref
+          ref: notes/specs/runtime/node_lifecycle_spec_v2.md
+  - id: draft_route_plan
+    kind: document
+    title: Draft route plan
+    goal: Write the route-plan note.
+    status: blocked
+    depends_on:
+      - inspect_runtime_contract
+    inputs:
+      target_path: plan/future_plans/workflow_overhaul/draft/e2e_route_plans/05_blocked_completion_before_spawn.md
+    allowed_options:
+      - write_note
+      - mark_completed
+      - mark_blocked
+      - mark_not_applicable
+    completion:
+      required_artifacts:
+        - file_written
+    blockers:
+      - code: missing_runtime_contract
+        category: dependency
+        summary: Waiting on the authoritative blocked-mutation payload contract.
+        details:
+          missing_contract: blocked_mutation_payload
+          affected_surface: daemon
+        unblocks_when:
+          - type: note_updated
+            ref: plan/future_plans/workflow_overhaul/draft/blocked_mutation_contract.md
+        detected_by:
+          - worker
+  - id: browser_surface
+    kind: verify
+    title: Browser surface verification
+    goal: Verify the web UI route for the blocked state if that route exists.
+    status: not_applicable
+    depends_on:
+      - draft_route_plan
+    inputs:
+      commands:
+        - npm run test:e2e -- workflow-profile-web
+    allowed_options:
+      - run_commands
+      - mark_completed
+      - mark_blocked
+      - mark_not_applicable
+    completion:
+      required_artifacts:
+        - command_results
+    not_applicable_reason:
+      code: website_route_not_in_scope
+      summary: Website proof is owned by a separate route plan for this checklist instance.

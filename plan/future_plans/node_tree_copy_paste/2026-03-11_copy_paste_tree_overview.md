@@ -20,7 +20,7 @@ It is a working note for a later feature direction.
 
 This idea should be treated as downstream of two other planning tracks:
 
-- `plan/future_plans/workflow_overhaul/`
+- `plan/future_plans/workflow_overhaul/draft/`
 - `plan/future_plans/frontend_website_ui/`
 
 Reason:

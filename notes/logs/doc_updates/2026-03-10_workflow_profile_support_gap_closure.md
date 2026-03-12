@@ -22,7 +22,7 @@
   - `sed -n '1,260p' src/aicoding/cli/parser.py`
   - `sed -n '1,260p' src/aicoding/daemon/app.py`
 - Result: Confirmed that the future notes assume profile-aware node variants, while the current implementation remains kind-based with fixed default layouts and no workflow-profile surface.
-- Next step: Add a plan note under `plan/future_plans/workflow_overhaul/` that captures the required support additions and proposed command/doc changes.
+- Next step: Add a plan note under `plan/future_plans/workflow_overhaul/draft/` that captures the required support additions and proposed command/doc changes.
 
 ## Entry 2
 

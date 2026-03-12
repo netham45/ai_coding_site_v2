@@ -20,6 +20,16 @@ Task-plan rules:
 
 Current task index:
 
+- `2026-03-12_workflow_profile_subfeature_plan_breakdown.md`
+- `2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
+- `2026-03-12_workflow_overhaul_checklist_future_flows_and_feature_plans.md`
+- `2026-03-12_workflow_overhaul_checklist_mode_bundle_and_flow_impact.md`
+- `2026-03-12_workflow_overhaul_checklist_execution_mode_draft.md`
+- `2026-03-12_workflow_overhaul_per_route_e2e_draft_plans.md`
+- `2026-03-12_workflow_overhaul_e2e_route_plan.md`
+- `2026-03-12_workflow_overhaul_e2e_task_profile_catalog.md`
+- `2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review.md`
+- `2026-03-12_workflow_overhaul_profile_subtask_chain_simulations.md`
 - `2026-03-12_workflow_overhaul_prompt_composition_model.md`
 - `2026-03-12_workflow_overhaul_prompt_contract_and_prompt_rewrite.md`
 - `2026-03-12_workflow_overhaul_tier_enforcement_and_prompt_guards.md`
@@ -106,6 +116,12 @@ Current task index:
 - `2026-03-11_web_hardening_01_residual_browser_gap_closure.md`
 - `2026-03-11_frontend_website_future_plan_capture.md`
 - `2026-03-11_collaborative_design_future_plan_capture.md`
+- `2026-03-12_workflow_overhaul_draft_folder_relocation.md`
+- `2026-03-12_workflow_overhaul_draft_execution_readme.md`
+- `2026-03-12_workflow_overhaul_draft_progress_checklist.md`
+- `2026-03-12_workflow_overhaul_code_alignment_and_plan_coverage_audit.md`
+- `2026-03-12_workflow_overhaul_missing_gap_plan_additions.md`
+- `2026-03-12_workflow_overhaul_remaining_gap_slice_additions.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_investigation.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_implementation.md`
 - `2026-03-11_yaml_schema_and_field_rigidity_priority3.md`

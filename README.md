@@ -61,6 +61,7 @@ Common root-shell wrappers:
 ./scripts/reset-db.sh --yes
 ./scripts/run-node-dev.sh
 ./scripts/run-server.sh
+./scripts/test-e2e-bringup.sh
 ./scripts/test-unit.sh
 ./scripts/test-integration.sh
 ./scripts/test-e2e.sh
@@ -100,6 +101,11 @@ Real E2E checkpoints are tracked separately from bounded and integration proof.
 
 Use `notes/catalogs/checklists/verification_command_catalog.md` for the current canonical command families.
 Use `notes/catalogs/checklists/e2e_execution_policy.md` for the current local, CI, gated/manual, and release-readiness execution expectations.
+
+Current wrapper rule:
+
+- `./scripts/test-e2e.sh` runs only canonical passing E2E checkpoints
+- `./scripts/test-e2e-bringup.sh` runs quarantined real-runtime bring-up suites marked `e2e_bringup`
 
 CI should provide a PostgreSQL service and inject `AICODING_DATABASE_URL` explicitly.
 

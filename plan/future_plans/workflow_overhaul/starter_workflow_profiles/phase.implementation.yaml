@@ -25,6 +25,28 @@ child_generation:
 child_profile_defaults:
   execution: plan.execution
   verification: plan.verification
+compiled_subtask_template:
+  chain_family: non_leaf_decomposition
+  child_target_kind: plan
+  ordered_steps:
+    - load_workflow_brief
+    - review_required_child_roles
+    - compose_plan_layout
+    - validate_role_coverage
+    - materialize_plan_children
+    - confirm_child_spawn_summary
+    - wait_for_children
+    - merge_children
+    - publish_parent_summary
+  blocked_transitions:
+    - action: complete
+      code: children_required_before_completion
+      message: you did not spawn children before attempting merge or completion
+  completion_predicates:
+    - execution and verification child roles exist
+    - plan children were materialized from the accepted layout
+    - merged child outputs are available for parent closure
+    - parent summary was published
 required_repository_updates:
   - checklist
   - development_log

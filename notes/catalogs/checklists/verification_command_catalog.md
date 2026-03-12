@@ -29,6 +29,7 @@ Use these when you want the documented repo commands behind stable root-level `.
 ./scripts/reset-db.sh --yes
 ./scripts/run-node-dev.sh
 ./scripts/run-server.sh
+./scripts/test-e2e-bringup.sh
 ./scripts/test-unit.sh
 ./scripts/test-integration.sh
 ./scripts/test-e2e.sh
@@ -36,6 +37,11 @@ Use these when you want the documented repo commands behind stable root-level `.
 ```
 
 These wrappers are convenience entrypoints. The underlying commands below remain the canonical behavior they must track.
+
+Wrapper note:
+
+- `scripts/test-e2e.sh` is the canonical passing-E2E wrapper and must exclude `e2e_bringup` tests
+- bring-up suites remain runnable directly through the explicit commands in the bring-up section below
 
 ### Environment And Database Foundation
 
@@ -137,6 +143,12 @@ The current real-E2E harness now creates one database per test, so DB-backed exe
 Any remaining inability to run eligible tests in parallel is an open defect unless it is explained by explicit environment-capability gating.
 
 See `notes/catalogs/checklists/e2e_execution_policy.md` for the local, CI, gated/manual, and release-readiness execution expectations around these commands.
+
+Marker rule:
+
+- suites in the bring-up bucket should carry `e2e_bringup`
+- canonical passing E2E commands must not include `e2e_bringup` tests
+- `e2e_bringup` means the test still uses a synthetic workflow step or still exposes a live runtime defect that prevents it from counting as passing full-real E2E proof
 
 ### Real E2E Bring-Up Targets
 

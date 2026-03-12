@@ -41,7 +41,7 @@ Read these note files before implementing or revising this phase:
 - Prompts: document the prompt-reference impact and the compiler-generated epic-brief surface.
 - Tests: document required unit, integration, CLI, and E2E proving additions.
 - Performance: call out compile/materialization/inspection paths that gain profile-aware validation work and need budget review.
-- Notes: add a concrete plan note under `plan/future_plans/workflow_overhaul/` capturing the required support delta.
+- Notes: add a concrete plan note under `plan/future_plans/workflow_overhaul/draft/` capturing the required support delta.
 
 ## Verification
 
@@ -49,7 +49,7 @@ Read these note files before implementing or revising this phase:
 
 ## Exit Criteria
 
-- A plan note under `plan/future_plans/workflow_overhaul/` captures the proposed note and code updates needed for workflow-profile support.
+- A plan note under `plan/future_plans/workflow_overhaul/draft/` captures the proposed note and code updates needed for workflow-profile support.
 - The note distinguishes existing support from missing support across database, CLI, daemon, YAML, prompts, and tests.
 - The governing task plan and development log exist and cite each other.
 - The documented verification command passes.

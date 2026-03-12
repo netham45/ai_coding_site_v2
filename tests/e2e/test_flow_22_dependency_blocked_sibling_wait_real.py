@@ -17,6 +17,10 @@ def _tmux_capture(session_name: str) -> str:
     return result.stdout
 
 
+def _children_by_parent(tree_payload: dict[str, object], *, parent_id: str, kind: str) -> list[dict[str, object]]:
+    return [node for node in tree_payload["nodes"] if node["parent_node_id"] == parent_id and node["kind"] == kind]
+
+
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
 @pytest.mark.requires_ai_provider
@@ -43,12 +47,33 @@ def test_flow_22_dependency_blocked_sibling_wait_requires_live_completion_of_dep
         assert parent_start_result.exit_code == 0, parent_start_result.stderr
         parent_id = str(parent_start_result.json()["node"]["node_id"])
 
-        materialize_result = harness.cli("node", "materialize-children", "--node", parent_id)
-        assert materialize_result.exit_code == 0, materialize_result.stderr
-        materialize_payload = materialize_result.json()
+        parent_bind_result = harness.cli("session", "bind", "--node", parent_id)
+        assert parent_bind_result.exit_code == 0, parent_bind_result.stderr
+        parent_session_name = str(parent_bind_result.json()["session_name"])
+        sessions_to_cleanup.add(parent_session_name)
 
-        left_record = next(child for child in materialize_payload["children"] if child["layout_child_id"] == "discovery")
-        right_record = next(child for child in materialize_payload["children"] if child["layout_child_id"] == "implementation")
+        tree_payload = None
+        sibling_records = None
+        deadline = time.time() + 120.0
+        while time.time() < deadline:
+            tree_result = harness.cli("tree", "show", "--node", parent_id, "--full")
+            assert tree_result.exit_code == 0, tree_result.stderr
+            tree_payload = tree_result.json()
+            sibling_records = _children_by_parent(tree_payload, parent_id=parent_id, kind="phase")
+            if len(sibling_records) >= 2:
+                break
+            time.sleep(2.0)
+
+        assert sibling_records is not None and len(sibling_records) >= 2, (
+            "Expected the live parent tmux/Codex session to create at least two phase siblings before Flow 22 "
+            "proceeds.\n"
+            f"parent_session_name={parent_session_name}\n"
+            f"parent_pane=\n{_tmux_capture(parent_session_name)}\n"
+            f"tree_payload={tree_payload}"
+        )
+
+        left_record = sibling_records[0]
+        right_record = sibling_records[1]
         left_id = str(left_record["node_id"])
         right_id = str(right_record["node_id"])
 
@@ -113,7 +138,6 @@ def test_flow_22_dependency_blocked_sibling_wait_requires_live_completion_of_dep
         dependency_status_before_payload = dependency_status_before_result.json()
         unblocked_start_payload = unblocked_start_result.json()
 
-        assert materialize_payload["status"] == "created"
         assert left_record["scheduling_status"] == "ready"
         assert right_record["scheduling_status"] == "ready"
         assert left_show_result.json()["lifecycle_state"] == "READY"

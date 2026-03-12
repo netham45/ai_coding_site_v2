@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+pytestmark = [pytest.mark.e2e_bringup]
+
 
 def _tmux_capture(session_name: str) -> str:
     result = subprocess.run(
@@ -148,7 +150,6 @@ def _create_manual_task_run(harness, *, task_prompt: str) -> str:
     )
 
     _cli_json(harness, "workflow", "compile", "--node", task_id)
-    _cli_json(harness, "node", "lifecycle", "transition", "--node", task_id, "--state", "READY")
     _cli_json(harness, "node", "run", "start", "--node", task_id)
     return task_id
 
@@ -487,11 +488,10 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
             "Before the nudge, you may emit at most one short plain-language status line saying that you are waiting and have not "
             "started subtask work; do not register that status line as a summary. "
             "After you receive that nudge, create summaries/implementation.md "
-            "containing exactly 'nudged completion body', then run `python3 -m aicoding.cli.main summary register --node "
-            "THE_NODE_ID_FROM_THIS_PROMPT --file summaries/implementation.md --type subtask`, then run "
+            "containing exactly 'nudged completion body', then run "
             "`python3 -m aicoding.cli.main subtask current --node THE_NODE_ID_FROM_THIS_PROMPT` to get the live compiled subtask id, and "
-            "then run `python3 -m aicoding.cli.main subtask complete --node THE_NODE_ID_FROM_THIS_PROMPT --compiled-subtask CURRENT_ID "
-            "--summary \"nudged completion\"`. Stay silent while waiting for the nudge."
+            "then run `python3 -m aicoding.cli.main subtask succeed --node THE_NODE_ID_FROM_THIS_PROMPT --compiled-subtask CURRENT_ID "
+            "--summary-file summaries/implementation.md`. Stay silent while waiting for the nudge."
         )
         node_id = _create_manual_task_run(harness, task_prompt=task_prompt)
 
@@ -503,6 +503,7 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
 
         assert "do not register a summary" in str(prompt_payload["prompt_text"])
         assert "nudged completion body" in str(prompt_payload["prompt_text"])
+        assert "subtask succeed" in str(prompt_payload["prompt_text"])
         assert bind_payload["logical_node_id"] == node_id
         assert bind_payload["tmux_session_exists"] is True
 
@@ -592,7 +593,7 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
                 f"pane_before_nudge=\n{pre_nudge_pane}\n"
                 f"pane_after_nudge=\n{post_nudge_pane}"
             )
-            assert latest_attempt_after["summary"] == "nudged completion"
+            assert latest_attempt_after["summary"] == "subtask succeeded"
         else:
             assert latest_run_after["run_status"] == "COMPLETE", (
                 "The active run disappeared after the nudge, but the latest durable run is not complete.\n"

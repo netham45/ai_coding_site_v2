@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, text
 
 from tests.helpers.e2e import RealDaemonHarness
 
+pytestmark = [pytest.mark.e2e_bringup, pytest.mark.requires_tmux, pytest.mark.requires_ai_provider]
+
 
 def _git(repo_path: Path, *args: str) -> str:
     result = subprocess.run(
@@ -28,93 +30,125 @@ def _write_json(path: Path, payload: dict[str, str]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _tmux_capture(session_name: str) -> str:
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"[tmux capture failed] {result.stderr.strip()}"
+    return result.stdout
+
+
+def _tmux_kill(session_name: str) -> None:
+    subprocess.run(
+        ["tmux", "kill-session", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _compile_ready_and_start_node(harness: RealDaemonHarness, *, node_id: str) -> None:
     compile_result = harness.cli("workflow", "compile", "--node", node_id)
-    ready_result = harness.cli("node", "lifecycle", "transition", "--node", node_id, "--state", "READY")
     start_result = harness.cli("node", "run", "start", "--node", node_id)
     assert compile_result.exit_code == 0, compile_result.stderr
-    assert ready_result.exit_code == 0, ready_result.stderr
     assert start_result.exit_code == 0, start_result.stderr
-
-
-def _complete_one_current_subtask(harness: RealDaemonHarness, *, node_id: str) -> None:
-    current_result = harness.cli("subtask", "current", "--node", node_id)
-    assert current_result.exit_code == 0, current_result.stderr
-    current_payload = current_result.json()
-    compiled_subtask_id = current_payload["state"]["current_compiled_subtask_id"]
-    current_subtask = current_payload["current_subtask"]
-    assert compiled_subtask_id is not None
-    assert current_subtask is not None
-
-    start_result = harness.cli("subtask", "start", "--node", node_id, "--compiled-subtask", compiled_subtask_id)
-    assert start_result.exit_code == 0, start_result.stderr
-
-    subtask_type = current_subtask["subtask_type"]
-    if subtask_type == "validate":
-        payload = {"exit_code": 0}
-        summary = "validated"
-    elif subtask_type == "review":
-        review_result = harness.cli("review", "run", "--node", node_id, "--status", "pass", "--summary", "reviewed")
-        assert review_result.exit_code == 0, review_result.stderr
-        return
-    elif subtask_type == "run_tests":
-        payload = {
-            "test_suites": [
-                {
-                    "testing_definition_id": "default_unit_test_gate",
-                    "suite_name": "Default Unit Test Gate",
-                    "exit_code": 0,
-                    "failed_tests": 0,
-                    "summary": "unit tests passed",
-                },
-                {
-                    "testing_definition_id": "default_integration_test_gate",
-                    "suite_name": "Default Integration Test Gate",
-                    "exit_code": 0,
-                    "failed_tests": 0,
-                    "summary": "integration tests passed",
-                },
-            ]
-        }
-        summary = "tested"
-    else:
-        payload = {"status": "ok", "subtask_type": subtask_type}
-        summary = f"completed {subtask_type}"
-
-    response = harness.request(
-        "POST",
-        "/api/subtasks/complete",
-        json_payload={
-            "node_id": node_id,
-            "compiled_subtask_id": compiled_subtask_id,
-            "output_json": payload,
-            "summary": summary,
-        },
-    )
-    assert response.status_code == 200, response.text
-
-    advance_result = harness.cli("workflow", "advance", "--node", node_id)
-    assert advance_result.exit_code == 0, advance_result.stderr
 
 
 def _complete_node_run(harness: RealDaemonHarness, *, node_id: str, timeout_seconds: float = 180.0) -> None:
+    bind_result = harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
     deadline = time.time() + timeout_seconds
     last_run_payload: dict[str, object] | None = None
-    while time.time() < deadline:
-        run_show = harness.cli("node", "run", "show", "--node", node_id)
-        if run_show.exit_code == 0:
-            last_run_payload = run_show.json()
-            if last_run_payload["run"]["run_status"] == "COMPLETE":
-                return
-        else:
-            lifecycle_show = harness.cli("node", "lifecycle", "show", "--node", node_id)
-            assert lifecycle_show.exit_code == 0, lifecycle_show.stderr
-            lifecycle_payload = lifecycle_show.json()
-            if lifecycle_payload["lifecycle_state"] == "COMPLETE":
-                return
-            raise AssertionError(run_show.stderr)
-        _complete_one_current_subtask(harness, node_id=node_id)
-    raise AssertionError(f"Timed out waiting for node {node_id} to complete.\nlast_run_payload={last_run_payload}")
+    last_session_payload: dict[str, object] | None = None
+    last_pane_text = ""
+    try:
+        while time.time() < deadline:
+            session_show = harness.cli("session", "show", "--node", node_id)
+            if session_show.exit_code == 0:
+                last_session_payload = session_show.json()
+                session_name = str(last_session_payload["session_name"])
+                recovery_classification = str(last_session_payload["recovery_classification"])
+                if recovery_classification in {"stale_but_recoverable", "detached"}:
+                    resume_result = harness.cli("session", "resume", "--node", node_id)
+                    assert resume_result.exit_code == 0, resume_result.stderr
+                    resume_payload = resume_result.json()
+                    resumed_session = resume_payload.get("session")
+                    if isinstance(resumed_session, dict) and resumed_session.get("session_name"):
+                        session_name = str(resumed_session["session_name"])
+
+            run_show = harness.cli("node", "run", "show", "--node", node_id)
+            if run_show.exit_code == 0:
+                last_run_payload = run_show.json()
+                run_status = str(last_run_payload["run"]["run_status"])
+                if run_status in {"COMPLETE", "COMPLETED"}:
+                    return
+                if run_status in {"FAILED", "PAUSED"}:
+                    raise AssertionError(
+                        f"Real node session stopped before completion for node {node_id}.\n"
+                        f"run_status={run_status}\n"
+                        f"pane_text=\n{last_pane_text}\n"
+                        f"last_run_payload={last_run_payload}"
+                    )
+            else:
+                lifecycle_show = harness.cli("node", "lifecycle", "show", "--node", node_id)
+                assert lifecycle_show.exit_code == 0, lifecycle_show.stderr
+                lifecycle_payload = lifecycle_show.json()
+                if lifecycle_payload["lifecycle_state"] == "COMPLETE":
+                    return
+                raise AssertionError(
+                    f"{run_show.stderr}\n"
+                    f"lifecycle_payload={lifecycle_payload}\n"
+                    f"last_session_payload={last_session_payload}"
+                )
+            last_pane_text = _tmux_capture(session_name)
+            time.sleep(2.0)
+    finally:
+        _tmux_kill(session_name)
+    raise AssertionError(
+        f"Timed out waiting for node {node_id} to complete through the real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}\n"
+        f"last_run_payload={last_run_payload}\n"
+        f"last_session_payload={last_session_payload}"
+    )
+
+
+def _wait_for_runtime_child(
+    harness: RealDaemonHarness,
+    *,
+    parent_node_id: str,
+    expected_kind: str,
+    timeout_seconds: float = 180.0,
+) -> dict[str, object]:
+    bind_result = harness.cli("session", "bind", "--node", parent_node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    deadline = time.time() + timeout_seconds
+    last_children_payload: dict[str, object] | None = None
+    last_pane_text = ""
+    try:
+        while time.time() < deadline:
+            children_result = harness.cli("node", "children", "--node", parent_node_id, "--versions")
+            assert children_result.exit_code == 0, children_result.stderr
+            last_children_payload = children_result.json()
+            for child in last_children_payload["children"]:
+                if child["kind"] == expected_kind:
+                    return child
+            last_pane_text = _tmux_capture(session_name)
+            time.sleep(2.0)
+    finally:
+        _tmux_kill(session_name)
+    raise AssertionError(
+        f"Timed out waiting for node {parent_node_id} to create a {expected_kind} child through the real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}\n"
+        f"last_children_payload={last_children_payload}"
+    )
 
 
 def _wait_for(predicate, *, timeout_seconds: float = 30.0, sleep_seconds: float = 0.5, failure_message: str):
@@ -243,10 +277,7 @@ def _setup_parent_and_children(harness: RealDaemonHarness, tmp_path: Path) -> di
 
     _compile_ready_and_start_node(harness, node_id=parent_id)
     _compile_ready_and_start_node(harness, node_id=child_a_id)
-    compile_child_b = harness.cli("workflow", "compile", "--node", child_b_id)
-    ready_child_b = harness.cli("node", "lifecycle", "transition", "--node", child_b_id, "--state", "READY")
-    assert compile_child_b.exit_code == 0, compile_child_b.stderr
-    assert ready_child_b.exit_code == 0, ready_child_b.stderr
+    _compile_ready_and_start_node(harness, node_id=child_b_id)
 
     return {
         "parent_id": parent_id,
@@ -261,7 +292,6 @@ def _setup_parent_and_children(harness: RealDaemonHarness, tmp_path: Path) -> di
     }
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_dependency_invalidated_grouped_cutover_rematerializes_authoritative_child(
     real_daemon_harness_factory,
@@ -313,12 +343,12 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_grouped_cutover_rem
     left_id = str(left_create.json()["node_id"])
     right_id = str(right_create.json()["node_id"])
 
+    _compile_ready_and_start_node(harness, node_id=right_id)
+    runtime_child = _wait_for_runtime_child(harness, parent_node_id=right_id, expected_kind="plan")
     dependency_add = harness.cli("node", "dependency-add", "--node", right_id, "--depends-on", left_id)
-    materialize_right = harness.cli("node", "materialize-children", "--node", right_id)
     assert dependency_add.exit_code == 0, dependency_add.stderr
-    assert materialize_right.exit_code == 0, materialize_right.stderr
 
-    original_child_ids = {str(child["node_id"]) for child in materialize_right.json()["children"]}
+    original_child_ids = {str(runtime_child["node_id"])}
     assert original_child_ids
 
     parent_version_id = str(harness.cli("node", "versions", "--node", parent_id).json()["versions"][0]["id"])
@@ -428,7 +458,6 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_grouped_cutover_rem
     assert ready_state["lifecycle"]["lifecycle_state"] != "WAITING_ON_SIBLING_DEPENDENCY"
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_requires_explicit_reconcile(
     real_daemon_harness_factory,
@@ -480,8 +509,9 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_requ
     left_id = str(left_create.json()["node_id"])
     right_id = str(right_create.json()["node_id"])
 
+    _compile_ready_and_start_node(harness, node_id=right_id)
+    runtime_child = _wait_for_runtime_child(harness, parent_node_id=right_id, expected_kind="plan")
     dependency_add = harness.cli("node", "dependency-add", "--node", right_id, "--depends-on", left_id)
-    materialize_right = harness.cli("node", "materialize-children", "--node", right_id)
     manual_child_right = harness.cli(
         "node",
         "child",
@@ -497,13 +527,13 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_requ
     )
     reconcile_old_right = harness.cli("node", "reconcile-children", "--node", right_id, "--decision", "preserve_manual")
     assert dependency_add.exit_code == 0, dependency_add.stderr
-    assert materialize_right.exit_code == 0, materialize_right.stderr
     assert manual_child_right.exit_code == 0, manual_child_right.stderr
     assert reconcile_old_right.exit_code == 0, reconcile_old_right.stderr
     assert reconcile_old_right.json()["authority_mode"] == "manual"
     assert reconcile_old_right.json()["materialization_status"] == "manual"
     original_child_ids = {str(child["node_id"]) for child in reconcile_old_right.json()["children"]}
     assert original_child_ids
+    assert str(runtime_child["node_id"]) in original_child_ids
 
     parent_version_id = str(harness.cli("node", "versions", "--node", parent_id).json()["versions"][0]["id"])
     left_version_id = str(harness.cli("node", "versions", "--node", left_id).json()["versions"][0]["id"])
@@ -638,7 +668,6 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_requ
     assert cleared_state["reconciliation"]["available_decisions"] == ["preserve_manual"]
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_clears_after_fresh_manual_child_create(
     real_daemon_harness_factory,
@@ -690,8 +719,9 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_clea
     left_id = str(left_create.json()["node_id"])
     right_id = str(right_create.json()["node_id"])
 
+    _compile_ready_and_start_node(harness, node_id=right_id)
+    runtime_child = _wait_for_runtime_child(harness, parent_node_id=right_id, expected_kind="plan")
     dependency_add = harness.cli("node", "dependency-add", "--node", right_id, "--depends-on", left_id)
-    materialize_right = harness.cli("node", "materialize-children", "--node", right_id)
     manual_child_right = harness.cli(
         "node",
         "child",
@@ -707,11 +737,11 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_clea
     )
     reconcile_old_right = harness.cli("node", "reconcile-children", "--node", right_id, "--decision", "preserve_manual")
     assert dependency_add.exit_code == 0, dependency_add.stderr
-    assert materialize_right.exit_code == 0, materialize_right.stderr
     assert manual_child_right.exit_code == 0, manual_child_right.stderr
     assert reconcile_old_right.exit_code == 0, reconcile_old_right.stderr
     original_child_ids = {str(child["node_id"]) for child in reconcile_old_right.json()["children"]}
     assert original_child_ids
+    assert str(runtime_child["node_id"]) in original_child_ids
 
     parent_version_id = str(harness.cli("node", "versions", "--node", parent_id).json()["versions"][0]["id"])
     left_version_id = str(harness.cli("node", "versions", "--node", left_id).json()["versions"][0]["id"])
@@ -947,10 +977,7 @@ def _setup_parent_with_conflict_chain(harness: RealDaemonHarness, tmp_path: Path
     _compile_ready_and_start_node(harness, node_id=parent_id)
     _compile_ready_and_start_node(harness, node_id=child_a_id)
     _compile_ready_and_start_node(harness, node_id=child_b_id)
-    compile_child_c = harness.cli("workflow", "compile", "--node", child_c_id)
-    ready_child_c = harness.cli("node", "lifecycle", "transition", "--node", child_c_id, "--state", "READY")
-    assert compile_child_c.exit_code == 0, compile_child_c.stderr
-    assert ready_child_c.exit_code == 0, ready_child_c.stderr
+    _compile_ready_and_start_node(harness, node_id=child_c_id)
 
     return {
         "parent_id": parent_id,
@@ -968,7 +995,6 @@ def _setup_parent_with_conflict_chain(harness: RealDaemonHarness, tmp_path: Path
     }
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_unblocks_dependent_child_only_after_merge_and_refresh(
     real_daemon_harness,
@@ -1041,7 +1067,6 @@ def test_e2e_incremental_parent_merge_unblocks_dependent_child_only_after_merge_
     assert (child_b_repo / "shared.txt").read_text(encoding="utf-8") == "seed\nfrom-a\n"
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_reconcile_surface_reads_applied_history_real(
     real_daemon_harness,
@@ -1117,7 +1142,6 @@ def test_e2e_incremental_parent_merge_reconcile_surface_reads_applied_history_re
     assert reconcile_payload["prompt_relative_path"] == "execution/reconcile_parent_after_merge.md"
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_conflict_resolution_unblocks_dependent_child_real(
     real_daemon_harness,
@@ -1272,7 +1296,6 @@ def test_e2e_incremental_parent_merge_conflict_resolution_unblocks_dependent_chi
     assert resolved_context["incremental_merge_conflict"]["resolution_status"] == "resolved"
 
 
-@pytest.mark.e2e_real
 @pytest.mark.requires_git
 def test_e2e_incremental_parent_merge_resumes_after_daemon_restart_real(real_daemon_harness_factory, tmp_path: Path) -> None:
     harness = real_daemon_harness_factory(extra_env={"AICODING_SESSION_POLL_INTERVAL_SECONDS": "10.0"})

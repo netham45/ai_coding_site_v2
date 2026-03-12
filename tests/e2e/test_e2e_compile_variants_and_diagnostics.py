@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 
@@ -95,6 +98,8 @@ def _repair_project_policy(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_e2e_compile_variants_and_diagnostics(real_daemon_harness) -> None:
     _write_broken_compile_inputs(real_daemon_harness.workspace_root)
 
@@ -195,6 +200,38 @@ def test_e2e_compile_variants_and_diagnostics(real_daemon_harness) -> None:
     assert "default_project_policy" in effective_policy_payload["project_policy_ids"]
     assert policy_impact_payload["node_kind"] == "epic"
     assert policy_impact_payload["enabled_for_node_kind"] is True
+
+    start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
+    assert start_result.exit_code == 0, start_result.stderr
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    run_show_payload = None
+    last_pane_text = ""
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        assert run_show.exit_code == 0, run_show.stderr
+        run_show_payload = run_show.json()
+        last_pane_text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout
+        if (
+            run_show_payload["latest_attempt"] is not None
+            or run_show_payload["state"]["last_completed_compiled_subtask_id"] is not None
+            or run_show_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+        ):
+            break
+        time.sleep(2.0)
+
+    assert run_show_payload is not None, (
+        "Expected the compile variants diagnostics flow to produce durable run state after a real started run and bound tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}"
+    )
 
     supersede_result = real_daemon_harness.cli("node", "supersede", "--node", node_id, "--title", "Real E2E Compile Diagnostics Epic v2")
     assert supersede_result.exit_code == 0, supersede_result.stderr

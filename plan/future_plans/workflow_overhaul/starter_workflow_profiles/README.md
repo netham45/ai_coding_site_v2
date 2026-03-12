@@ -34,6 +34,7 @@ The goal of this folder is to make the workflow-overhaul idea concrete enough th
 
 - compare profile shapes directly
 - test naming and vocabulary consistency
+- inspect the intended compiled subtask chain directly in draft YAML
 - design the future schema around real examples instead of abstract bullets
 
 These draft examples do not imply that only `epic` may be top-level.
@@ -59,3 +60,4 @@ The intended future runtime interpretation for these examples is rigid:
 - non-leaf profiles are decomposition-required unless a later authoritative contract says otherwise
 - skipped required steps should fail with concrete blocked mutations
 - higher tiers should not silently absorb child-owned implementation work
+- each profile's `compiled_subtask_template` should match the grouped simulations under `compiled_subtask_chain_simulations/`

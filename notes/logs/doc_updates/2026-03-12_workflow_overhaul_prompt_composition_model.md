@@ -15,7 +15,7 @@
   - `plan/future_plans/workflow_overhaul/prompts/README.md`
   - `notes/specs/prompts/prompt_library_plan.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f -name '*.md' | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f -name '*.md' | sort`
 - Result: In progress. The prompt contract is now stable enough that the shared tier language can be centralized into base prompts while leaving profile-specific overlays thin.
 - Next step: Add a prompt-composition note, refactor the prompt directory to include base prompts and slimmer overlays, run the targeted document tests, and record the final result.
 
@@ -34,7 +34,7 @@
   - `plan/future_plans/workflow_overhaul/prompts/README.md`
   - `notes/specs/prompts/prompt_library_plan.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f -name '*.md' | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f -name '*.md' | sort`
   - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
 - Result:
   - Added:

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Align the `plan/future_plans/workflow_overhaul/` bundle with the repository doctrine that top-ness is structural rather than semantic, and make the future intent explicit that the built-in `epic`, `phase`, `plan`, and `task` tiers should all be able to start parentless at the top level and that every draft workflow profile should be startable top-level through its own `applies_to_kind`, with planned proof coverage for that rule.
+Align the `plan/future_plans/workflow_overhaul/draft/` bundle with the repository doctrine that top-ness is structural rather than semantic, and make the future intent explicit that the built-in `epic`, `phase`, `plan`, and `task` tiers should all be able to start parentless at the top level and that every draft workflow profile should be startable top-level through its own `applies_to_kind`, with planned proof coverage for that rule.
 
 ## Rationale
 

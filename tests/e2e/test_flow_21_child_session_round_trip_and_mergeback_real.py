@@ -28,6 +28,7 @@ def _tmux_capture(session_name: str) -> str:
 
 
 @pytest.mark.e2e_real
+@pytest.mark.e2e_bringup
 @pytest.mark.requires_tmux
 @pytest.mark.requires_ai_provider
 def test_flow_21_child_session_round_trip_and_mergeback_requires_live_child_codex_execution(real_daemon_harness_factory) -> None:

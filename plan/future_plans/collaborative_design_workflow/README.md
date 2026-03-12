@@ -42,7 +42,7 @@ This bundle is deliberately exploratory.
 
 It assumes this idea would only make sense after the repository has much stronger support for:
 
-- profile-aware workflow decomposition from `plan/future_plans/workflow_overhaul/`
+- profile-aware workflow decomposition from `plan/future_plans/workflow_overhaul/draft/`
 - prompt packs and task-profile behavior that can encode explicit review gates
 - durable pause/resume and operator-inspection surfaces for interactive iteration loops
 

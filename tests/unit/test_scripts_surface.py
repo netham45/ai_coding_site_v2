@@ -13,6 +13,7 @@ def test_root_shell_scripts_exist() -> None:
         "reset-db.sh",
         "run-node-dev.sh",
         "run-server.sh",
+        "test-e2e-bringup.sh",
         "test-unit.sh",
         "test-integration.sh",
         "test-e2e.sh",
@@ -32,6 +33,7 @@ def test_root_shell_scripts_wrap_current_canonical_commands() -> None:
     run_server = (SCRIPTS_DIR / "run-server.sh").read_text(encoding="utf-8")
     test_unit = (SCRIPTS_DIR / "test-unit.sh").read_text(encoding="utf-8")
     test_integration = (SCRIPTS_DIR / "test-integration.sh").read_text(encoding="utf-8")
+    test_e2e_bringup = (SCRIPTS_DIR / "test-e2e-bringup.sh").read_text(encoding="utf-8")
     test_e2e = (SCRIPTS_DIR / "test-e2e.sh").read_text(encoding="utf-8")
     test_all = (SCRIPTS_DIR / "test-all.sh").read_text(encoding="utf-8")
     upgrade_db = (SCRIPTS_DIR / "upgrade-db.sh").read_text(encoding="utf-8")
@@ -50,7 +52,8 @@ def test_root_shell_scripts_wrap_current_canonical_commands() -> None:
     assert "python3 -m pytest tests/unit" in test_unit
     assert "npm run test:unit" in test_unit
     assert "python3 -m pytest tests/integration" in test_integration
-    assert "python3 -m pytest tests/e2e" in test_e2e
+    assert 'python3 -m pytest tests/e2e -m "e2e_bringup"' in test_e2e_bringup
+    assert 'python3 -m pytest tests/e2e -m "e2e_real and not e2e_bringup"' in test_e2e
     assert "npm run test:e2e" in test_e2e
     assert "test-unit.sh" in test_all
     assert "test-integration.sh" in test_all
@@ -72,6 +75,7 @@ def test_readmes_and_catalog_reference_root_scripts() -> None:
         assert "scripts/reset-db.sh" in text
         assert "scripts/run-node-dev.sh" in text
         assert "scripts/run-server.sh" in text
+        assert "scripts/test-e2e-bringup.sh" in text
         assert "scripts/test-unit.sh" in text
         assert "scripts/test-integration.sh" in text
         assert "scripts/test-e2e.sh" in text

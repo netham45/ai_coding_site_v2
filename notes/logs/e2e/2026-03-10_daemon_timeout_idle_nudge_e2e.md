@@ -262,3 +262,20 @@
   - `timeout 300 python3 -m pytest -q tests/e2e/test_tmux_codex_idle_nudge_real.py -k stays_quiet_until_daemon_nudges_then_reports_completion`
 - Result: Passed. The bounded daemon slice reported `4 passed, 39 deselected`, the document-family checks reported `18 passed`, and the real tmux/Codex E2E reported `1 passed, 2 deselected in 77.07s`. The live completion path now proves `confirmed idle -> one daemon nudge -> summary registration -> completion` without a second nudge.
 - Next step: If needed, broaden the same repeated-nudge suppression rule into any adjacent idle/recovery flows that should also treat durable summary registration as terminal progress.
+
+## Entry 13
+
+- Timestamp: 2026-03-12
+- Task ID: daemon_timeout_idle_nudge_e2e
+- Task title: Convert post-nudge completion path to routed `subtask succeed`
+- Status: partial
+- Affected systems: cli, daemon, prompts, tests, notes, development logs
+- Summary: Tightened `tests/e2e/test_tmux_codex_idle_nudge_real.py` so the post-nudge completion path now uses the real routed `subtask succeed --summary-file summaries/implementation.md` command instead of `summary register` plus `subtask complete`.
+- Plans and notes consulted:
+  - `tests/e2e/test_tmux_codex_idle_nudge_real.py`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q -k stays_quiet_until_daemon_nudges_then_reports_completion`
+- Result: The converted real E2E now fails for a prompt-surface mismatch rather than the old synthetic completion path. The daemon still records a real `nudged` event, but the pane text no longer contains the old exact `Your session appears idle on node` string when inspected. Instead the pane is already showing the repeated missed-step reminder / Codex response surface. The routed `subtask succeed` conversion remains in place.
+- Next step: Update the tmux idle/nudge E2E and runtime expectation to assert against the actual live reminder surface now observed after the daemon nudge.

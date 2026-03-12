@@ -18,6 +18,7 @@ def test_e2e_execution_policy_defines_all_four_execution_tiers() -> None:
 
     assert "one database per test" in text
     assert "non-database resource constraints" in text
+    assert "`e2e_bringup`" in text
     assert "`requires_git`" in text
     assert "`requires_tmux`" in text
     assert "`requires_ai_provider`" in text

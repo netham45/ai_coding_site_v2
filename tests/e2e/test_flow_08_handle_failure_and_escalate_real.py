@@ -18,6 +18,13 @@ def _tmux_capture(session_name: str) -> str:
     return result.stdout
 
 
+def _first_child(tree_payload: dict[str, object], *, parent_id: str, kind: str) -> dict[str, object] | None:
+    for node in tree_payload["nodes"]:
+        if node["parent_node_id"] == parent_id and node["kind"] == kind:
+            return node
+    return None
+
+
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
 @pytest.mark.requires_ai_provider
@@ -30,16 +37,36 @@ def test_flow_08_handle_failure_and_escalate_runs_against_real_daemon_and_real_c
         "--title",
         "Real E2E Flow 08 Parent",
         "--prompt",
-        "Run a parent node and respond to a real failed child through the daemon and CLI runtime.",
+        "Run a parent node and respond to a real failed child through the daemon and CLI runtime. "
+        "Create exactly one phase child through the runtime command loop before that child runs.",
     )
     assert parent_start_result.exit_code == 0, parent_start_result.stderr
     parent_payload = parent_start_result.json()
     parent_id = str(parent_payload["node"]["node_id"])
 
-    materialize_result = real_daemon_harness.cli("node", "materialize-children", "--node", parent_id)
-    assert materialize_result.exit_code == 0, materialize_result.stderr
-    materialize_payload = materialize_result.json()
-    child_record = next(child for child in materialize_payload["children"] if child["layout_child_id"] == "discovery")
+    parent_bind_result = real_daemon_harness.cli("session", "bind", "--node", parent_id)
+    assert parent_bind_result.exit_code == 0, parent_bind_result.stderr
+    parent_bind_payload = parent_bind_result.json()
+    parent_session_name = str(parent_bind_payload["session_name"])
+
+    child_record = None
+    tree_payload = None
+    child_wait_deadline = time.time() + 120.0
+    while time.time() < child_wait_deadline:
+        tree_result = real_daemon_harness.cli("tree", "show", "--node", parent_id, "--full")
+        assert tree_result.exit_code == 0, tree_result.stderr
+        tree_payload = tree_result.json()
+        child_record = _first_child(tree_payload, parent_id=parent_id, kind="phase")
+        if child_record is not None:
+            break
+        time.sleep(2.0)
+
+    assert child_record is not None, (
+        "Expected the live parent tmux/Codex session to create a phase child before Flow 08 proceeds.\n"
+        f"parent_session_name={parent_session_name}\n"
+        f"parent_pane=\n{_tmux_capture(parent_session_name)}\n"
+        f"tree_payload={tree_payload}"
+    )
     child_id = str(child_record["node_id"])
 
     child_show_result = real_daemon_harness.cli("node", "show", "--node", child_id)
@@ -95,7 +122,6 @@ def test_flow_08_handle_failure_and_escalate_runs_against_real_daemon_and_real_c
     child_failures_payload = child_failures_result.json()
     decision_history_payload = decision_history_result.json()
 
-    assert materialize_payload["status"] == "created"
     assert child_record["kind"] == "phase"
     assert child_record["scheduling_status"] == "ready"
     assert child_show_result.json()["lifecycle_state"] == "READY"

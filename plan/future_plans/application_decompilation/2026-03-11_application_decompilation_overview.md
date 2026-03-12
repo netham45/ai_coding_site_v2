@@ -20,7 +20,7 @@ It is a working note for a speculative follow-on concept.
 
 If this idea ever becomes real work, it should come after the future directions already captured in:
 
-- `plan/future_plans/workflow_overhaul/`
+- `plan/future_plans/workflow_overhaul/draft/`
 - `plan/future_plans/project_skeleton_generator/`
 
 Reason:

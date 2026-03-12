@@ -208,6 +208,7 @@ def _run_workspace_verification(workspace_root: Path) -> tuple[subprocess.Comple
 
 
 @pytest.mark.e2e_real
+@pytest.mark.e2e_bringup
 @pytest.mark.requires_tmux
 @pytest.mark.requires_ai_provider
 def test_e2e_automated_full_tree_cat_runtime_real(real_daemon_harness_factory) -> None:
@@ -249,6 +250,7 @@ def test_e2e_automated_full_tree_cat_runtime_real(real_daemon_harness_factory) -
     phase_runs: dict[str, object] | None = None
     plan_runs: dict[str, object] | None = None
     task_runs: dict[str, object] | None = None
+    phase_bind: dict[str, object] | None = None
     cat_result: subprocess.CompletedProcess[str] | None = None
     test_result: subprocess.CompletedProcess[str] | None = None
 
@@ -269,6 +271,8 @@ def test_e2e_automated_full_tree_cat_runtime_real(real_daemon_harness_factory) -
         task_node = None
         if phase_node is not None:
             phase_id = str(phase_node["node_id"])
+            if phase_bind is None:
+                phase_bind = _cli_json(harness, "session", "bind", "--node", phase_id)
             phase_materialization = _cli_json(harness, "node", "child-materialization", "--node", phase_id)
             phase_audit = _cli_json(harness, "node", "audit", "--node", phase_id)
             phase_prompt_history = _cli_json(harness, "prompts", "history", "--node", phase_id)
@@ -317,6 +321,7 @@ def test_e2e_automated_full_tree_cat_runtime_real(real_daemon_harness_factory) -
     assert test_result is not None, (
         "The automated full-tree runtime did not reach a completed leaf task with a working cat implementation.\n"
         f"epic_bind={json.dumps(epic_bind, indent=2, sort_keys=True)}\n"
+        f"phase_bind={json.dumps(phase_bind, indent=2, sort_keys=True) if phase_bind else None}\n"
         f"tree_payload={json.dumps(tree_payload, indent=2, sort_keys=True)}\n"
         f"epic_materialization={json.dumps(epic_materialization, indent=2, sort_keys=True)}\n"
         f"phase_materialization={json.dumps(phase_materialization, indent=2, sort_keys=True) if phase_materialization else None}\n"

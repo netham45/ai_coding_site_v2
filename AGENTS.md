@@ -186,11 +186,13 @@ This stage is expected during initial implementation.
 
 ### Stage 2: Real end-to-end proof
 
-After the bounded proof exists, the feature must progress to full real end-to-end testing for its intended real behavior.
+After the bounded proof exists, every feature must progress to full real end-to-end testing for its intended real behavior.
 
 Real E2E tests must exercise real code paths through the relevant runtime boundaries for the feature, including applicable database, CLI, daemon, YAML, prompt, git, session, provider, or environment behavior.
 
 Simulated or bounded tests do not count as final completion proof for any feature whose behavior is intended to exist in real runtime usage.
+
+There is no feature so small, simple, or low-risk that it is exempt from real E2E coverage.
 
 No feature is complete without full real E2E tests for its intended scope.
 
@@ -215,6 +217,8 @@ unless the real E2E layer has been completed for the intended scope.
 Every feature must be exercisable in real code.
 
 Every feature must map to at least one explicit real E2E test target.
+
+There is no feature too small to require a real E2E test.
 
 Grouped or batched E2E suites are acceptable and preferred where multiple features share one coherent runtime narrative.
 
@@ -266,7 +270,7 @@ The following are forbidden in any test that is claimed as E2E coverage for a wo
 - hidden helper behavior that performs the workflow step off-screen and then exposes only the end result
 - using a lower-layer proof to stand in for a higher-layer E2E claim
 
-If any of those are present, the test must be moved to the correct lower layer or explicitly treated as a non-canonical bring-up target rather than passing E2E proof.
+If any of those are present, the workflow is not E2E-covered. The required remediation is to remove the simulation or shortcut and make the test perform the real workflow through the live runtime path. Do not delete, skip, or permanently downgrade the E2E requirement because the test is difficult.
 
 ### E2E Naming And Claim Rule
 
@@ -275,6 +279,8 @@ No test, note, checklist, command catalog, plan, review, or assistant response m
 The fact that a harness uses a real daemon, real DB, real tmux, or real provider does not make the test E2E if any claimed workflow step is still synthetic.
 
 If a file under `tests/e2e/` is only a bring-up target, partially simulated narrative, or bounded/operator-assisted proof, that status must be stated explicitly and it must be excluded from canonical passing E2E command sets.
+
+Simulation and E2E are opposites in this repository. A simulated workflow may still be useful at a lower layer, but it is never a substitute for the required real E2E proof and it does not reduce the obligation to implement that proof.
 
 ---
 
@@ -778,6 +784,8 @@ This rule is absolute.
 
 There is no excuse for skipping tests.
 
+No feature is small enough to be excused from full real E2E proof.
+
 If a change is large enough to matter, it is large enough to deserve tests.
 
 If a change touches behavior, state, contracts, validation, recovery, performance, operability, or user-visible output, it must have test coverage.
@@ -922,6 +930,8 @@ Use end-to-end tests for:
 
 Critical end-to-end flows must not simulate away the core behavior being claimed.
 
+Simulation and E2E are antonyms in this repository: if a workflow step is simulated, injected, forced, or skipped, the test is not E2E.
+
 For avoidance of doubt:
 
 - an E2E test must execute the workflow as a live run would execute it
@@ -932,6 +942,8 @@ For avoidance of doubt:
 An E2E test that mixes real boundaries with synthetic workflow progression is defective and must not be counted as E2E proof.
 
 E2E is the final required proving layer for any feature that is supposed to exist in real runtime behavior.
+
+Do not remove, skip, or waive E2E coverage because implementation is difficult. The correct response to a defective simulated E2E is to make the test run the real workflow.
 
 Real-runtime resource needs such as tmux, git, ports, workspaces, tokens, and databases must be isolated so eligible E2E tests can run concurrently.
 

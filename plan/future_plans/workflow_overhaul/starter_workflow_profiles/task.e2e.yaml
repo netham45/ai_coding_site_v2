@@ -6,6 +6,24 @@ applies_to_kind: task
 profile_family: task
 status: draft
 main_prompt_ref: prompts/task/e2e.md
+compiled_subtask_template:
+  chain_family: leaf_execution
+  ordered_steps:
+    - load_task_context
+    - prepare_runtime_environment
+    - run_real_e2e_commands
+    - capture_real_runtime_evidence
+    - register_outputs_and_summary
+    - validate_completion_predicates
+    - complete_or_block
+  blocked_transitions:
+    - action: complete
+      code: completion_predicates_not_met
+      message: declared real runtime evidence is still missing
+  completion_predicates:
+    - declared real runtime commands were run
+    - real runtime evidence was captured
+    - outputs and summary were durably written
 required_repository_updates:
   - checklist
   - development_log

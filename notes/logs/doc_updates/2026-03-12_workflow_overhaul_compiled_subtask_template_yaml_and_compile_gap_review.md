@@ -1,0 +1,91 @@
+# Workflow Overhaul Compiled Subtask Template YAML And Compile Gap Review
+
+## Entry 1
+
+- Timestamp: 2026-03-12T17:20:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review
+- Task title: Workflow overhaul compiled subtask template YAML and compile gap review
+- Status: started
+- Affected systems: notes, YAML, daemon review context, CLI review context, development logs, document consistency tests
+- Summary: Began a workflow-overhaul doc-alignment pass to encode the simulated compiled subtask chains directly in the starter profile YAML and to inspect how the current runtime compiles and materializes subtasks today.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/README.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/epic_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/phase_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/plan_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/task_profiles.md`
+- Commands and tests run:
+  - `rg -n "compile_workflow|compiled_subtasks|compiled_tasks|SubtaskDefinitionDocument|wait_for_children|merge_children|materialize_children|build.*workflow|task_definitions|builtin/system-yaml/tasks|subtasks:" src tests notes plan -S`
+  - `sed -n '1,260p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1,260p' src/aicoding/daemon/materialization.py`
+  - `sed -n '1,260p' src/aicoding/yaml_schemas.py`
+  - `sed -n '1120,1325p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1976,2125p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1,240p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/execute_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/spawn_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/wait_for_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/reconcile_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/research_context.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/finalize_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/validate_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/review_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/epic.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/phase.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/plan.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/task.yaml`
+- Result: In progress. The current runtime compiles builtin node-kind task lists and authored inline subtasks, while the workflow-overhaul target expects profile-aware compiled subtask templates that do not yet exist in code.
+- Next step: Update the schema draft and starter profile YAML, run the document tests, and then summarize the current-runtime versus target-model gap.
+
+## Entry 2
+
+- Timestamp: 2026-03-12T17:35:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review
+- Task title: Workflow overhaul compiled subtask template YAML and compile gap review
+- Status: complete
+- Affected systems: notes, YAML, daemon review context, CLI review context, development logs, document consistency tests
+- Summary: Added `compiled_subtask_template` sections to every starter workflow profile YAML, documented the new draft section in the workflow-profile schema note, updated the starter-profile README, and completed the current-runtime compile/materialization inspection needed to explain the mismatch against the target model.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/README.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/epic_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/phase_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/plan_profiles.md`
+  - `plan/future_plans/workflow_overhaul/compiled_subtask_chain_simulations/task_profiles.md`
+- Commands and tests run:
+  - `rg -n "compile_workflow|compiled_subtasks|compiled_tasks|SubtaskDefinitionDocument|wait_for_children|merge_children|materialize_children|build.*workflow|task_definitions|builtin/system-yaml/tasks|subtasks:" src tests notes plan -S`
+  - `sed -n '1,260p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1,260p' src/aicoding/daemon/materialization.py`
+  - `sed -n '1,260p' src/aicoding/yaml_schemas.py`
+  - `sed -n '1120,1325p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1976,2125p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1,240p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/execute_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/spawn_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/wait_for_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/reconcile_children.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/research_context.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/finalize_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/validate_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/tasks/review_node.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/epic.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/phase.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/plan.yaml`
+  - `sed -n '1,220p' src/aicoding/resources/yaml/builtin/system-yaml/nodes/task.yaml`
+  - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
+- Result:
+  - Added:
+    - `plan/tasks/2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review.md`
+    - `notes/logs/doc_updates/2026-03-12_workflow_overhaul_compiled_subtask_template_yaml_and_compile_gap_review.md`
+  - Updated:
+    - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
+    - `plan/future_plans/workflow_overhaul/starter_workflow_profiles/README.md`
+    - every starter profile YAML under `plan/future_plans/workflow_overhaul/starter_workflow_profiles/`
+    - `plan/tasks/README.md`
+  - Current runtime finding: compile remains node-kind-driven and builtin-task-driven. It persists authored tasks and subtasks from `src/aicoding/resources/yaml/builtin/system-yaml/nodes/*.yaml` and `tasks/*.yaml`, with hook expansion before and after a base authored subtask. Child creation is currently a separate materialization path driven by a resolved layout file, not by the new workflow-profile compiled-chain model.
+  - Verification note: the first task-plan/doc-schema run failed because the new task plan omitted the required explicit `Performance:` scope line. That schema issue was corrected in the same change before rerunning the command.
+  - Verification passed after the schema fix: `13 passed in 2.86s`
+- Next step: use the documented gap to drive implementation planning for a real profile-aware compiler that emits the declared `compiled_subtask_template` chains instead of the current builtin task list model.

@@ -22,6 +22,7 @@ def test_verification_command_catalog_defines_current_command_families() -> None
         "PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q",
     ]:
         assert snippet in text
+    assert "`e2e_bringup`" in text
 
 
 def test_authoritative_docs_link_to_verification_command_catalog() -> None:

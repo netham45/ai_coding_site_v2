@@ -49,3 +49,41 @@
   - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py -q`
 - Result: The repository now has the standalone real rectification suite named in the matrix. The remaining FC-15 E2E limitation is narrowed to the broader full-tree regenerate/rebuild narrative rather than the absence of a dedicated rectification file.
 - Next step: rerun document-family checks after the final log/checklist state is written, then continue on the remaining broader FC-15 full-tree narrative if more work is needed.
+
+## Entry 3
+
+- Timestamp: 2026-03-12T11:50:00-06:00
+- Task ID: regeneration_and_upstream_rectification_real_e2e
+- Task title: Regeneration and upstream rectification real E2E
+- Status: partial
+- Affected systems: database, cli, daemon, prompts, sessions, tests, notes
+- Summary: Tightened the dependency-invalidated fresh-restart rectification narrative by removing `node materialize-children` from the dependent sibling setup. The test now compiles, readies, starts, and binds the dependent phase for real and waits for the runtime to create the expected `plan` child before proving the restart/remap assertions.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_regeneration_and_upstream_rectification_real_e2e.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py -q -k dependency_invalidated_fresh_restart_is_childless_and_remapped`
+- Result: Failed in `188.06s`. The converted test no longer seeds the dependent sibling's child tree from test code, but the live dependent phase still never created a `plan` child. The captured tmux pane showed the phase executing `research_context`, `execute_node.run_leaf_prompt`, and `validate_node.run_validation_gate`, then failing because `python3 -m pytest -q` returned exit code 5 with no tests collected. `node children --node <right_id> --versions` remained empty for the entire wait window.
+- Next step: Continue converting remaining E2E shortcuts while tracking that the phase-level runtime is still taking the leaf execution/validation path instead of generating descendants during real dependency-invalidated restart flows.
+
+## Entry 4
+
+- Timestamp: 2026-03-12T13:20:00-06:00
+- Task ID: regeneration_and_upstream_rectification_real_e2e
+- Task title: Regeneration and upstream rectification real E2E
+- Status: partial
+- Affected systems: database, cli, daemon, prompts, sessions, tests, notes
+- Summary: Tightened the dependency-invalidated fresh-restart rectification narrative one layer further by removing the direct left/right phase creation from test code. The test now starts the epic for real and waits for the runtime to create the sibling phase set before any dependency-invalidated restart assertions continue.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_regeneration_and_upstream_rectification_real_e2e.md`
+  - `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+  - `notes/catalogs/checklists/e2e_execution_policy.md`
+  - `notes/catalogs/checklists/verification_command_catalog.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py -q -k dependency_invalidated_fresh_restart_is_childless_and_remapped`
+- Result: Failed in `176.74s`. The stricter version no longer creates the sibling phases from test code, but the live epic session still never created the two phase children. The captured tmux pane showed the epic completing `research_context`, advancing into `execute_node.run_leaf_prompt`, and then failing to parent because the workspace only contained prompt logs and summaries rather than a project tree to modify. `node children --node <parent_id> --versions` remained empty for the entire wait window.
+- Next step: Continue removing similar parent-level setup shortcuts from other E2E files while tracking that the decomposition failure now reproduces directly at the epic layer as well.

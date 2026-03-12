@@ -6,6 +6,24 @@ applies_to_kind: task
 profile_family: task
 status: draft
 main_prompt_ref: prompts/task/remediation.md
+compiled_subtask_template:
+  chain_family: leaf_execution
+  ordered_steps:
+    - load_task_context
+    - restate_triggering_finding
+    - apply_bounded_fix
+    - run_recheck_commands
+    - register_outputs_and_summary
+    - validate_completion_predicates
+    - complete_or_block
+  blocked_transitions:
+    - action: complete
+      code: completion_predicates_not_met
+      message: finding to fix to proof evidence is still missing
+  completion_predicates:
+    - the triggering finding was restated
+    - the bounded fix was applied or blocked honestly
+    - recheck evidence and summary were durably written
 required_repository_updates:
   - notes
   - checklist

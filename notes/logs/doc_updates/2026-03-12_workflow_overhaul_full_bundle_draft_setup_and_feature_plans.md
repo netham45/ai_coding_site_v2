@@ -1,0 +1,73 @@
+# Workflow Overhaul Full Bundle Draft Setup And Feature Plans
+
+## Entry 1
+
+- Timestamp: 2026-03-12T20:45:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans
+- Task title: Workflow overhaul full bundle draft setup and feature plans
+- Status: started
+- Affected systems: notes, daemon planning context, CLI planning context, YAML planning context, prompts planning context, development logs, document consistency tests
+- Summary: Began restructuring the full workflow-overhaul bundle into draft setup plans and draft feature plans, not just the newer checklist slice.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_checklist_execution_mode_feature_breakdown.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_checklist_execution_mode_flow_impact.md`
+- Commands and tests run:
+  - `find plan/future_plans/workflow_overhaul -maxdepth 2 -type f | sort`
+  - `sed -n '1,260p' plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+  - `sed -n '260,520p' plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+- Result: In progress. The bundle has enough material to support a full setup/feature-plan breakdown covering both the original profile family and the newer checklist family.
+- Next step: Add the setup-plan and feature-plan draft families, run the document tests, and record the final result.
+
+## Entry 2
+
+- Timestamp: 2026-03-12T20:55:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans
+- Task title: Workflow overhaul full bundle draft setup and feature plans
+- Status: complete
+- Affected systems: notes, daemon planning context, CLI planning context, YAML planning context, prompts planning context, development logs, document consistency tests
+- Summary: Added a full draft setup-plan family and draft feature-plan family for the entire workflow-overhaul bundle, covering both workflow-profile and checklist-mode slices.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_checklist_execution_mode_feature_breakdown.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-12_checklist_execution_mode_flow_impact.md`
+- Commands and tests run:
+  - `find plan/future_plans/workflow_overhaul -maxdepth 2 -type f | sort`
+  - `sed -n '1,260p' plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+  - `sed -n '260,520p' plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+  - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
+- Result:
+  - Added:
+    - `plan/future_plans/workflow_overhaul/draft/draft_setup_plans/README.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_setup_plans/00_bundle_normalization_and_contract_freeze.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_setup_plans/01_schema_and_builtin_asset_readiness.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_setup_plans/02_runtime_surface_and_data_model_readiness.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_setup_plans/03_proving_and_traceability_readiness.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/README.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/01_workflow_profile_yaml_family_and_structural_validation.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/02_profile_aware_startup_and_creation.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/03_profile_aware_layout_resolution_and_child_materialization.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/04_compiled_profile_context_and_brief_generation.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/05_profile_inspection_and_operator_surfaces.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/06_prompt_pack_and_prompt_selection_adoption.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/07_profile_e2e_and_traceability.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/08_checklist_schema_family.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/09_task_profile_checklist_execution_mode_support.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/10_durable_checklist_persistence.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/11_checklist_orchestrator_loop_support.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/12_checklist_item_prompt_delivery.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/13_checklist_item_completion_and_blocker_enforcement.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/14_checklist_cli_and_operator_inspection.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/15_checklist_website_ui_support.md`
+    - `plan/future_plans/workflow_overhaul/draft/draft_feature_plans/16_checklist_e2e_and_flow_adoption.md`
+    - `plan/future_plans/workflow_overhaul/draft/2026-03-12_draft_setup_and_feature_plan_index.md`
+    - `plan/tasks/2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
+    - `notes/logs/doc_updates/2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
+  - Updated:
+    - `plan/tasks/README.md`
+  - Verification passed: `13 passed in 3.13s`
+- Next step: If desired, the next useful layer is promoting these draft setup/feature plans into the repository's normal authoritative `plan/features/` and `plan/setup/` families.

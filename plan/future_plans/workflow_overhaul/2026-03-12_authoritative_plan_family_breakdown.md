@@ -10,7 +10,7 @@ It is not an implementation claim and not yet an authoritative plan family.
 
 ## Why This Note Exists
 
-The current bundle under `plan/future_plans/workflow_overhaul/` contains:
+The current bundle under `plan/future_plans/workflow_overhaul/draft/` contains:
 
 - useful design direction
 - draft prompts

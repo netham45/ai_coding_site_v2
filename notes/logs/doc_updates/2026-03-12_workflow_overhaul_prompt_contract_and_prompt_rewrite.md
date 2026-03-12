@@ -16,7 +16,7 @@
   - `plan/future_plans/workflow_overhaul/prompts/README.md`
   - `notes/specs/prompts/prompt_library_plan.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f -name '*.md' | sort`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f -name '*.md' | sort`
   - `sed -n '1,220p' plan/future_plans/workflow_overhaul/prompts/README.md`
   - `sed -n '1,220p' plan/future_plans/workflow_overhaul/prompts/*/*.md`
 - Result: In progress. The prompt bundle has enough content to normalize now, but it still needs one contract note and a full-file rewrite pass so the per-tier prompts stop diverging in structure.
@@ -38,8 +38,8 @@
   - `plan/future_plans/workflow_overhaul/prompts/README.md`
   - `notes/specs/prompts/prompt_library_plan.md`
 - Commands and tests run:
-  - `find plan/future_plans/workflow_overhaul/prompts -maxdepth 2 -type f -name '*.md' | sort`
-  - `rg -n "^Role$|^Objective$|^Lifecycle Position$|^Inputs$|^Allowed Actions$|^Forbidden Actions$|^Expected Result$|^Completion Conditions$|^Escalation Or Failure$|^Response Contract$" plan/future_plans/workflow_overhaul/prompts -g '*.md'`
+  - `find plan/future_plans/workflow_overhaul/draft/prompts -maxdepth 2 -type f -name '*.md' | sort`
+  - `rg -n "^Role$|^Objective$|^Lifecycle Position$|^Inputs$|^Allowed Actions$|^Forbidden Actions$|^Expected Result$|^Completion Conditions$|^Escalation Or Failure$|^Response Contract$" plan/future_plans/workflow_overhaul/draft/prompts -g '*.md'`
   - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
 - Result:
   - Added:

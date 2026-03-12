@@ -1,8 +1,101 @@
 from __future__ import annotations
 
+import subprocess
+import time
 import pytest
 from sqlalchemy import create_engine, text
 from uuid import UUID
+
+
+def _tmux_capture(session_name: str) -> str:
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"[tmux capture failed] {result.stderr.strip()}"
+    return result.stdout
+
+
+def _tmux_kill(session_name: str) -> None:
+    subprocess.run(
+        ["tmux", "kill-session", "-t", session_name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _compile_ready_and_start_node(real_daemon_harness, *, node_id: str) -> None:
+    compile_result = real_daemon_harness.cli("workflow", "compile", "--node", node_id)
+    ready_result = real_daemon_harness.cli("node", "lifecycle", "transition", "--node", node_id, "--state", "READY")
+    start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
+    assert compile_result.exit_code == 0, compile_result.stderr
+    assert ready_result.exit_code == 0, ready_result.stderr
+    assert start_result.exit_code == 0, start_result.stderr
+
+
+def _wait_for_runtime_child(real_daemon_harness, *, parent_node_id: str, expected_kind: str, timeout_seconds: float = 180.0) -> dict[str, object]:
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", parent_node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    deadline = time.time() + timeout_seconds
+    last_children_payload: dict[str, object] | None = None
+    last_pane_text = ""
+    try:
+        while time.time() < deadline:
+            children_result = real_daemon_harness.cli("node", "children", "--node", parent_node_id, "--versions")
+            assert children_result.exit_code == 0, children_result.stderr
+            last_children_payload = children_result.json()
+            for child in last_children_payload["children"]:
+                if child["kind"] == expected_kind:
+                    return child
+            last_pane_text = _tmux_capture(session_name)
+            time.sleep(2.0)
+    finally:
+        _tmux_kill(session_name)
+    raise AssertionError(
+        f"Timed out waiting for node {parent_node_id} to create a {expected_kind} child through the real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}\n"
+        f"last_children_payload={last_children_payload}"
+    )
+
+
+def _wait_for_runtime_children(
+    real_daemon_harness,
+    *,
+    parent_node_id: str,
+    expected_kind: str,
+    minimum_count: int,
+    timeout_seconds: float = 180.0,
+) -> list[dict[str, object]]:
+    bind_result = real_daemon_harness.cli("session", "bind", "--node", parent_node_id)
+    assert bind_result.exit_code == 0, bind_result.stderr
+    session_name = str(bind_result.json()["session_name"])
+    deadline = time.time() + timeout_seconds
+    last_children_payload: dict[str, object] | None = None
+    last_pane_text = ""
+    try:
+        while time.time() < deadline:
+            children_result = real_daemon_harness.cli("node", "children", "--node", parent_node_id, "--versions")
+            assert children_result.exit_code == 0, children_result.stderr
+            last_children_payload = children_result.json()
+            matching_children = [child for child in last_children_payload["children"] if child["kind"] == expected_kind]
+            if len(matching_children) >= minimum_count:
+                return matching_children
+            last_pane_text = _tmux_capture(session_name)
+            time.sleep(2.0)
+    finally:
+        _tmux_kill(session_name)
+    raise AssertionError(
+        f"Timed out waiting for node {parent_node_id} to create at least {minimum_count} {expected_kind} children through the real tmux/provider session.\n"
+        f"session_name={session_name}\n"
+        f"pane_text=\n{last_pane_text}\n"
+        f"last_children_payload={last_children_payload}"
+    )
 
 
 @pytest.mark.e2e_real
@@ -168,6 +261,8 @@ def test_flow_10_supersede_cutover_does_not_reuse_old_primary_session_after_auth
 
 
 @pytest.mark.e2e_real
+@pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_10_dependency_invalidated_fresh_restart_is_childless_and_remapped_into_parent_candidate(
     real_daemon_harness,
 ) -> None:
@@ -180,43 +275,20 @@ def test_flow_10_dependency_invalidated_fresh_restart_is_childless_and_remapped_
         "Real E2E Flow 10 Dependency Parent",
         "--prompt",
         "Create a parent with sibling dependency invalidation during regenerate/rectify.",
-        "--no-run",
     )
     assert parent_create.exit_code == 0, parent_create.stderr
     parent_id = str(parent_create.json()["node"]["node_id"])
-
-    left_create = real_daemon_harness.cli(
-        "node",
-        "child",
-        "create",
-        "--parent",
-        parent_id,
-        "--kind",
-        "phase",
-        "--title",
-        "Prerequisite Phase",
-        "--prompt",
-        "This sibling will be regenerated.",
+    phase_children = _wait_for_runtime_children(
+        real_daemon_harness,
+        parent_node_id=parent_id,
+        expected_kind="phase",
+        minimum_count=2,
     )
-    right_create = real_daemon_harness.cli(
-        "node",
-        "child",
-        "create",
-        "--parent",
-        parent_id,
-        "--kind",
-        "phase",
-        "--title",
-        "Dependent Phase",
-        "--prompt",
-        "This sibling depends on the prerequisite and must fresh-restart.",
-    )
-    assert left_create.exit_code == 0, left_create.stderr
-    assert right_create.exit_code == 0, right_create.stderr
-    left_id = str(left_create.json()["node_id"])
-    right_id = str(right_create.json()["node_id"])
+    left_id = str(phase_children[0]["node_id"])
+    right_id = str(phase_children[1]["node_id"])
 
-    materialize_right = real_daemon_harness.cli("node", "materialize-children", "--node", right_id)
+    _compile_ready_and_start_node(real_daemon_harness, node_id=right_id)
+    runtime_child = _wait_for_runtime_child(real_daemon_harness, parent_node_id=right_id, expected_kind="plan")
     add_dependency = real_daemon_harness.cli("node", "dependency-add", "--node", right_id, "--depends-on", left_id)
     rectify_result = real_daemon_harness.cli("node", "rectify-upstream", "--node", left_id)
     history_result = real_daemon_harness.cli("node", "rebuild-history", "--node", left_id)
@@ -224,7 +296,6 @@ def test_flow_10_dependency_invalidated_fresh_restart_is_childless_and_remapped_
     left_versions_result = real_daemon_harness.cli("node", "versions", "--node", left_id)
     right_versions_result = real_daemon_harness.cli("node", "versions", "--node", right_id)
 
-    assert materialize_right.exit_code == 0, materialize_right.stderr
     assert add_dependency.exit_code == 0, add_dependency.stderr
     assert rectify_result.exit_code == 0, rectify_result.stderr
     assert history_result.exit_code == 0, history_result.stderr
@@ -232,7 +303,6 @@ def test_flow_10_dependency_invalidated_fresh_restart_is_childless_and_remapped_
     assert left_versions_result.exit_code == 0, left_versions_result.stderr
     assert right_versions_result.exit_code == 0, right_versions_result.stderr
 
-    materialize_payload = materialize_right.json()
     history_payload = history_result.json()
     parent_versions_payload = parent_versions_result.json()
     left_versions_payload = left_versions_result.json()
@@ -242,7 +312,7 @@ def test_flow_10_dependency_invalidated_fresh_restart_is_childless_and_remapped_
     left_candidate_id = str(left_versions_payload["versions"][-1]["id"])
     right_candidate_id = str(right_versions_payload["versions"][-1]["id"])
 
-    assert materialize_payload["child_count"] > 0
+    assert runtime_child["kind"] == "plan"
     assert parent_versions_payload["versions"][-1]["status"] == "candidate"
     assert left_versions_payload["versions"][-1]["status"] == "candidate"
     assert right_versions_payload["versions"][-1]["status"] == "candidate"

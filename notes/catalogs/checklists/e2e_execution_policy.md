@@ -98,6 +98,7 @@ PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_r
 PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
 PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
 PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -q
 ```
 
 Current non-canonical real-runtime bring-up targets:
@@ -105,6 +106,9 @@ Current non-canonical real-runtime bring-up targets:
 These use the real runtime harness and remain important, but they must not be
 treated as passing full-real E2E checkpoints until their workflows satisfy the
 live-run-equivalence rule from `AGENTS.md`.
+
+They should be marked with `e2e_bringup` so canonical passing E2E runs can
+exclude them mechanically instead of relying on memory.
 
 ```bash
 PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py -q
@@ -128,6 +132,7 @@ Current runtime policy:
 
 Additional gated markers:
 
+- `e2e_bringup`: real-runtime bring-up coverage that is intentionally excluded from canonical passing E2E checkpoint claims
 - `requires_git`: run only when real git execution is available and the target suite actually needs it
 - `requires_tmux`: run only when tmux-backed session orchestration is available
 - `requires_ai_provider`: run only when live provider credentials and budgets are intentionally supplied

@@ -6,7 +6,7 @@ Review the current workflow-overhaul future-plan bundle against the real reposit
 
 ## Rationale
 
-- Rationale: The current `plan/future_plans/workflow_overhaul/` bundle has useful direction and draft assets, but it is still idea-heavy and does not yet decompose cleanly into repo-standard implementation plans with code-grounded checklists.
+- Rationale: The current `plan/future_plans/workflow_overhaul/draft/` bundle has useful direction and draft assets, but it is still idea-heavy and does not yet decompose cleanly into repo-standard implementation plans with code-grounded checklists.
 - Reason for existence: This task exists to bridge the gap between the current future-plan notes and a later authoritative plan family by identifying the real code surfaces, contract gaps, and verification work each future slice would require.
 
 ## Related Features

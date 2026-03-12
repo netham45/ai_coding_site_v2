@@ -18,6 +18,7 @@ def _tmux_has_session(session_name: str) -> bool:
 
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_07_pause_resume_and_recover_runs_against_real_daemon_real_cli_and_tmux(real_daemon_harness_factory) -> None:
     harness = real_daemon_harness_factory(
         session_backend="tmux",
@@ -46,6 +47,21 @@ def test_flow_07_pause_resume_and_recover_runs_against_real_daemon_real_cli_and_
         assert bind_result.exit_code == 0, bind_result.stderr
         bind_payload = bind_result.json()
         session_names_to_cleanup.add(bind_payload["session_name"])
+        durable_run_payload = None
+        deadline = time.time() + 60.0
+        while time.time() < deadline:
+            run_show = harness.cli("node", "run", "show", "--node", node_id)
+            assert run_show.exit_code == 0, run_show.stderr
+            durable_run_payload = run_show.json()
+            if (
+                durable_run_payload["latest_attempt"] is not None
+                or durable_run_payload["state"]["last_completed_compiled_subtask_id"] is not None
+                or durable_run_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+            ):
+                break
+            time.sleep(0.2)
+
+        assert durable_run_payload is not None, "Expected durable run state after binding the real tmux/provider session."
 
         current_initial_result = harness.cli("session", "show-current")
         assert current_initial_result.exit_code == 0, current_initial_result.stderr
@@ -102,6 +118,7 @@ def test_flow_07_pause_resume_and_recover_runs_against_real_daemon_real_cli_and_
 
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
+@pytest.mark.requires_ai_provider
 def test_flow_07_background_supervision_restarts_killed_tmux_session_automatically(real_daemon_harness_factory) -> None:
     harness = real_daemon_harness_factory(
         session_backend="tmux",
@@ -131,6 +148,21 @@ def test_flow_07_background_supervision_restarts_killed_tmux_session_automatical
         original_session_name = str(bind_payload["session_name"])
         original_session_id = str(bind_payload["session_id"])
         session_names_to_cleanup.add(original_session_name)
+        durable_run_payload = None
+        deadline = time.time() + 60.0
+        while time.time() < deadline:
+            run_show = harness.cli("node", "run", "show", "--node", node_id)
+            assert run_show.exit_code == 0, run_show.stderr
+            durable_run_payload = run_show.json()
+            if (
+                durable_run_payload["latest_attempt"] is not None
+                or durable_run_payload["state"]["last_completed_compiled_subtask_id"] is not None
+                or durable_run_payload["run"]["run_status"] in {"FAILED", "PAUSED", "COMPLETED", "COMPLETE"}
+            ):
+                break
+            time.sleep(0.2)
+
+        assert durable_run_payload is not None, "Expected durable run state after binding the real tmux/provider session."
 
         subprocess.run(["tmux", "kill-session", "-t", original_session_name], check=False, capture_output=True, text=True)
         assert _tmux_has_session(original_session_name) is False

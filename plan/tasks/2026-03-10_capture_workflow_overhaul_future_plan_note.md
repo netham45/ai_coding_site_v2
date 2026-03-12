@@ -48,6 +48,6 @@ Read these note files before implementing or revising this phase:
 ## Exit Criteria
 
 - `plan/future_plans/README.md` exists and states that the family is non-authoritative working notes.
-- `plan/future_plans/workflow_overhaul/` contains the captured workflow-overhaul idea.
+- `plan/future_plans/workflow_overhaul/draft/` contains the captured workflow-overhaul idea.
 - The governing task plan and development log exist and point to each other.
 - The documented verification command passes.
