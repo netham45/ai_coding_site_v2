@@ -22,6 +22,24 @@ queryClient.setQueryData(queryKeys.projectBootstrap("repo_alpha"), {
     source_path: "repos/repo_alpha",
   },
   root_node_id: "node-root",
+  top_level_nodes: [
+    {
+      node_id: "node-root",
+      kind: "epic",
+      tier: "epic",
+      title: "Website UI bootstrap",
+      lifecycle_state: "READY",
+      run_status: "RUNNING",
+      authoritative_node_version_id: "node-version-root",
+      latest_created_node_version_id: "node-version-root",
+      route_hint: {
+        project_id: "repo_alpha",
+        node_id: "node-root",
+        tab: "overview",
+        url: "/projects/repo_alpha/nodes/node-root/overview",
+      },
+    },
+  ],
   route_hint: {
     project_id: "repo_alpha",
     node_id: "node-root",
@@ -95,6 +113,7 @@ queryClient.setQueryData(queryKeys.projectTree("repo_alpha", "node-root"), {
     },
   ],
 });
+queryClient.setQueryData(queryKeys.nodeAncestors("node-root"), []);
 
 const html = renderToStaticMarkup(
   createElement(
@@ -145,6 +164,14 @@ if (!html.includes('data-testid="tree-filter-blocked-only"')) {
 
 if (!html.includes('data-testid="tree-filter-active-only"')) {
   throw new Error("Expected the active-only tree filter to render.");
+}
+
+if (!html.includes('data-testid="tree-breadcrumb"')) {
+  throw new Error("Expected the tree breadcrumb to render.");
+}
+
+if (!html.includes('data-testid="tree-toggle-node-root"')) {
+  throw new Error("Expected the tree expand/collapse toggle to render.");
 }
 
 console.log("explorer-tree-check: ok");

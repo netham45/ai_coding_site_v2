@@ -44,11 +44,27 @@ Local default posture:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-python3 -m pytest tests/unit
-python3 -m aicoding.cli.main admin doctor
-python3 -m aicoding.cli.main admin db ping
-python3 -m aicoding.cli.main admin db upgrade
+cd frontend && npm install
+PYTHONPATH=src python3 -m pytest tests/unit
+PYTHONPATH=src python3 -m aicoding.cli.main admin doctor
+PYTHONPATH=src python3 -m aicoding.cli.main admin db ping
+PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade
 uvicorn aicoding.daemon.app:create_app --factory --reload
+```
+
+Common root-shell wrappers:
+
+```bash
+./scripts/upgrade-db.sh
+./scripts/downgrade-db.sh
+./scripts/rebuild.sh
+./scripts/reset-db.sh --yes
+./scripts/run-node-dev.sh
+./scripts/run-server.sh
+./scripts/test-unit.sh
+./scripts/test-integration.sh
+./scripts/test-e2e.sh
+./scripts/test-all.sh
 ```
 
 ## Database bootstrap
@@ -58,13 +74,26 @@ The repository expects PostgreSQL. Set `AICODING_DATABASE_URL` in `.env` to a da
 Typical local verification flow:
 
 ```bash
-python3 -m aicoding.cli.main admin db ping
-python3 -m aicoding.cli.main admin db heads
-python3 -m aicoding.cli.main admin db upgrade
-python3 -m aicoding.cli.main admin db check-schema
-python3 -m pytest tests/unit
-python3 -m pytest tests/integration
-python3 -m pytest tests/integration/test_flow_contract_suite.py -q
+PYTHONPATH=src python3 -m aicoding.cli.main admin db ping
+PYTHONPATH=src python3 -m aicoding.cli.main admin db heads
+PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade
+PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema
+PYTHONPATH=src python3 -m pytest tests/unit
+PYTHONPATH=src python3 -m pytest tests/integration
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q
+```
+
+To wipe the configured database from `.env` and replay the documented bootstrap path:
+
+```bash
+./scripts/reset-db.sh --yes
+```
+
+To run the existing migration commands directly through root shell wrappers:
+
+```bash
+./scripts/upgrade-db.sh
+./scripts/downgrade-db.sh
 ```
 
 Real E2E checkpoints are tracked separately from bounded and integration proof.

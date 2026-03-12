@@ -177,6 +177,8 @@ def test_project_top_level_create_starts_workflow_and_returns_route_hint(monkeyp
     assert payload["node"]["kind"] == "epic"
     assert payload["node"]["title"] == "Website UI bootstrap"
     assert payload["compile"]["status"] == "compiled"
+    assert payload["session"]["status"] == "bound"
+    assert payload["session"]["backend"] == "fake"
     assert payload["route_hint"]["project_id"] == "repo_alpha"
     assert payload["route_hint"]["node_id"] == payload["node"]["node_id"]
     assert payload["route_hint"]["url"] == f"/projects/repo_alpha/nodes/{payload['node']['node_id']}/overview"

@@ -83,12 +83,34 @@ test("project selection, tree navigation, and prompt regeneration flow works", a
   await expect(page.getByTestId("tree-node-node-root")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
 
+  await page.getByTestId("detail-tab-link-prompts").click();
+  await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-root\/prompts$/);
+  await expect(page.getByTestId("detail-tab-prompts")).toBeVisible();
+  const activePromptInput = page.getByTestId("prompt-editor-input");
+  await expect(activePromptInput).toHaveValue("Create the initial website UI workflow.");
+  await activePromptInput.fill("Create the initial website UI workflow with active-node regeneration.");
+  await page.getByTestId("request-save-and-regenerate").click();
+  await page.getByTestId("confirm-save-and-regenerate").click();
+  await expect(page.getByTestId("prompt-regeneration-success")).toBeVisible();
+  await expect(activePromptInput).toHaveValue("Create the initial website UI workflow with active-node regeneration.");
+
+  await page.getByTestId("detail-tab-link-overview").click();
+  await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-root\/overview$/);
+
   await page.goto("/projects/repo_alpha");
+  await expect(page).toHaveURL(/\/projects\/repo_alpha$/);
+  await expect(page.getByTestId("page-project-detail")).toBeVisible();
+  await expect(page.getByTestId("top-level-create-form")).toBeVisible();
+  await expect(page.getByTestId("project-top-level-node-list")).toBeVisible();
+  await expect(page.getByTestId("project-top-level-node-node-root")).toBeVisible();
+  await expect(page.getByTestId("top-level-node-list")).toBeVisible();
+
+  await page.getByTestId("project-top-level-node-node-root").click();
   await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-root\/overview$/);
 
   await page.getByTestId("tree-filter-input").fill("React");
   await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
-  await expect(page.getByTestId("tree-node-node-root")).toHaveCount(0);
+  await expect(page.getByTestId("tree-node-node-root")).toBeVisible();
 
   await page.getByTestId("tree-filter-input").fill("");
   await page.getByTestId("tree-node-node-task-1").click();

@@ -18,15 +18,34 @@ Execution-policy companion:
 
 ## Command Families
 
+### Root Shell Wrappers
+
+Use these when you want the documented repo commands behind stable root-level `.sh` entrypoints:
+
+```bash
+./scripts/upgrade-db.sh
+./scripts/downgrade-db.sh
+./scripts/rebuild.sh
+./scripts/reset-db.sh --yes
+./scripts/run-node-dev.sh
+./scripts/run-server.sh
+./scripts/test-unit.sh
+./scripts/test-integration.sh
+./scripts/test-e2e.sh
+./scripts/test-all.sh
+```
+
+These wrappers are convenience entrypoints. The underlying commands below remain the canonical behavior they must track.
+
 ### Environment And Database Foundation
 
 Use these to confirm local CLI access and migration-head alignment:
 
 ```bash
-python3 -m aicoding.cli.main admin db ping
-python3 -m aicoding.cli.main admin db heads
-python3 -m aicoding.cli.main admin db upgrade
-python3 -m aicoding.cli.main admin db check-schema
+PYTHONPATH=src python3 -m aicoding.cli.main admin db ping
+PYTHONPATH=src python3 -m aicoding.cli.main admin db heads
+PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade
+PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema
 ```
 
 ### Unit And Bounded Documentation Checks
@@ -34,7 +53,7 @@ python3 -m aicoding.cli.main admin db check-schema
 Use these for fast bounded proof during documentation and planning changes:
 
 ```bash
-python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_notes_quickstart_docs.py
+PYTHONPATH=src python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_notes_quickstart_docs.py
 ```
 
 ### Unit Suite
@@ -42,7 +61,7 @@ python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_featur
 Use this for the repository unit layer:
 
 ```bash
-python3 -m pytest tests/unit
+PYTHONPATH=src python3 -m pytest tests/unit
 ```
 
 ### Integration Suite
@@ -50,7 +69,7 @@ python3 -m pytest tests/unit
 Use this for the repository integration layer:
 
 ```bash
-python3 -m pytest tests/integration
+PYTHONPATH=src python3 -m pytest tests/integration
 ```
 
 ### Flow Contract Suite
@@ -58,7 +77,7 @@ python3 -m pytest tests/integration
 Use this to verify the current bounded flow-contract layer:
 
 ```bash
-python3 -m pytest tests/integration/test_flow_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q
 ```
 
 ### YAML Flow Asset Contract Suite
@@ -66,7 +85,7 @@ python3 -m pytest tests/integration/test_flow_contract_suite.py -q
 Use this to verify executable YAML flow assets separately from the markdown flow-contract suite:
 
 ```bash
-python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
 ```
 
 ### Performance Suite
@@ -74,7 +93,7 @@ python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
 Use this for the current performance harness layer:
 
 ```bash
-python3 -m pytest tests/performance/test_harness.py -q
+PYTHONPATH=src python3 -m pytest tests/performance/test_harness.py -q
 ```
 
 ### Parallel Bounded Smoke
@@ -82,33 +101,36 @@ python3 -m pytest tests/performance/test_harness.py -q
 Use this to prove that unit, integration, and performance suites can execute concurrently without shared database-fixture contention:
 
 ```bash
-python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
+PYTHONPATH=src python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
 ```
 
 This command is a normative bounded-layer contract check, not a release-readiness claim by itself.
 
 ### Real E2E Current Checkpoints
 
-Use these commands for the currently implemented real E2E checkpoint set:
+Use these commands only for the currently passing full-real E2E checkpoint set:
 
 ```bash
-python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q
-python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q
-python3 -m pytest tests/e2e/test_flow_03_materialize_and_schedule_children_real.py -q
-python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q
-python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
-python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
-python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
-python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
-python3 -m pytest tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_web_project_top_level_bootstrap_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_web_project_top_level_browser_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_03_materialize_and_schedule_children_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -q
 ```
 
 Current git-proof caveat:
 
+- `tests/e2e/test_web_project_top_level_browser_real.py` now proves the real browser flow against the daemon-served frontend for project selection, inline top-level creation, success redirect, and repo-backed bootstrap inspection through CLI/API surfaces.
 - `tests/e2e/test_flow_11_finalize_and_merge_real.py` proves the shipped live bootstrap, merge, finalize, merge-event, and git-status path.
 - `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py` now also proves merged parent-repo file contents on disk after a clean multi-child merge and finalize, rerun reset/replay of current child finals on the parent merge tier, and abort-to-seed rollback after a live merge conflict.
-- The repo still does not yet prove rollback/reset correctness through the `node rectify-upstream` rebuild path or resolved file contents after conflict reconciliation.
-- Those stronger assertions require the planned git-content suites described in `plan/tasks/2026-03-10_git_e2e_merge_rectification_planning.md` before any note or checklist can treat the git rectification surface as fully real-E2E covered.
+- `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` and `tests/e2e/test_e2e_incremental_parent_merge_real.py` are currently quarantined from this canonical checkpoint set because they still include synthetic workflow progression or other non-live-run-equivalent steps in at least part of their narrative.
+- The repo must not treat hierarchy-wide live AI descent, incremental parent merge, or rebuild/cutover coordination as canonical passing real E2E until those suites satisfy the live-run-equivalence rule from `AGENTS.md`.
 
 The current real-E2E harness now creates one database per test, so DB-backed execution no longer depends on a shared database fixture.
 
@@ -118,20 +140,26 @@ See `notes/catalogs/checklists/e2e_execution_policy.md` for the local, CI, gated
 
 ### Real E2E Bring-Up Targets
 
-Use these when bringing up larger real narratives that are intentionally expected to fail while runtime gaps are still being exposed:
+Use these when bringing up larger real narratives that still expose runtime gaps or
+still contain synthetic workflow steps that prevent canonical E2E status:
 
 ```bash
 python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q
+python3 -m pytest tests/e2e/test_e2e_automated_full_tree_cat_runtime_real.py -q
+python3 -m pytest tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py -q
+python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q
+python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q
+python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q
 ```
 
-This command is for full-tree narrative bring-up only. It must not be used to claim `verified`, `flow_complete`, or `release_ready` until the planned mergeback, regeneration, and rebuild stages actually pass.
+These commands must not be used to claim `verified`, `flow_complete`, or `release_ready` until the exact workflow passes with no synthetic workflow steps.
 
 ### Parallel All-Tests Meta-Verifier Bring-Up
 
 Use this gated meta-test to recurse into the eligible `tests/` surface and run the child suite in parallel:
 
 ```bash
-AICODING_ENABLE_META_PARALLEL_TEST=1 python3 -m pytest tests/integration/test_parallel_all_tests_meta.py -q
+AICODING_ENABLE_META_PARALLEL_TEST=1 PYTHONPATH=src python3 -m pytest tests/integration/test_parallel_all_tests_meta.py -q
 ```
 
 This is the current bring-up target for the repository-wide parallel test architecture.

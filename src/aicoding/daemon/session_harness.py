@@ -21,6 +21,8 @@ class SessionSnapshot:
     last_activity_at: datetime
     pane_text: str = ""
     in_alt_screen: bool = False
+    process_alive: bool = True
+    exit_status: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +68,22 @@ class TmuxSessionAdapter:
         if environment:
             for key, value in sorted(environment.items()):
                 args.extend(["-e", f"{key}={value}"])
-        args.append(command)
+        args.extend(
+            [
+                ";",
+                "set-option",
+                "-t",
+                session_name,
+                "remain-on-exit",
+                "on",
+                ";",
+                "respawn-pane",
+                "-k",
+                "-t",
+                session_name,
+                command,
+            ]
+        )
         result = self._run(*args)
         if result.returncode != 0:
             raise ConfigurationError(
@@ -82,6 +99,8 @@ class TmuxSessionAdapter:
             exists=True,
             created_at=datetime.now(timezone.utc),
             last_activity_at=datetime.now(timezone.utc),
+            process_alive=True,
+            exit_status=None,
         )
 
     def session_exists(self, session_name: str) -> bool:
@@ -144,10 +163,15 @@ class TmuxSessionAdapter:
             last_activity_at=metadata["last_activity_at"],
             pane_text=pane_text,
             in_alt_screen=metadata["in_alt_screen"],
+            process_alive=bool(metadata["process_alive"]),
+            exit_status=metadata["exit_status"],
         )
 
     def _load_metadata(self, session_name: str) -> dict[str, object]:
-        template = "#{pane_current_command}\t#{pane_current_path}\t#{session_created}\t#{session_activity}\t#{alternate_on}"
+        template = (
+            "#{pane_current_command}\t#{pane_current_path}\t#{session_created}\t#{session_activity}\t"
+            "#{alternate_on}\t#{pane_dead}\t#{pane_dead_status}"
+        )
         result = self._run("display-message", "-p", "-t", session_name, template)
         if result.returncode != 0:
             now = datetime.now(timezone.utc)
@@ -157,14 +181,27 @@ class TmuxSessionAdapter:
                 "created_at": now,
                 "last_activity_at": now,
                 "in_alt_screen": False,
+                "process_alive": True,
+                "exit_status": None,
             }
-        command, working_directory, created_raw, activity_raw, alt_raw = (result.stdout.rstrip("\n").split("\t") + ["", "", "", "", ""])[:5]
+        command, working_directory, created_raw, activity_raw, alt_raw, pane_dead_raw, exit_status_raw = (
+            result.stdout.rstrip("\n").split("\t") + ["", "", "", "", "", "", ""]
+        )[:7]
+        process_alive = pane_dead_raw != "1"
+        exit_status: int | None = None
+        if pane_dead_raw == "1":
+            try:
+                exit_status = int(exit_status_raw)
+            except (TypeError, ValueError):
+                exit_status = None
         return {
             "command": command or "tmux-managed",
             "working_directory": working_directory or str(Path.cwd()),
             "created_at": self._parse_tmux_epoch(created_raw),
             "last_activity_at": self._parse_tmux_epoch(activity_raw),
             "in_alt_screen": alt_raw == "1",
+            "process_alive": process_alive,
+            "exit_status": exit_status,
         }
 
     def _parse_tmux_epoch(self, raw: str) -> datetime:
@@ -183,6 +220,8 @@ class FakeSessionState:
     last_activity_at: datetime
     pane_text: str = ""
     in_alt_screen: bool = False
+    process_alive: bool = True
+    exit_status: int | None = None
 
 
 @dataclass
@@ -253,6 +292,11 @@ class FakeSessionAdapter:
         state = self._sessions[session_name]
         state.last_activity_at = state.last_activity_at - timedelta(seconds=seconds)
 
+    def terminate_process(self, session_name: str, *, exit_status: int = 0) -> None:
+        state = self._sessions[session_name]
+        state.process_alive = False
+        state.exit_status = exit_status
+
     def _snapshot(self, state: FakeSessionState) -> SessionSnapshot:
         return SessionSnapshot(
             session_name=state.session_name,
@@ -264,6 +308,8 @@ class FakeSessionAdapter:
             last_activity_at=state.last_activity_at,
             pane_text=state.pane_text,
             in_alt_screen=state.in_alt_screen,
+            process_alive=state.process_alive,
+            exit_status=state.exit_status,
         )
 
 

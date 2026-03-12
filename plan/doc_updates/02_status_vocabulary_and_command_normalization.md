@@ -75,7 +75,7 @@ Read these note files before implementing or revising this phase:
 ## Canonical Verification Command
 
 ```bash
-python3 -m pytest tests/unit/test_verification_command_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_notes_quickstart_docs.py
+PYTHONPATH=src python3 -m pytest tests/unit/test_verification_command_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_notes_quickstart_docs.py
 ```
 
 ## Exit Criteria

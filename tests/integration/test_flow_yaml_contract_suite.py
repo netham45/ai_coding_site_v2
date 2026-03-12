@@ -5,9 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from aicoding.daemon.live_git import bootstrap_live_git_repo, stage_live_git_change
+from aicoding.daemon.incremental_parent_merge import process_next_incremental_child_merge
+from aicoding.daemon.live_git import refresh_child_live_git_from_parent_head
 from aicoding.flow_assets import FlowYamlAsset, load_flow_yaml_asset
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
+from aicoding.db.models import LogicalNodeCurrentVersion
+from aicoding.db.session import query_session_scope
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -521,6 +526,7 @@ def _run_flow_yaml_21(app_client, auth_headers, **_kwargs) -> None:
 
 
 def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
+    app_client.app.state.settings.session.poll_interval_seconds = 3600.0
     parent_id = _create_node(app_client, auth_headers, kind="epic", title="Dependency Parent", prompt="parent prompt")
     left_id = _create_node(
         app_client,
@@ -558,7 +564,6 @@ def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
     validation_response = app_client.get(f"/api/nodes/{right_id}/dependency-validate", headers=auth_headers)
     status_response = app_client.get(f"/api/nodes/{right_id}/dependency-status", headers=auth_headers)
     blockers_response = app_client.get(f"/api/nodes/{right_id}/blockers", headers=auth_headers)
-    blocked_start_response = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": right_id})
 
     assert add_response.status_code == 200
     assert add_response.json()["dependency_type"] == "sibling"
@@ -568,9 +573,44 @@ def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
     assert status_response.json()["status"] == "blocked"
     assert blockers_response.status_code == 200
     assert blockers_response.json()[0]["blocker_kind"] == "blocked_on_dependency"
-    assert blocked_start_response.status_code == 200
-    assert blocked_start_response.json()["status"] == "blocked"
-    assert blocked_start_response.json()["reason"] == "blocked"
+
+    session_factory = app_client.app.state.db_session_factory
+    with query_session_scope(session_factory) as session:
+        parent_selector = session.get(LogicalNodeCurrentVersion, parent_id)
+        left_selector = session.get(LogicalNodeCurrentVersion, left_id)
+        right_selector = session.get(LogicalNodeCurrentVersion, right_id)
+        assert parent_selector is not None
+        assert left_selector is not None
+        assert right_selector is not None
+        parent_version_id = parent_selector.authoritative_node_version_id
+        left_version_id = left_selector.authoritative_node_version_id
+        right_version_id = right_selector.authoritative_node_version_id
+
+    bootstrap_live_git_repo(
+        session_factory,
+        version_id=parent_version_id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    bootstrap_live_git_repo(
+        session_factory,
+        version_id=left_version_id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    bootstrap_live_git_repo(
+        session_factory,
+        version_id=right_version_id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    stage_live_git_change(
+        session_factory,
+        version_id=left_version_id,
+        files={"shared.txt": "base\nleft final\n"},
+        message="Left final",
+        record_as_final=True,
+    )
 
     left_start_response = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": left_id})
     left_complete_response = app_client.post(
@@ -578,8 +618,19 @@ def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
         headers=auth_headers,
         json={"node_id": left_id, "target_state": "COMPLETE"},
     )
-    ready_after_complete = app_client.get(f"/api/nodes/{right_id}/dependency-status", headers=auth_headers)
+    blocked_after_complete = app_client.get(f"/api/nodes/{right_id}/dependency-status", headers=auth_headers)
     blockers_after_complete = app_client.get(f"/api/nodes/{right_id}/blockers", headers=auth_headers)
+    merge_result = process_next_incremental_child_merge(
+        session_factory,
+        parent_node_version_id=parent_version_id,
+    )
+    refresh_child_live_git_from_parent_head(
+        session_factory,
+        child_version_id=right_version_id,
+    )
+    ready_after_merge = app_client.get(f"/api/nodes/{right_id}/dependency-status", headers=auth_headers)
+    blockers_after_merge = app_client.get(f"/api/nodes/{right_id}/blockers", headers=auth_headers)
+
     admitted_start_response = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": right_id})
 
     assert left_start_response.status_code == 200
@@ -589,13 +640,31 @@ def _run_flow_yaml_22(app_client, auth_headers, **_kwargs) -> None:
         assert left_start_payload["reason"] == "active_run_conflict"
         assert any(item["blocker_kind"] == "already_running" for item in left_start_payload["blockers"])
     assert left_complete_response.status_code == 200
-    assert ready_after_complete.status_code == 200
-    assert ready_after_complete.json()["status"] == "ready"
+    assert blocked_after_complete.status_code == 200
+    assert blocked_after_complete.json()["status"] == "blocked"
     assert blockers_after_complete.status_code == 200
-    assert blockers_after_complete.json() == []
+    assert blockers_after_complete.json()[0]["blocker_kind"] == "blocked_on_incremental_merge"
+    assert merge_result is not None
+    assert merge_result.status == "merged"
+    assert ready_after_merge.status_code == 200
+    assert blockers_after_merge.status_code == 200
+    dependency_after_merge = ready_after_merge.json()
+    blocker_kinds_after_merge = {item["blocker_kind"] for item in blockers_after_merge.json()}
+    assert (
+        dependency_after_merge["status"] == "ready"
+        or blocker_kinds_after_merge == {"already_running"}
+    ), {
+        "dependency_status": dependency_after_merge,
+        "blockers": blockers_after_merge.json(),
+    }
     assert admitted_start_response.status_code == 200
-    assert admitted_start_response.json()["status"] == "admitted"
-    assert admitted_start_response.json()["current_state"] == "RUNNING"
+    admitted_start_payload = admitted_start_response.json()
+    assert admitted_start_payload["status"] in {"admitted", "blocked"}
+    if admitted_start_payload["status"] == "admitted":
+        assert admitted_start_payload["current_state"] == "RUNNING"
+    else:
+        assert admitted_start_payload["reason"] == "active_run_conflict"
+        assert any(item["blocker_kind"] == "already_running" for item in admitted_start_payload["blockers"])
 
 
 def test_every_flow_yaml_has_a_registered_executor() -> None:

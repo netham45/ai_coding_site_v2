@@ -428,6 +428,50 @@ body {
   gap: 10px;
 }
 
+.tree-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: rgba(244, 239, 231, 0.72);
+  font-size: 0.84rem;
+}
+
+.tree-breadcrumb__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-breadcrumb__link {
+  color: #f7cc90;
+  text-decoration: none;
+}
+
+.tree-breadcrumb__current {
+  color: #f4efe7;
+}
+
+.tree-breadcrumb__sep {
+  color: rgba(244, 239, 231, 0.42);
+}
+
+.tree-focus-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tree-focus-button {
+  width: 100%;
+}
+
+.tree-node-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
 .tree-node {
   display: flex;
   justify-content: space-between;
@@ -443,6 +487,23 @@ body {
 .tree-node--selected {
   border-color: rgba(240, 161, 91, 0.55);
   box-shadow: inset 0 0 0 1px rgba(240, 161, 91, 0.35);
+}
+
+.tree-node__toggle {
+  width: 28px;
+  min-width: 28px;
+  border: 1px solid rgba(244, 239, 231, 0.1);
+  border-radius: 10px;
+  background: rgba(13, 18, 27, 0.72);
+  color: #f4efe7;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tree-node__toggle--spacer {
+  display: grid;
+  place-items: center;
+  cursor: default;
 }
 
 .tree-node__main {
@@ -569,6 +630,63 @@ body {
 .detail-list--stacked {
   padding-left: 0;
   list-style: none;
+}
+
+.workflow-task-tree,
+.workflow-subtask-list,
+.workflow-attempt-list {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-task-group {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-task-toggle,
+.workflow-subtask-row,
+.workflow-attempt-row {
+  width: 100%;
+  border: 1px solid rgba(244, 239, 231, 0.08);
+  border-radius: 14px;
+  background: rgba(13, 18, 27, 0.7);
+  color: #f4efe7;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-task-toggle {
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.workflow-subtask-row,
+.workflow-attempt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+}
+
+.workflow-subtask-row--selected,
+.workflow-attempt-row--selected {
+  border-color: rgba(240, 161, 91, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(240, 161, 91, 0.3);
+}
+
+.workflow-subtask-row__main,
+.workflow-attempt-row__main {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.workflow-subtask-row__meta,
+.workflow-attempt-row__meta {
+  color: rgba(244, 239, 231, 0.64);
+  font-size: 0.84rem;
 }
 
 .prompt-history-item {

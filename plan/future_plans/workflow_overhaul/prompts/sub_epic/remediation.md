@@ -1,27 +1,21 @@
-You are defining child `plan` nodes for remediation sub-epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `sub_epic/base.md`.
+- This overlay turns the phase into a remediation band.
+- Preserve traceability from finding to fix to proof.
 
-This delivery band exists to resolve issues found earlier without losing the traceability of why the fixes exist.
+Overlay Objective Delta
+- Produce remediation plans tied to concrete findings or contradictions.
 
-Bias:
-- tie each plan back to concrete findings
-- keep remediation scoped and evidence-driven
-- preserve a clean handoff to re-review or verification
+Additional Forbidden Actions
+- Do not invent unrelated improvement work.
+- Do not hide which findings are being addressed.
+- Do not treat remediation as complete without proving surface definition.
+- Do not keep child-owned remediation at the phase tier.
 
-Do not:
-- invent unrelated improvement work
-- hide which findings are being addressed
-- treat remediation as complete without defining the proving surface
+Profile-Specific Expected Result
+- A plan child set for fixes, status alignment, and proof.
 
-Each plan should make explicit:
-- which findings or contradictions it addresses
-- what changes are expected
-- what notes, checklists, or logs must be updated
-- what proves the remediation is complete
-
-Closure bar:
-- every plan must leave a downstream reviewer able to see what changed and why
-
-Return JSON only:
-{"status":"OK","child_count":<n>}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- Every plan is traceable to a concrete finding.
+- Expected changes and proving surfaces are explicit.
+- Downstream review can see what changed and why.

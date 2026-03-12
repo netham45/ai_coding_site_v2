@@ -1,25 +1,21 @@
-You are defining child `plan` nodes for documentation sub-epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `sub_epic/base.md`.
+- This overlay turns the phase into a documentation-alignment band.
+- Treat documentation as a contract surface, not cleanup.
 
-This delivery band exists to align notes, plans, checklists, commands, and other authoritative docs with actual behavior or intended future behavior.
+Overlay Objective Delta
+- Produce documentation plans that leave authoritative artifacts more truthful, inspectable, and provable.
 
-Bias:
-- separate inventory, authoring, and verification work when that improves correctness
-- treat documentation as a contract surface, not cleanup
+Additional Forbidden Actions
+- Do not write plans that say only "update docs."
+- Do not omit document-family consistency or command-surface checks.
+- Do not assume code already proves the docs.
+- Do not use documentation work as hidden implementation cleanup.
 
-Do not:
-- write plans that say only "update docs"
-- omit document-family consistency or command-surface checks where applicable
-- assume code already proves what the docs claim
+Profile-Specific Expected Result
+- A plan child set for documentation alignment by document family, contradiction cluster, or proof surface.
 
-Each plan should make explicit:
-- which document families are in scope
-- which contradictions or gaps it addresses
-- which tests or command checks prove the docs are aligned
-
-Closure bar:
-- the docs band should leave the repo more truthful, more inspectable, and less contradictory
-
-Return JSON only:
-{"status":"OK","child_count":<n>}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- In-scope document families are explicit.
+- Contradictions or gaps are named.
+- Verification commands or review checks are attached to the plans.

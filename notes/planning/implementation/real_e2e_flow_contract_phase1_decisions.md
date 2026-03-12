@@ -8,6 +8,29 @@ This note exists because the earlier flow suites used `fastapi.testclient.TestCl
 and daemon-bridge helpers, which are useful bounded integration tests but do not
 meet the repository's own "real end to end" standard.
 
+## Status Correction As Of 2026-03-12
+
+This note is no longer sufficient as a current-state summary for the repository's
+real-E2E status.
+
+Later audits and reruns invalidated the stronger implied reading of some claims
+below:
+
+- not every file in `tests/e2e/` is currently a full-real workflow proof
+- some E2E narratives still rely on operator/test-side progression shortcuts
+- the child-session mergeback path is still failing in real tmux/provider runs
+- canonical checkpoint commands do not yet uniformly prove AI-created descendant
+  workflows end to end
+
+Use these current sources for the authoritative gap posture instead:
+
+- `plan/checklists/16_e2e_real_runtime_gap_closure.md`
+- `plan/tasks/2026-03-12_full_real_e2e_workflow_enforcement.md`
+- `notes/logs/doc_updates/2026-03-12_full_real_e2e_workflow_enforcement.md`
+
+Nothing in this note should be interpreted as permission to count simulated or
+operator-driven workflow progression as full real E2E.
+
 ## What is now implemented
 
 - repository-wide pytest markers for real end-to-end flow work:
@@ -187,7 +210,7 @@ in-process catalog injection.
 
 What is still not complete:
 
-- live git working-tree ownership is still not yet rooted in the same product-owned workspace contract
+- live git working-tree ownership is still not yet fully unified around one product-owned workspace contract for every runtime consumer, even though primary-session execution cwd can now prefer the authoritative node runtime repo when it exists
 - live Codex task execution still needs stronger runtime guidance so the session records durable task progress through the intended CLI/runtime contract rather than drifting into generic repo or CLI exploration
 
 ## Consequence for later phases

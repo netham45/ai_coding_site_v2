@@ -67,7 +67,7 @@ def test_create_migrate_and_drop_test_database() -> None:
 
         engine = create_engine(database_url, pool_pre_ping=True)
         try:
-            assert current_alembic_revision(engine) == "0029_incr_parent_merge_state"
+            assert current_alembic_revision(engine) == "0030_live_runtime_binding"
         finally:
             engine.dispose()
     finally:

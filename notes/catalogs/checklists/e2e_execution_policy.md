@@ -29,10 +29,10 @@ Expected use:
 Canonical command ladder:
 
 ```bash
-python3 -m pytest tests/unit
-python3 -m pytest tests/integration
-python3 -m pytest tests/integration/test_flow_contract_suite.py -q
-python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/unit
+PYTHONPATH=src python3 -m pytest tests/integration
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
 ```
 
 Claim boundary:
@@ -52,16 +52,16 @@ Expected use:
 Expected command ladder:
 
 ```bash
-python3 -m aicoding.cli.main admin db ping
-python3 -m aicoding.cli.main admin db heads
-python3 -m aicoding.cli.main admin db upgrade
-python3 -m aicoding.cli.main admin db check-schema
-python3 -m pytest tests/unit
-python3 -m pytest tests/integration
-python3 -m pytest tests/integration/test_flow_contract_suite.py -q
-python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
-python3 -m pytest tests/performance/test_harness.py -q
-python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
+PYTHONPATH=src python3 -m aicoding.cli.main admin db ping
+PYTHONPATH=src python3 -m aicoding.cli.main admin db heads
+PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade
+PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema
+PYTHONPATH=src python3 -m pytest tests/unit
+PYTHONPATH=src python3 -m pytest tests/integration
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q
+PYTHONPATH=src python3 -m pytest tests/performance/test_harness.py -q
+PYTHONPATH=src python3 -m pytest tests/unit tests/integration tests/performance -n auto --dist=loadfile -q
 ```
 
 Environment expectation:
@@ -85,17 +85,34 @@ Expected use:
 - feature-family hardening
 - pre-release reality checks
 
-Current real-E2E command set:
+Current passing full-real E2E checkpoint set:
 
 ```bash
-python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q
-python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q
-python3 -m pytest tests/e2e/test_flow_03_materialize_and_schedule_children_real.py -q
-python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q
-python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
-python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
-python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
-python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_web_project_top_level_bootstrap_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_web_project_top_level_browser_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_03_materialize_and_schedule_children_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_operator_cli_surface.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q
+```
+
+Current non-canonical real-runtime bring-up targets:
+
+These use the real runtime harness and remain important, but they must not be
+treated as passing full-real E2E checkpoints until their workflows satisfy the
+live-run-equivalence rule from `AGENTS.md`.
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_automated_full_tree_cat_runtime_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q
+PYTHONPATH=src python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q
 ```
 
 Current runtime policy:
@@ -104,8 +121,10 @@ Current runtime policy:
 - the real E2E harness now creates one database per test, so DB-backed execution is isolated at the database layer
 - the real E2E harness now uses a per-test `TMUX_TMPDIR` namespace so default-server tmux state is not shared across tests
 - the real E2E harness now reserves the daemon listener socket before process launch and hands that socket to Uvicorn, so parallel startup no longer relies on a free-port probe race
+- the website repo-backed project-start browser checkpoint now runs Playwright against the daemon-served compiled frontend rather than the mock-daemon matrix
 - parallel execution is no longer blocked by the old shared-database fixture
 - staged or selective execution may still be used while diagnosing failures or when explicit environment capabilities are absent, but any eligible test that fails only because of parallel execution remains a defect to fix
+- a real harness alone is not enough for canonical E2E status; any workflow that still relies on synthetic progression, lifecycle forcing, or operator/test-side substitutes belongs in the non-canonical bring-up set until rewritten
 
 Additional gated markers:
 
@@ -117,6 +136,7 @@ Claim boundary:
 
 - passing a real-E2E checkpoint can support `flow_complete` for the exact narrative it proves
 - it does not automatically upgrade adjacent features or broader families beyond the documented scope
+- non-canonical bring-up targets do not support `flow_complete`, `verified`, or “fully real E2E” claims for their workflow until they pass with no synthetic workflow steps
 
 ### Tier 4: Release-Readiness Review
 

@@ -35,3 +35,9 @@ Read these together with:
 - `../2026-03-10_workflow_profile_definition_schema_draft.md`
 - `../starter_workflow_profiles/`
 - `../2026-03-10_proposed_note_and_code_updates.md`
+
+These examples should be read as inputs to a rigid workflow model:
+
+- layouts describe the intended child structure
+- the compiler and daemon enforce required step order and completion predicates from that structure
+- parent nodes should not bypass missing child work by merging or completing directly

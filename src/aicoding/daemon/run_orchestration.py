@@ -13,6 +13,7 @@ from aicoding.daemon.incremental_parent_merge import record_completed_child_for_
 from aicoding.daemon.history import record_prompt_delivery, record_summary_history
 from aicoding.daemon.environments import build_execution_environment
 from aicoding.daemon.review_runtime import evaluate_review_subtask
+from aicoding.daemon.session_manager import current_stage_prompt_cli_command
 from aicoding.daemon.testing_runtime import evaluate_testing_subtask
 from aicoding.daemon.validation_runtime import evaluate_validation_subtask
 from aicoding.daemon.workflow_events import record_workflow_event
@@ -28,6 +29,8 @@ from aicoding.db.models import (
     NodeRunState,
     NodeVersion,
     PromptRecord,
+    Session as DurableSession,
+    SessionEvent,
     SummaryRecord,
     SubtaskAttempt,
 )
@@ -147,6 +150,7 @@ class RunProgressSnapshot:
     state: NodeRunStateSnapshot
     current_subtask: dict[str, object] | None
     latest_attempt: SubtaskAttemptSnapshot | None
+    terminal_failure: dict[str, object] | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -154,6 +158,7 @@ class RunProgressSnapshot:
             "state": self.state.to_payload(),
             "current_subtask": self.current_subtask,
             "latest_attempt": None if self.latest_attempt is None else self.latest_attempt.to_payload(),
+            "terminal_failure": self.terminal_failure,
         }
 
 
@@ -315,7 +320,10 @@ def load_current_run_progress(session_factory: sessionmaker[Session], *, logical
         version = _authoritative_version(session, logical_node_id)
         run = _active_run_for_version(session, version.id)
         if run is None:
-            raise DaemonNotFoundError("active node run not found")
+            latest_failure = _latest_failed_supervision_context(session, version.id)
+            if latest_failure is None:
+                raise DaemonNotFoundError("active node run not found")
+            return _progress_snapshot_with_failure(session, latest_failure["run"].id, terminal_failure=latest_failure["terminal_failure"])
         return _progress_snapshot(session, run.id)
 
 
@@ -489,6 +497,7 @@ def load_current_subtask_prompt(session_factory: sessionmaker[Session], *, logic
 
 
 def _synthesized_command_subtask_prompt(*, logical_node_id: UUID, subtask: CompiledSubtask) -> str:
+    prompt_command = current_stage_prompt_cli_command(logical_node_id=logical_node_id)
     result_path = "summaries/command_result.json"
     failure_path = "summaries/command_failure.md"
     output_instructions = [
@@ -511,7 +520,7 @@ def _synthesized_command_subtask_prompt(*, logical_node_id: UUID, subtask: Compi
                 "6. Report the command result even when the exit code is non-zero, because the daemon-owned validation/testing gate decides pass or fail:",
                 f"   - `python3 -m aicoding.cli.main subtask report-command --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file {result_path}`",
                 "7. If the returned outcome still leaves a current compiled subtask, fetch the next prompt with:",
-                f"   - `python3 -m aicoding.cli.main subtask prompt --node {logical_node_id}`",
+                f"   - `{prompt_command}`",
                 "8. Do not stop while a later workflow stage is available in the same session.",
             ]
         )
@@ -522,7 +531,7 @@ def _synthesized_command_subtask_prompt(*, logical_node_id: UUID, subtask: Compi
                 "7. Report the command result and let the daemon route the workflow:",
                 f"   - `python3 -m aicoding.cli.main subtask report-command --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file {result_path} --failure-summary-file {failure_path}`",
                 "8. If the returned outcome is `next_stage`, fetch the next prompt with:",
-                f"   - `python3 -m aicoding.cli.main subtask prompt --node {logical_node_id}`",
+                f"   - `{prompt_command}`",
                 "9. Do not stop while a later workflow stage is available in the same session.",
             ]
         )
@@ -1024,6 +1033,59 @@ def sync_resumed_run(session_factory: sessionmaker[Session], *, logical_node_id:
         return _progress_snapshot(session, run.id)
 
 
+def sync_failed_run(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    failure_summary: str,
+    failure_reason: str,
+) -> RunProgressSnapshot:
+    failed_at = datetime.now(timezone.utc)
+    with session_scope(session_factory) as session:
+        run, state, version = _load_active_run_bundle(session, logical_node_id)
+        failed_attempt_id: UUID | None = None
+        if state.current_compiled_subtask_id is not None:
+            latest_attempt = _latest_attempt(session, run.id, state.current_compiled_subtask_id)
+            if latest_attempt is not None and latest_attempt.status == "RUNNING":
+                latest_attempt.status = "FAILED"
+                latest_attempt.summary = failure_summary
+                latest_attempt.ended_at = failed_at
+                output_json = dict(latest_attempt.output_json or {})
+                output_json["session_failure_reason"] = failure_reason
+                output_json["session_failure_summary"] = failure_summary
+                latest_attempt.output_json = output_json
+                failed_attempt_id = latest_attempt.id
+        run.run_status = "FAILED"
+        run.ended_at = failed_at
+        run.summary = failure_summary
+        state.lifecycle_state = "FAILED_TO_PARENT"
+        state.pause_flag_name = None
+        state.is_resumable = False
+        state.failure_count_consecutive += 1
+        cursor = dict(state.execution_cursor_json or {})
+        cursor.pop(APPROVED_PAUSE_FLAGS_KEY, None)
+        cursor.pop(PAUSE_CONTEXT_KEY, None)
+        cursor["session_failure"] = {
+            "failed_at": failed_at.isoformat(),
+            "reason": failure_reason,
+            "summary": failure_summary,
+            "failed_attempt_id": None if failed_attempt_id is None else str(failed_attempt_id),
+        }
+        state.execution_cursor_json = cursor
+        record_workflow_event(
+            session,
+            logical_node_id=logical_node_id,
+            node_version_id=version.id,
+            node_run_id=run.id,
+            event_scope="run",
+            event_type="run_failed",
+            payload_json=dict(cursor["session_failure"]),
+        )
+        _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
+        session.flush()
+        return _progress_snapshot(session, run.id)
+
+
 def cancel_active_run(
     session_factory: sessionmaker[Session],
     *,
@@ -1155,6 +1217,10 @@ def retry_current_subtask(
 
 
 def _progress_snapshot(session: Session, run_id: UUID) -> RunProgressSnapshot:
+    return _progress_snapshot_with_failure(session, run_id, terminal_failure=None)
+
+
+def _progress_snapshot_with_failure(session: Session, run_id: UUID, *, terminal_failure: dict[str, object] | None) -> RunProgressSnapshot:
     run = session.get(NodeRun, run_id)
     if run is None:
         raise DaemonNotFoundError("node run not found")
@@ -1172,6 +1238,7 @@ def _progress_snapshot(session: Session, run_id: UUID) -> RunProgressSnapshot:
         state=_state_snapshot(state),
         current_subtask=_current_subtask_payload(session, state.current_compiled_subtask_id),
         latest_attempt=None if latest_attempt is None else _attempt_snapshot(latest_attempt),
+        terminal_failure=terminal_failure,
     )
 
 
@@ -1724,6 +1791,11 @@ def _load_active_run_bundle(session: Session, logical_node_id: UUID) -> tuple[No
     version = _authoritative_version(session, logical_node_id)
     run = _active_run_for_version(session, version.id)
     if run is None:
+        latest_failure = _latest_failed_supervision_context(session, version.id)
+        if latest_failure is not None:
+            raise DaemonConflictError(
+                "latest run failed after session supervision recovery failure; inspect node run show, session show, or node recovery-status instead of probing the closed run"
+            )
         raise DaemonNotFoundError("active node run not found")
     state = session.get(NodeRunState, run.id)
     if state is None:
@@ -1776,10 +1848,54 @@ def _latest_retryable_run_for_version(session: Session, node_version_id: UUID) -
     ).scalars().first()
 
 
+def _latest_failed_supervision_context(session: Session, node_version_id: UUID) -> dict[str, object] | None:
+    latest_run = session.execute(
+        select(NodeRun).where(NodeRun.node_version_id == node_version_id).order_by(NodeRun.run_number.desc())
+    ).scalars().first()
+    if latest_run is None or latest_run.run_status != "FAILED":
+        return None
+    state = session.get(NodeRunState, latest_run.id)
+    if state is None:
+        return None
+    failure_row = session.execute(
+        select(SessionEvent, DurableSession)
+        .join(DurableSession, SessionEvent.session_id == DurableSession.id)
+        .where(
+            DurableSession.node_run_id == latest_run.id,
+            DurableSession.session_role == "primary",
+            SessionEvent.event_type == "supervision_recovery_failed",
+        )
+        .order_by(SessionEvent.created_at.desc())
+    ).first()
+    if failure_row is None:
+        return None
+    failure_event, failed_session = failure_row
+    payload = dict(failure_event.payload_json or {})
+    return {
+        "run": latest_run,
+        "state": state,
+        "session": failed_session,
+        "terminal_failure": {
+            "failure_origin": "session_supervision",
+            "failure_event_type": failure_event.event_type,
+            "failure_reason": payload.get("reason"),
+            "failure_summary": payload.get("failure_summary") or latest_run.summary,
+            "error_type": payload.get("error_type"),
+            "failed_run_id": str(latest_run.id),
+            "failed_session_id": str(failed_session.id),
+            "run_status": latest_run.run_status,
+            "lifecycle_state": state.lifecycle_state,
+            "session_status": failed_session.status,
+            "recommended_action": "inspect_failed_run",
+        },
+    }
+
+
 def _sync_lifecycle_with_run(session: Session, *, logical_node_id: UUID, run: NodeRun, state: NodeRunState) -> None:
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     if lifecycle is None:
         raise DaemonNotFoundError("node lifecycle record not found")
+    lifecycle.node_version_id = run.node_version_id
     lifecycle.current_run_id = run.id
     lifecycle.lifecycle_state = state.lifecycle_state
     lifecycle.run_status = run.run_status

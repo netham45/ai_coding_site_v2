@@ -8,6 +8,10 @@ export function getNodeLineage(nodeId) {
   return apiClient.get(`/nodes/${nodeId}/lineage`);
 }
 
+export function getNodeAncestors(nodeId) {
+  return apiClient.get(`/nodes/${nodeId}/ancestors`);
+}
+
 export function getNodeSources(nodeId) {
   return apiClient.get(`/nodes/${nodeId}/sources`);
 }

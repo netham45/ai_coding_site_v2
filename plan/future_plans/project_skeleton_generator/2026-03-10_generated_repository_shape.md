@@ -4,6 +4,8 @@
 
 Describe the target skeleton that the future generator should render for a fresh project.
 
+The same shape should also be reviewable as a standalone starter repository that users can clone directly.
+
 ## Top-Level Structure
 
 Suggested initial tree:
@@ -35,6 +37,10 @@ tests/e2e/
 
 This should be the minimal disciplined layout, not the final mature layout.
 
+The concrete draft of this shape now exists under:
+
+- `plan/future_plans/project_skeleton_generator/draft_repo/`
+
 ## Seed Files
 
 The generator should create these files on day zero:
@@ -57,17 +63,32 @@ The generator should create these files on day zero:
 - `notes/catalogs/checklists/verification_command_catalog.md`
 - `notes/catalogs/checklists/feature_checklist_standard.md`
 - `notes/catalogs/checklists/e2e_execution_policy.md`
+- `notes/catalogs/checklists/authoritative_document_family_inventory.md`
+- `notes/catalogs/checklists/document_schema_rulebook.md`
+- `notes/catalogs/checklists/document_schema_test_policy.md`
 - `notes/catalogs/inventory/system_inventory.md`
+- `notes/catalogs/inventory/major_feature_inventory.md`
+- `notes/catalogs/traceability/spec_traceability_matrix.md`
+- `notes/catalogs/traceability/relevant_user_flow_inventory.yaml`
 - `notes/catalogs/audit/flow_coverage_checklist.md`
+- `notes/specs/architecture/code_vs_config_delineation.md`
+- `notes/specs/architecture/authority_and_api_model.md`
+- `notes/specs/prompts/prompt_library_plan.md`
+- `notes/explorations/original_concept.md`
+- `notes/explorations/initial_risks_and_unknowns.md`
 - `plan/tasks/<date>_project_bootstrap.md`
 - `notes/logs/setup/<date>_project_bootstrap.md`
 - `plan/checklists/00_project_bootstrap_readiness.md`
 
 ## Generated AGENTS Shape
 
-The generated `AGENTS.md` should be assembled from reusable blocks.
+The generated or starter-repo `AGENTS.md` should be assembled from reusable blocks.
 
 The future-plan bundle should also carry a rendered example of the starter `AGENTS.md` so the intended balance between global doctrine and stage-specific delegation is reviewable before implementation. See `2026-03-10_rendered_agents_template.md`.
+
+The current richer example now lives at:
+
+- `draft_repo/AGENTS.md`
 
 ### Base required blocks
 
@@ -77,14 +98,14 @@ The future-plan bundle should also carry a rendered example of the starter `AGEN
 - stage-adherence rule
 - testing progression rule
 - completion vocabulary
-- stack defaults
+- stack-declaration rule
 
 ### Parameterized blocks
 
 - project name
 - project mission
 - declared primary systems
-- language and framework defaults
+- declared stack decisions once the project has actually made them
 - any project-specific forbidden shortcuts
 
 ### Optional blocks
@@ -126,6 +147,8 @@ Each starter file should contain:
 - what the next real upgrade path is
 
 This matters because an empty but unexplained folder tree will drift immediately.
+
+The draft starter repo should therefore include a more fleshed out `notes/` tree than the earliest minimal theory version.
 
 ## Checklist Model
 

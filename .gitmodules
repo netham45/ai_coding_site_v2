@@ -1,0 +1,3 @@
+[submodule "ai_project_skeleton"]
+	path = ai_project_skeleton
+	url = https://github.com/netham45/ai_project_skeleton.git

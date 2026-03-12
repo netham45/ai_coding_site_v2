@@ -8,6 +8,15 @@ This is a working-note draft for the workflow-overhaul bundle.
 
 It is not an adopted implementation.
 
+The future response models should also carry rigid-enforcement state where that state matters to operator decisions.
+
+That includes compact fields for:
+
+- `decomposition_required`
+- `completion_restrictions`
+- `blocked_actions`
+- current-step or next-legal-step summaries
+
 ## Goal
 
 The goal of this note is to reduce the gap between:

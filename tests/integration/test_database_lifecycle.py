@@ -37,13 +37,13 @@ def test_migrations_are_repeatable(db_engine) -> None:
 
     reset_public_schema(db_engine)
     command.upgrade(config, "head")
-    assert current_alembic_revision(db_engine) == "0029_incr_parent_merge_state"
+    assert current_alembic_revision(db_engine) == "0030_live_runtime_binding"
 
     command.downgrade(config, "base")
     assert current_alembic_revision(db_engine) is None
 
     command.upgrade(config, "head")
-    assert current_alembic_revision(db_engine) == "0029_incr_parent_merge_state"
+    assert current_alembic_revision(db_engine) == "0030_live_runtime_binding"
 
 
 def test_fixture_reset_clears_bootstrap_tables(db_engine) -> None:
@@ -73,7 +73,7 @@ def test_fixture_reset_clears_bootstrap_tables(db_engine) -> None:
     assert "latest_code_relations" in inspect(db_engine).get_view_names()
     with db_engine.connect() as connection:
         assert connection.execute(text("select version_num from public.alembic_version")).scalar_one() == (
-            "0029_incr_parent_merge_state"
+            "0030_live_runtime_binding"
         )
         assert connection.execute(text("select count(*) from public.yaml_schema_validation_records")).scalar_one() == 0
 
@@ -105,7 +105,7 @@ def test_migration_status_reports_uninitialized_then_up_to_date(db_engine) -> No
     before = migration_status(db_engine, config)
     assert before == {
         "current_revision": None,
-        "expected_revision": "0029_incr_parent_merge_state",
+        "expected_revision": "0030_live_runtime_binding",
         "status": "uninitialized",
         "compatible": False,
     }
@@ -114,8 +114,8 @@ def test_migration_status_reports_uninitialized_then_up_to_date(db_engine) -> No
 
     after = migration_status(db_engine, config)
     assert after == {
-        "current_revision": "0029_incr_parent_merge_state",
-        "expected_revision": "0029_incr_parent_merge_state",
+        "current_revision": "0030_live_runtime_binding",
+        "expected_revision": "0030_live_runtime_binding",
         "status": "up_to_date",
         "compatible": True,
     }

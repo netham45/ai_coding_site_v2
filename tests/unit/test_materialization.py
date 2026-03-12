@@ -13,11 +13,14 @@ from aicoding.daemon.materialization import (
     _child_prompt_from_layout,
     _validate_layout_children,
     inspect_materialized_children,
+    inspect_child_reconciliation,
     materialize_layout_children,
+    reconcile_child_authority,
     register_generated_layout,
 )
-from aicoding.daemon.versioning import initialize_node_version
-from aicoding.db.models import NodeChild, NodeDependency, NodeVersion, ParentChildAuthority
+from aicoding.daemon.regeneration import _record_rebuild_event
+from aicoding.daemon.versioning import create_superseding_node_version, initialize_node_version
+from aicoding.db.models import LogicalNodeCurrentVersion, NodeChild, NodeDependency, NodeVersion, ParentChildAuthority
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -316,3 +319,120 @@ def test_validate_layout_children_rejects_cycles() -> None:
                 {"id": "second", "ordinal": 2, "dependencies": ["first"]},
             ]
         )
+
+
+def test_inspect_child_reconciliation_exposes_preserve_manual_for_empty_dependency_invalidated_restart(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="boot prompt")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    phase = create_hierarchy_node(db_session_factory, registry, kind="phase", title="Phase", prompt="phase", parent_node_id=parent.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(phase.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+
+    first = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=phase.node_id)
+    superseding = create_superseding_node_version(db_session_factory, logical_node_id=phase.node_id, clone_structure=False)
+    with session_scope(db_session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, phase.node_id)
+        assert selector is not None
+        old_version = session.get(NodeVersion, first.parent_node_version_id)
+        new_version = session.get(NodeVersion, superseding.id)
+        authority = session.get(ParentChildAuthority, first.parent_node_version_id)
+        assert old_version is not None
+        assert new_version is not None
+        assert authority is not None
+        authority.authority_mode = "manual"
+        authority.authoritative_layout_hash = None
+        old_version.status = "superseded"
+        new_version.status = "authoritative"
+        selector.authoritative_node_version_id = superseding.id
+        selector.latest_created_node_version_id = superseding.id
+        session.flush()
+    _record_rebuild_event(
+        db_session_factory,
+        root_logical_node_id=phase.node_id,
+        root_node_version_id=superseding.id,
+        target_node_version_id=superseding.id,
+        event_kind="candidate_created",
+        event_status="pending",
+        scope="subtree",
+        trigger_reason="test_manual_rebuild_surface",
+        details_json={"supersedes_node_version_id": str(first.parent_node_version_id), "fresh_dependency_restart": True},
+    )
+
+    inspection = inspect_child_reconciliation(db_session_factory, catalog, logical_node_id=phase.node_id)
+
+    assert inspection.parent_node_version_id == superseding.id
+    assert inspection.authority_mode == "manual"
+    assert inspection.materialization_status == "reconciliation_required"
+    assert inspection.available_decisions == ["preserve_manual"]
+    assert inspection.manual_child_count == 0
+    assert inspection.layout_generated_child_count == 0
+    assert inspection.children == []
+
+
+def test_reconcile_child_authority_allows_empty_dependency_invalidated_manual_restart(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="boot prompt")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    phase = create_hierarchy_node(db_session_factory, registry, kind="phase", title="Phase", prompt="phase", parent_node_id=parent.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(phase.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+
+    first = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=phase.node_id)
+    superseding = create_superseding_node_version(db_session_factory, logical_node_id=phase.node_id, clone_structure=False)
+    with session_scope(db_session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, phase.node_id)
+        assert selector is not None
+        old_version = session.get(NodeVersion, first.parent_node_version_id)
+        new_version = session.get(NodeVersion, superseding.id)
+        authority = session.get(ParentChildAuthority, first.parent_node_version_id)
+        assert old_version is not None
+        assert new_version is not None
+        assert authority is not None
+        authority.authority_mode = "manual"
+        authority.authoritative_layout_hash = None
+        old_version.status = "superseded"
+        new_version.status = "authoritative"
+        selector.authoritative_node_version_id = superseding.id
+        selector.latest_created_node_version_id = superseding.id
+        session.flush()
+    _record_rebuild_event(
+        db_session_factory,
+        root_logical_node_id=phase.node_id,
+        root_node_version_id=superseding.id,
+        target_node_version_id=superseding.id,
+        event_kind="candidate_created",
+        event_status="pending",
+        scope="subtree",
+        trigger_reason="test_manual_rebuild_surface",
+        details_json={"supersedes_node_version_id": str(first.parent_node_version_id), "fresh_dependency_restart": True},
+    )
+
+    reconciled = reconcile_child_authority(
+        db_session_factory,
+        catalog,
+        logical_node_id=phase.node_id,
+        decision="preserve_manual",
+    )
+    inspected = inspect_materialized_children(
+        db_session_factory,
+        catalog,
+        logical_node_id=phase.node_id,
+    )
+
+    assert reconciled.parent_node_version_id == superseding.id
+    assert reconciled.authority_mode == "manual"
+    assert reconciled.materialization_status == "manual"
+    assert reconciled.available_decisions == ["preserve_manual"]
+    assert inspected.parent_node_version_id == superseding.id
+    assert inspected.authority_mode == "manual"
+    assert inspected.status == "manual"
+    assert inspected.child_count == 0

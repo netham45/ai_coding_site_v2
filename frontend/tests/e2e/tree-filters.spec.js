@@ -63,15 +63,23 @@ test("tree filter panel supports lifecycle, kind, blocked-only, active-only, and
   await page.goto("/projects/repo_alpha/nodes/node-root/overview");
 
   await expect(page.getByTestId("tree-filter-panel")).toBeVisible();
+  await expect(page.getByTestId("tree-toggle-node-root")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-root")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-phase-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-plan-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-task-2")).toBeVisible();
+  await expect(page.getByTestId("tree-node-node-subtask-1")).toHaveCount(0);
+
+  await page.getByTestId("tree-toggle-node-phase-1").click();
+  await expect(page.getByTestId("tree-node-node-subtask-1")).toBeVisible();
+
+  await page.getByTestId("tree-toggle-node-phase-1").click();
+  await expect(page.getByTestId("tree-node-node-subtask-1")).toHaveCount(0);
 
   await page.getByTestId("tree-filter-lifecycle").selectOption("COMPLETE");
   await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
-  await expect(page.getByTestId("tree-node-node-root")).toHaveCount(0);
+  await expect(page.getByTestId("tree-node-node-root")).toBeVisible();
   await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-root\/overview$/);
 
   await page.getByTestId("tree-filter-lifecycle").selectOption("");
@@ -82,6 +90,7 @@ test("tree filter panel supports lifecycle, kind, blocked-only, active-only, and
   await page.getByTestId("tree-filter-kind").selectOption("");
   await page.getByTestId("tree-filter-blocked-only").check();
   await expect(page.getByTestId("tree-node-node-phase-1")).toBeVisible();
+  await expect(page.getByTestId("tree-node-node-subtask-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-plan-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-task-2")).toHaveCount(0);
 
@@ -95,4 +104,17 @@ test("tree filter panel supports lifecycle, kind, blocked-only, active-only, and
   await page.getByTestId("tree-filter-input").fill("React");
   await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
   await expect(page.getByTestId("tree-node-node-task-2")).toHaveCount(0);
+
+  await page.goto("/projects/repo_alpha/nodes/node-phase-1/overview");
+  await expect(page.getByTestId("tree-breadcrumb-link-node-root")).toBeVisible();
+  await expect(page.getByTestId("tree-focus-selected-subtree")).toBeVisible();
+  await page.getByTestId("tree-focus-selected-subtree").click();
+  await expect(page.getByTestId("tree-reset-subtree-focus")).toBeVisible();
+  await expect(page.getByTestId("tree-node-node-phase-1")).toBeVisible();
+  await expect(page.getByTestId("tree-node-node-plan-1")).toHaveCount(0);
+  await expect(page.getByTestId("tree-node-node-task-1")).toHaveCount(0);
+
+  await page.getByTestId("tree-reset-subtree-focus").click();
+  await expect(page.getByTestId("tree-node-node-plan-1")).toBeVisible();
+  await expect(page.getByTestId("tree-node-node-task-1")).toBeVisible();
 });

@@ -9,11 +9,43 @@ from aicoding.daemon.admission import NodeRunAdmissionSnapshot, admit_node_run
 from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.lifecycle import load_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.manual_tree import ManualNodeCreationSnapshot, create_manual_node
+from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
+from aicoding.daemon.session_records import bind_primary_session
 from aicoding.daemon.run_orchestration import RunProgressSnapshot, load_current_run_progress
 from aicoding.daemon.workflows import WorkflowCompileAttemptSnapshot, compile_node_workflow
 from aicoding.hierarchy import HierarchyRegistry
 from aicoding.resources import ResourceCatalog
 from aicoding.source_lineage import capture_node_version_source_lineage
+
+
+def _session_state_payload(snapshot) -> dict[str, object]:
+    return {
+        "backend": snapshot.backend,
+        "session_name": snapshot.tmux_session_name,
+        "status": snapshot.status.lower(),
+        "session_id": str(snapshot.session_id),
+        "logical_node_id": str(snapshot.logical_node_id),
+        "node_run_id": None if snapshot.node_run_id is None else str(snapshot.node_run_id),
+        "node_version_id": str(snapshot.node_version_id),
+        "node_kind": snapshot.node_kind,
+        "node_title": snapshot.node_title,
+        "run_status": snapshot.run_status,
+        "session_role": snapshot.session_role,
+        "provider": snapshot.provider,
+        "provider_session_id": snapshot.provider_session_id,
+        "cwd": snapshot.cwd,
+        "tmux_session_exists": snapshot.tmux_session_exists,
+        "attach_command": snapshot.attach_command,
+        "last_heartbeat_at": snapshot.last_heartbeat_at,
+        "event_count": snapshot.event_count,
+        "latest_event_type": snapshot.latest_event_type,
+        "recovery_classification": snapshot.recovery_classification,
+        "pane_text": snapshot.pane_text,
+        "idle_seconds": snapshot.idle_seconds,
+        "in_alt_screen": snapshot.in_alt_screen,
+        "screen_state": snapshot.screen_state,
+        "recommended_action": snapshot.recommended_action,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +59,7 @@ class WorkflowStartSnapshot:
     lifecycle: dict[str, object]
     run_admission: dict[str, object] | None
     run_progress: dict[str, object] | None
+    session: dict[str, object] | None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -39,6 +72,7 @@ class WorkflowStartSnapshot:
             "lifecycle": self.lifecycle,
             "run_admission": self.run_admission,
             "run_progress": self.run_progress,
+            "session": self.session,
         }
 
 
@@ -51,6 +85,8 @@ def start_top_level_workflow(
     prompt: str,
     title: str | None = None,
     start_run: bool = True,
+    adapter: SessionAdapter | None = None,
+    poller: SessionPoller | None = None,
 ) -> WorkflowStartSnapshot:
     definition = hierarchy_registry.get(kind)
     if not definition.parent_constraints.allow_parentless:
@@ -78,6 +114,7 @@ def start_top_level_workflow(
     lifecycle = load_node_lifecycle(session_factory, str(creation.node.node_id))
     run_admission: NodeRunAdmissionSnapshot | None = None
     run_progress: RunProgressSnapshot | None = None
+    session_payload: dict[str, object] | None = None
     status = "compile_failed"
 
     if compile_attempt.status == "compiled":
@@ -95,6 +132,15 @@ def start_top_level_workflow(
             )
             if run_admission.status == "admitted":
                 run_progress = load_current_run_progress(session_factory, logical_node_id=creation.node.node_id)
+                if adapter is not None and poller is not None:
+                    session_payload = _session_state_payload(
+                        bind_primary_session(
+                            session_factory,
+                            logical_node_id=creation.node.node_id,
+                            adapter=adapter,
+                            poller=poller,
+                        )
+                    )
                 lifecycle = load_node_lifecycle(session_factory, str(creation.node.node_id))
                 status = "started"
             else:
@@ -111,6 +157,7 @@ def start_top_level_workflow(
         lifecycle=lifecycle.to_payload(),
         run_admission=None if run_admission is None else run_admission.to_payload(),
         run_progress=None if run_progress is None else run_progress.to_payload(),
+        session=session_payload,
     )
 
 

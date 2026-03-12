@@ -9,17 +9,17 @@ def test_verification_command_catalog_defines_current_command_families() -> None
     text = CATALOG_PATH.read_text(encoding="utf-8")
 
     for snippet in [
-        "python3 -m aicoding.cli.main admin db ping",
-        "python3 -m aicoding.cli.main admin db heads",
-        "python3 -m aicoding.cli.main admin db upgrade",
-        "python3 -m aicoding.cli.main admin db check-schema",
-        "python3 -m pytest tests/unit",
-        "python3 -m pytest tests/integration",
-        "python3 -m pytest tests/integration/test_flow_contract_suite.py -q",
-        "python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q",
-        "python3 -m pytest tests/performance/test_harness.py -q",
-        "python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q",
-        "python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q",
+        "PYTHONPATH=src python3 -m aicoding.cli.main admin db ping",
+        "PYTHONPATH=src python3 -m aicoding.cli.main admin db heads",
+        "PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade",
+        "PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema",
+        "PYTHONPATH=src python3 -m pytest tests/unit",
+        "PYTHONPATH=src python3 -m pytest tests/integration",
+        "PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q",
+        "PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q",
+        "PYTHONPATH=src python3 -m pytest tests/performance/test_harness.py -q",
+        "PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q",
+        "PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q",
     ]:
         assert snippet in text
 
@@ -49,7 +49,7 @@ def test_du02_plan_records_its_current_outputs_and_command() -> None:
 
     assert "## Current DU-02 Outputs" in text
     assert "notes/catalogs/checklists/verification_command_catalog.md" in text
-    assert "python3 -m pytest tests/unit/test_verification_command_docs.py" in text
+    assert "PYTHONPATH=src python3 -m pytest tests/unit/test_verification_command_docs.py" in text
 
 
 def test_traceability_matrix_explains_covered_is_not_completion_claim() -> None:

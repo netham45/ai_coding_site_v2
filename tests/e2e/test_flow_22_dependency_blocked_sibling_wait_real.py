@@ -90,14 +90,27 @@ def test_flow_22_dependency_blocked_sibling_wait_requires_live_completion_of_dep
             f"pane_text=\n{last_pane_text}"
         )
 
-        dependency_status_after_result = harness.cli("node", "dependency-status", "--node", right_id)
-        unblocked_start_result = harness.cli("node", "run", "start", "--node", right_id)
+        dependency_status_after_payload = None
+        last_dependency_status = None
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            dependency_status_after_result = harness.cli("node", "dependency-status", "--node", right_id)
+            assert dependency_status_after_result.exit_code == 0, dependency_status_after_result.stderr
+            last_dependency_status = dependency_status_after_result.json()
+            if last_dependency_status["ready"] is True:
+                dependency_status_after_payload = last_dependency_status
+                break
+            time.sleep(1.0)
 
-        assert dependency_status_after_result.exit_code == 0, dependency_status_after_result.stderr
+        assert dependency_status_after_payload is not None, (
+            "Expected the dependent sibling to become ready only after the daemon advanced the incremental merge lane.\n"
+            f"last_dependency_status={last_dependency_status}"
+        )
+
+        unblocked_start_result = harness.cli("node", "run", "start", "--node", right_id)
         assert unblocked_start_result.exit_code == 0, unblocked_start_result.stderr
 
         dependency_status_before_payload = dependency_status_before_result.json()
-        dependency_status_after_payload = dependency_status_after_result.json()
         unblocked_start_payload = unblocked_start_result.json()
 
         assert materialize_payload["status"] == "created"

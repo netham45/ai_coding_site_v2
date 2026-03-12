@@ -20,6 +20,22 @@ Task-plan rules:
 
 Current task index:
 
+- `2026-03-12_workflow_overhaul_prompt_composition_model.md`
+- `2026-03-12_workflow_overhaul_prompt_contract_and_prompt_rewrite.md`
+- `2026-03-12_workflow_overhaul_tier_enforcement_and_prompt_guards.md`
+- `2026-03-12_remove_tmux_codex_trust_ui_fallback.md`
+- `2026-03-12_tmux_codex_trusted_workspace_config_preseed.md`
+- `2026-03-12_tmux_workspace_trust_prompt_runtime_acceptance.md`
+- `2026-03-12_runtime_repo_bootstrap_import_path_alignment.md`
+- `2026-03-12_tmux_remain_on_exit_and_live_process_liveness.md`
+- `2026-03-12_failed_run_session_inspection_alignment.md`
+- `2026-03-12_primary_session_execution_cwd_alignment.md`
+- `2026-03-12_primary_session_prompt_command_contract.md`
+- `2026-03-12_db_migration_scripts.md`
+- `2026-03-12_reset_db_script.md`
+- `2026-03-12_root_scripts_command_surface.md`
+- `2026-03-11_tmux_session_supervision_restart_and_failure_implementation.md`
+- `2026-03-11_tmux_session_supervision_restart_and_failure_plan.md`
 - `2026-03-11_daemon_import_cycle_fix_plan.md`
 - `2026-03-11_packaged_resource_install_fix_implementation.md`
 - `2026-03-11_packaged_resource_install_fix_plan.md`
@@ -71,13 +87,19 @@ Current task index:
 - `2026-03-11_web_feature_03_prompts_and_regeneration_flow.md`
 - `2026-03-11_web_feature_04_bounded_action_surface.md`
 - `2026-03-11_web_feature_05_repo_backed_project_start_and_top_level_bootstrap.md`
+- `2026-03-11_web_verification_02_real_repo_backed_project_start_and_bootstrap.md`
 - `2026-03-11_web_feature_06_project_selector_context_and_bootstrap_readiness.md`
 - `2026-03-11_web_feature_07_tree_filter_completion.md`
 - `2026-03-11_web_feature_08_daemon_served_compiled_frontend_and_auth_bootstrap.md`
 - `2026-03-11_web_feature_08_daemon_served_compiled_frontend_and_auth_bootstrap_implementation.md`
+- `2026-03-11_web_feature_09_project_multi_root_navigation_and_creation_persistence.md`
+- `2026-03-11_web_feature_12_live_regeneration_cancellation_and_reentry.md`
+- `2026-03-11_web_verification_03_v1_action_and_shared_state_browser_closure.md`
+- `2026-03-11_web_feature_11_workflow_and_subtask_execution_detail.md`
 - `2026-03-11_cli_workflow_start_project_flag.md`
 - `2026-03-11_web_repo_backed_project_start_planning.md`
 - `2026-03-11_web_v1_gap_correction_planning.md`
+- `2026-03-11_website_spec_gap_remediation_planning.md`
 - `2026-03-11_web_verification_00_browser_harness_and_e2e_matrix.md`
 - `2026-03-11_web_verification_01_missing_test_audit_and_final_verification.md`
 - `2026-03-11_web_hardening_00_browser_gap_closure.md`

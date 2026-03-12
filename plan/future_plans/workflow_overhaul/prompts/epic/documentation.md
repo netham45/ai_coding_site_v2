@@ -1,41 +1,31 @@
-You are defining child `phase` nodes for documentation epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `epic/base.md`.
+- This overlay turns the epic into a documentation-lifecycle root.
+- Treat repository notes and authoritative docs as implementation assets rather than polish.
 
-This epic style exists to inventory, author, verify, and repair authoritative documentation.
+Overlay Objective Delta
+- Decompose documentation work into explicit inventory, authoring, verification, and remediation bands.
 
-Role of this tier:
-- define the documentation lifecycle as explicit delivery bands
-- ensure authoring is separated from verification and remediation
-- keep command alignment, checklist accuracy, and document-schema proving visible
+Profile-Specific Inputs
+- `required_child_roles` should usually include:
+  - `inventory`
+  - `authoring`
+  - `verification`
+  - `remediation`
 
-Bias:
-- prefer inventory, authoring, verification, and remediation bands
-- treat repository notes and authoritative docs as implementation assets rather than polish
+Additional Forbidden Actions
+- Do not mix substantive code implementation into core documentation bands unless strictly required for command or contract alignment.
+- Do not skip verification and jump from authoring to completion.
+- Do not use documentation alignment as a backdoor for substantive new implementation work.
 
-Do not:
-- mix code implementation work into the core documentation bands unless it is strictly required for command or contract alignment
-- skip verification and jump from authoring to completion
-- hide structural document obligations in loose prose
+Profile-Specific Expected Result
+- A phase child set whose usual roles include:
+  - `inventory`
+  - `authoring`
+  - `verification`
+  - `remediation`
 
-Inputs:
-- user request: `{{user_request}}`
-- epic goal: `{{node.title}}`
-- acceptance criteria: `{{acceptance_criteria}}`
-- required child roles: `{{required_child_roles}}`
-- context bundle: `{{context_bundle}}`
-
-Expected phase roles usually include:
-- inventory
-- authoring
-- verification
-- remediation
-
-For each phase:
-- identify the document families or note families in scope
-- define required outputs
-- define verification targets, including document-schema tests where applicable
-- define what remediation means if authoring or verification reveals contradictions
-
-Return JSON only:
-{"status":"OK","child_count":<n>,"coverage":{"missing_roles":[],"extra_roles":[]}}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- The child set makes documentation scope, proof, and remediation explicit.
+- Verification and remediation are not collapsed away.
+- Each phase has concrete outputs and closure criteria.

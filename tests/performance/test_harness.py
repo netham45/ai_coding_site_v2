@@ -152,7 +152,7 @@ def test_migration_status_probe_completes_quickly() -> None:
 
     try:
         payload, elapsed = measure(lambda: migration_status(engine))
-        assert payload["expected_revision"] == "0029_incr_parent_merge_state"
+        assert payload["expected_revision"] == "0030_live_runtime_binding"
         assert elapsed < 0.3
     finally:
         engine.dispose()
@@ -1532,6 +1532,7 @@ def test_workflow_compile_completes_quickly(migrated_public_schema) -> None:
 
 @pytest.mark.performance
 def test_top_level_workflow_start_completes_quickly(migrated_public_schema) -> None:
+    from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
     from aicoding.daemon.workflow_start import start_top_level_workflow
     from aicoding.hierarchy import load_hierarchy_registry
     from aicoding.resources import load_resource_catalog
@@ -1539,6 +1540,8 @@ def test_top_level_workflow_start_completes_quickly(migrated_public_schema) -> N
     factory = create_session_factory(engine=migrated_public_schema)
     catalog = load_resource_catalog()
     registry = load_hierarchy_registry(catalog)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=30.0, now=adapter.now)
 
     result, elapsed = measure(
         lambda: start_top_level_workflow(
@@ -1549,6 +1552,8 @@ def test_top_level_workflow_start_completes_quickly(migrated_public_schema) -> N
             title="Perf workflow start",
             prompt="Start a top-level workflow for performance coverage.",
             start_run=True,
+            adapter=adapter,
+            poller=poller,
         )
     )
 

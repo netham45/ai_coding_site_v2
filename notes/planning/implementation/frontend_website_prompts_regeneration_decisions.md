@@ -41,19 +41,24 @@ Instead, the prompt tab should:
 
 This lets the browser present the latest candidate prompt when one already exists.
 
-### Live candidate blocks new supersede
+### Live authoritative work is cancelled explicitly during save-and-regenerate
 
-The browser should surface the existing daemon conflict honestly.
+The browser still uses the existing two-step daemon flow, but prompt edits now opt into daemon-owned subtree cancellation when the authoritative node is actively running.
 
-If `latest_created_node_version_id != authoritative_node_version_id`, the prompt tab should treat the node as already having a live candidate version and block another prompt supersede from the browser.
+The prompt mutation flow should send `cancel_active_subtree: true` with the supersede request so the daemon can:
 
-The tab should still render:
+1. cancel the authoritative node's active or paused run
+2. cancel descendant active or paused runs in the same subtree
+3. invalidate active sessions attached to those cancelled runs
+4. create the replacement candidate after the subtree is clear
 
-- latest version metadata
-- current prompt text
-- prompt history
+The browser should not implement its own cancellation logic or guess which descendants are in scope.
 
-but the edit mutation should be disabled with an explicit explanation.
+### Existing live candidate still blocks another supersede
+
+If `latest_created_node_version_id != authoritative_node_version_id`, the prompt tab should still surface that existing-candidate conflict honestly instead of stacking another candidate on top of it.
+
+The new cancel-before-supersede behavior applies to active authoritative runtime state, not to already-created candidate lineage.
 
 ### Confirmation stays inline
 

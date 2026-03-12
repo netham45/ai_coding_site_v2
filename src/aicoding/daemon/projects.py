@@ -11,11 +11,14 @@ from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.lifecycle import load_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.live_git import LiveGitStatusSnapshot, bootstrap_live_git_repo
 from aicoding.daemon.manual_tree import create_manual_node
+from aicoding.daemon.operator_views import load_node_operator_summary
+from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
+from aicoding.daemon.session_records import bind_primary_session
 from aicoding.daemon.run_orchestration import RunProgressSnapshot, load_current_run_progress
 from aicoding.daemon.errors import DaemonNotFoundError
 from aicoding.daemon.workflows import WorkflowCompileAttemptSnapshot, compile_node_workflow
 from aicoding.daemon.workflow_events import record_workflow_event
-from aicoding.daemon.workflow_start import WorkflowStartSnapshot, _resolve_title
+from aicoding.daemon.workflow_start import WorkflowStartSnapshot, _resolve_title, _session_state_payload
 from aicoding.db.models import WorkflowEvent
 from aicoding.source_lineage import capture_node_version_source_lineage
 from aicoding.db.session import query_session_scope, session_scope
@@ -69,12 +72,7 @@ class ProjectTopLevelWorkflowSnapshot:
                     "head_commit_sha": self.bootstrap.head_commit_sha,
                     "working_tree_state": self.bootstrap.working_tree_state,
                 },
-                "route_hint": {
-                    "project_id": self.project.project_id,
-                    "node_id": payload["node"]["node_id"],
-                    "tab": "overview",
-                    "url": f"/projects/{self.project.project_id}/nodes/{payload['node']['node_id']}/overview",
-                },
+                "route_hint": _project_route_hint(self.project.project_id, payload["node"]["node_id"]),
             }
         )
         return payload
@@ -83,21 +81,42 @@ class ProjectTopLevelWorkflowSnapshot:
 @dataclass(frozen=True, slots=True)
 class ProjectBootstrapSnapshot:
     project: ProjectCatalogEntry
-    root_node_id: UUID | None
+    top_level_nodes: list["ProjectTopLevelNodeSummary"]
 
     def to_payload(self) -> dict[str, object]:
-        route_hint = None
-        if self.root_node_id is not None:
-            route_hint = {
-                "project_id": self.project.project_id,
-                "node_id": str(self.root_node_id),
-                "tab": "overview",
-                "url": f"/projects/{self.project.project_id}/nodes/{self.root_node_id}/overview",
-            }
+        root_node_id = None if not self.top_level_nodes else self.top_level_nodes[0].node_id
+        route_hint = None if root_node_id is None else _project_route_hint(self.project.project_id, root_node_id)
         return {
             "project": self.project.to_payload(),
-            "root_node_id": None if self.root_node_id is None else str(self.root_node_id),
+            "root_node_id": None if root_node_id is None else str(root_node_id),
             "route_hint": route_hint,
+            "top_level_nodes": [item.to_payload() for item in self.top_level_nodes],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTopLevelNodeSummary:
+    node_id: UUID
+    kind: str
+    tier: str
+    title: str
+    lifecycle_state: str | None
+    run_status: str | None
+    authoritative_node_version_id: UUID | None
+    latest_created_node_version_id: UUID | None
+    route_hint: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "node_id": str(self.node_id),
+            "kind": self.kind,
+            "tier": self.tier,
+            "title": self.title,
+            "lifecycle_state": self.lifecycle_state,
+            "run_status": self.run_status,
+            "authoritative_node_version_id": None if self.authoritative_node_version_id is None else str(self.authoritative_node_version_id),
+            "latest_created_node_version_id": None if self.latest_created_node_version_id is None else str(self.latest_created_node_version_id),
+            "route_hint": dict(self.route_hint),
         }
 
 
@@ -169,6 +188,8 @@ def start_project_top_level_workflow(
     title: str | None,
     prompt: str,
     start_run: bool,
+    adapter: SessionAdapter | None = None,
+    poller: SessionPoller | None = None,
     settings: Settings | None = None,
 ) -> ProjectTopLevelWorkflowSnapshot:
     project = get_project(project_id, settings=settings)
@@ -181,6 +202,8 @@ def start_project_top_level_workflow(
         title=title,
         prompt=prompt,
         start_run=start_run,
+        adapter=adapter,
+        poller=poller,
         settings=settings,
     )
     with session_scope(session_factory) as session:
@@ -219,13 +242,35 @@ def load_project_bootstrap(
             .scalars()
             .all()
         )
-        root_node_id = None
+        top_level_node_ids: list[UUID] = []
+        seen_node_ids: set[UUID] = set()
         for item in row:
             payload = dict(item.payload_json or {})
             if payload.get("project_id") == project.project_id:
-                root_node_id = item.logical_node_id
-                break
-    return ProjectBootstrapSnapshot(project=project, root_node_id=root_node_id)
+                if item.logical_node_id in seen_node_ids:
+                    continue
+                seen_node_ids.add(item.logical_node_id)
+                top_level_node_ids.append(item.logical_node_id)
+    top_level_nodes: list[ProjectTopLevelNodeSummary] = []
+    for node_id in top_level_node_ids:
+        try:
+            summary = load_node_operator_summary(session_factory, node_id=node_id)
+        except DaemonNotFoundError:
+            continue
+        top_level_nodes.append(
+            ProjectTopLevelNodeSummary(
+                node_id=summary.node_id,
+                kind=summary.kind,
+                tier=summary.tier,
+                title=summary.title,
+                lifecycle_state=summary.lifecycle_state,
+                run_status=summary.run_status,
+                authoritative_node_version_id=summary.authoritative_node_version_id,
+                latest_created_node_version_id=summary.latest_created_node_version_id,
+                route_hint=_project_route_hint(project.project_id, summary.node_id),
+            )
+        )
+    return ProjectBootstrapSnapshot(project=project, top_level_nodes=top_level_nodes)
 
 
 def _workspace_root(settings: Settings) -> Path:
@@ -234,6 +279,16 @@ def _workspace_root(settings: Settings) -> Path:
 
 def _repos_root(settings: Settings) -> Path:
     return _workspace_root(settings) / "repos"
+
+
+def _project_route_hint(project_id: str, node_id: UUID | str) -> dict[str, object]:
+    node_id_str = str(node_id)
+    return {
+        "project_id": project_id,
+        "node_id": node_id_str,
+        "tab": "overview",
+        "url": f"/projects/{project_id}/nodes/{node_id_str}/overview",
+    }
 
 
 def _start_project_top_level_workflow(
@@ -246,6 +301,8 @@ def _start_project_top_level_workflow(
     title: str | None,
     prompt: str,
     start_run: bool,
+    adapter: SessionAdapter | None,
+    poller: SessionPoller | None,
     settings: Settings | None,
 ) -> tuple[WorkflowStartSnapshot, LiveGitStatusSnapshot]:
     definition = hierarchy_registry.get(kind)
@@ -283,6 +340,7 @@ def _start_project_top_level_workflow(
     lifecycle = load_node_lifecycle(session_factory, str(creation.node.node_id))
     run_admission: NodeRunAdmissionSnapshot | None = None
     run_progress: RunProgressSnapshot | None = None
+    session_payload: dict[str, object] | None = None
     status = "compile_failed"
 
     if compile_attempt.status == "compiled":
@@ -300,6 +358,15 @@ def _start_project_top_level_workflow(
             )
             if run_admission.status == "admitted":
                 run_progress = load_current_run_progress(session_factory, logical_node_id=creation.node.node_id)
+                if adapter is not None and poller is not None:
+                    session_payload = _session_state_payload(
+                        bind_primary_session(
+                            session_factory,
+                            logical_node_id=creation.node.node_id,
+                            adapter=adapter,
+                            poller=poller,
+                        )
+                    )
                 lifecycle = load_node_lifecycle(session_factory, str(creation.node.node_id))
                 status = "started"
             else:
@@ -317,6 +384,7 @@ def _start_project_top_level_workflow(
             lifecycle=lifecycle.to_payload(),
             run_admission=None if run_admission is None else run_admission.to_payload(),
             run_progress=None if run_progress is None else run_progress.to_payload(),
+            session=session_payload,
         ),
         bootstrap,
     )

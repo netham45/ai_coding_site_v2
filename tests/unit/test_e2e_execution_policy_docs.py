@@ -48,7 +48,7 @@ def test_du04_plan_records_outputs_and_command() -> None:
 
     assert "## Current DU-04 Outputs" in text
     assert "notes/catalogs/checklists/e2e_execution_policy.md" in text
-    assert "python3 -m pytest tests/unit/test_e2e_execution_policy_docs.py" in text
+    assert "PYTHONPATH=src python3 -m pytest tests/unit/test_e2e_execution_policy_docs.py" in text
 
 
 def test_release_readiness_checklist_points_to_canonical_policy_and_commands() -> None:

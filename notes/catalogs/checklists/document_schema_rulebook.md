@@ -86,6 +86,7 @@ Applies to:
 - `notes/planning/implementation/per_flow_gap_remediation_plan.md`
 - `notes/catalogs/traceability/spec_traceability_matrix.md`
 - `notes/catalogs/traceability/simulation_flow_union_inventory.md`
+- `notes/catalogs/traceability/relevant_user_flow_inventory.yaml`
 - `plan/e2e_tests/06_e2e_feature_matrix.md`
 
 Required rules:
@@ -97,6 +98,12 @@ Required rules:
   - bounded proof status
   - real E2E target
   - real E2E completion
+- the structured relevant-user-flow inventory must:
+  - declare its interpretation boundary relative to `flows/*.md`
+  - include one entry per canonical relevant flow
+  - record affected-system scope across the six required systems
+  - record invariants, canonical commands, and proof statuses for each tracked flow
+  - link every tracked flow to an existing canonical `flows/*.md` file
 
 ### Traceability Catalog Family
 

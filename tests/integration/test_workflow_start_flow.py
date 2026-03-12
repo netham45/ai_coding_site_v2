@@ -44,11 +44,14 @@ def test_daemon_workflow_start_creates_compiles_and_optionally_starts_run(app_cl
     assert start_response.json()["run_admission"]["status"] == "admitted"
     assert start_response.json()["run_progress"]["run"]["trigger_reason"] == "workflow_start"
     assert start_response.json()["lifecycle"]["lifecycle_state"] == "RUNNING"
+    assert start_response.json()["session"]["status"] == "bound"
+    assert start_response.json()["session"]["backend"] == "fake"
 
     assert compile_only_response.status_code == 200
     assert compile_only_response.json()["status"] == "compiled"
     assert compile_only_response.json()["run_admission"] is None
     assert compile_only_response.json()["run_progress"] is None
+    assert compile_only_response.json()["session"] is None
     assert compile_only_response.json()["lifecycle"]["lifecycle_state"] == "READY"
 
     assert invalid_response.status_code == 409
@@ -89,6 +92,7 @@ def test_cli_workflow_start_and_top_level_node_create_flags_round_trip(
     assert workflow_start.exit_code == 0
     assert workflow_start.json()["status"] == "started"
     assert workflow_start.json()["run_progress"]["run"]["trigger_reason"] == "workflow_start"
+    assert workflow_start.json()["session"]["status"] == "bound"
 
     assert node_create_compile.exit_code == 0
     assert node_create_compile.json()["status"] == "compiled"
@@ -139,4 +143,5 @@ def test_cli_workflow_start_with_project_uses_repo_backed_route(
         assert payload["status"] == "compiled"
         assert payload["bootstrap"]["repo_bootstrap_status"] == "bootstrapped"
         assert payload["bootstrap"]["seed_commit_sha"] == source_head
+        assert payload["session"] is None
         assert payload["route_hint"]["project_id"] == "repo_alpha"

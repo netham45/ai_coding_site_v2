@@ -458,8 +458,8 @@ Current gap note:
 Current gap note:
 
 - the strict real-E2E test now waits for live sibling completion instead of forcing lifecycle state
+- after live completion, sibling unblock now also depends on daemon-applied incremental merge into the parent lineage rather than raw lifecycle `COMPLETE` alone
 - this is expected to stay red until tmux sessions launch Codex and the daemon can observe real completion from the live session
-- the first strict run also exposed that the dependent sibling was still startable in the tested dependency scenario, so blocker enforcement is not yet matching the intended flow
 
 ## Reference rule
 

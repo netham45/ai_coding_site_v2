@@ -43,6 +43,7 @@ class DaemonNodeState(Base):
     __tablename__ = "daemon_node_states"
 
     node_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    node_version_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("node_versions.id"), nullable=True, index=True)
     current_run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     lifecycle_state: Mapped[str] = mapped_column(String(32), nullable=False)
     authority: Mapped[str] = mapped_column(String(32), nullable=False, default="daemon")
@@ -127,6 +128,7 @@ class NodeLifecycleState(Base):
     __tablename__ = "node_lifecycle_states"
 
     node_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    node_version_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("node_versions.id"), nullable=True, index=True)
     lifecycle_state: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     run_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     current_run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True)

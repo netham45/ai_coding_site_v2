@@ -684,6 +684,7 @@ Pause and cancel should stop forward progression without erasing already-written
 
 - if an incremental merge conflicts, the lane enters conflicted/paused state
 - dependents remain blocked on incremental merge conflict
+- once the conflicted parent repo is manually resolved and committed, the existing durable `resolve_conflict` path should advance the affected incremental child merge row and parent lane to that resolved head before dependents can unblock
 - parent AI or operator resolution is required before the lane resumes
 
 ## Durable State Model

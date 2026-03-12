@@ -12,17 +12,43 @@ from sqlalchemy.orm import Session as OrmSession, sessionmaker
 from aicoding.daemon.admission import admit_node_run, check_node_dependency_readiness
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.incremental_parent_merge import process_pending_incremental_parent_merges
+from aicoding.daemon.lifecycle import transition_node_lifecycle
 from aicoding.daemon.live_git import refresh_child_live_git_from_parent_head
 from aicoding.daemon.session_manager import build_primary_session_plan, build_recovery_primary_session_plan
 from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
-from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeRun, NodeRunState, NodeVersion, Session, SessionEvent, SubtaskAttempt
+from aicoding.db.models import (
+    HierarchyNode,
+    LogicalNodeCurrentVersion,
+    NodeChild,
+    NodeLifecycleState,
+    NodeRun,
+    NodeRunState,
+    NodeVersion,
+    ParentChildAuthority,
+    RebuildEvent,
+    Session,
+    SessionEvent,
+    SubtaskAttempt,
+)
 from aicoding.db.session import query_session_scope, session_scope
+from aicoding.errors import ConfigurationError
 from aicoding.hierarchy import HierarchyRegistry
 from aicoding.project_policies import resolve_effective_policy
 from aicoding.resources import ResourceCatalog
 from aicoding.rendering import build_render_context, render_text
 
 ACTIVE_SESSION_STATUSES = {"BOUND", "ATTACHED", "RESUMED", "RUNNING"}
+AUTO_RESTARTABLE_LIFECYCLE_STATES = {
+    "READY",
+    "RUNNING",
+    "WAITING_ON_CHILDREN",
+    "WAITING_ON_SIBLING_DEPENDENCY",
+    "RECTIFYING_SELF",
+    "RECTIFYING_UPSTREAM",
+    "REVIEW_PENDING",
+    "VALIDATION_PENDING",
+    "TESTING_PENDING",
+}
 RECOVERABLE_SESSION_CLASSIFICATIONS = {
     "healthy",
     "detached",
@@ -32,8 +58,6 @@ RECOVERABLE_SESSION_CLASSIFICATIONS = {
     "ambiguous",
     "non_resumable",
 }
-CODEX_WORKSPACE_TRUST_PROMPT = "Do you trust the contents of this directory?"
-CODEX_WORKSPACE_TRUST_ACCEPT_MARKER = "1. Yes, continue"
 _ACTIVE_WORK_MARKERS = (
     "• Working (",
     "Working (",
@@ -66,10 +90,13 @@ class DurableSessionSnapshot:
     idle_seconds: float | None
     in_alt_screen: bool | None
     tmux_session_exists: bool | None
+    tmux_process_alive: bool | None
+    tmux_exit_status: int | None
     attach_command: str | None
     screen_state: dict[str, object] | None = None
     recovery_classification: str | None = None
     recommended_action: str | None = None
+    terminal_failure: dict[str, object] | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -96,10 +123,13 @@ class DurableSessionSnapshot:
             "idle_seconds": self.idle_seconds,
             "in_alt_screen": self.in_alt_screen,
             "tmux_session_exists": self.tmux_session_exists,
+            "tmux_process_alive": self.tmux_process_alive,
+            "tmux_exit_status": self.tmux_exit_status,
             "attach_command": self.attach_command,
             "screen_state": self.screen_state,
             "recovery_classification": self.recovery_classification,
             "recommended_action": self.recommended_action,
+            "terminal_failure": self.terminal_failure,
         }
 
 
@@ -143,10 +173,13 @@ class RecoveryStatusSnapshot:
     pause_flag_name: str | None
     tmux_session_name: str | None
     tmux_session_exists: bool | None
+    tmux_process_alive: bool | None
+    tmux_exit_status: int | None
     provider: str | None
     provider_session_id_present: bool
     heartbeat_age_seconds: float | None
     duplicate_active_primary_sessions: int
+    terminal_failure: dict[str, object] | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -161,10 +194,13 @@ class RecoveryStatusSnapshot:
             "pause_flag_name": self.pause_flag_name,
             "tmux_session_name": self.tmux_session_name,
             "tmux_session_exists": self.tmux_session_exists,
+            "tmux_process_alive": self.tmux_process_alive,
+            "tmux_exit_status": self.tmux_exit_status,
             "provider": self.provider,
             "provider_session_id_present": self.provider_session_id_present,
             "heartbeat_age_seconds": self.heartbeat_age_seconds,
             "duplicate_active_primary_sessions": self.duplicate_active_primary_sessions,
+            "terminal_failure": self.terminal_failure,
         }
 
 
@@ -194,6 +230,8 @@ class ProviderRecoveryStatusSnapshot:
     provider_session_exists: bool | None
     tmux_session_name: str | None
     tmux_session_exists: bool | None
+    tmux_process_alive: bool | None
+    tmux_exit_status: int | None
     provider_rebind_possible: bool
     provider_recommended_action: str
     provider_reason: str | None
@@ -211,6 +249,8 @@ class ProviderRecoveryStatusSnapshot:
             "provider_session_exists": self.provider_session_exists,
             "tmux_session_name": self.tmux_session_name,
             "tmux_session_exists": self.tmux_session_exists,
+            "tmux_process_alive": self.tmux_process_alive,
+            "tmux_exit_status": self.tmux_exit_status,
             "provider_rebind_possible": self.provider_rebind_possible,
             "provider_recommended_action": self.provider_recommended_action,
             "provider_reason": self.provider_reason,
@@ -324,6 +364,30 @@ class AutoAdvancedChildRuntimeSnapshot:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class SessionSupervisionSnapshot:
+    node_id: UUID
+    status: str
+    action: str
+    lifecycle_state: str | None
+    run_status: str | None
+    tracked_session_id: UUID | None
+    resulting_session_id: UUID | None
+    reason: str | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "node_id": str(self.node_id),
+            "status": self.status,
+            "action": self.action,
+            "lifecycle_state": self.lifecycle_state,
+            "run_status": self.run_status,
+            "tracked_session_id": None if self.tracked_session_id is None else str(self.tracked_session_id),
+            "resulting_session_id": None if self.resulting_session_id is None else str(self.resulting_session_id),
+            "reason": self.reason,
+        }
+
+
 def show_current_primary_session(
     session_factory: sessionmaker[OrmSession],
     *,
@@ -333,7 +397,18 @@ def show_current_primary_session(
     with query_session_scope(session_factory) as session:
         current = session.execute(
             select(Session)
-            .where(Session.session_role == "primary", Session.status.in_(ACTIVE_SESSION_STATUSES))
+            .join(NodeRun, Session.node_run_id == NodeRun.id)
+            .join(NodeVersion, Session.node_version_id == NodeVersion.id)
+            .join(
+                LogicalNodeCurrentVersion,
+                LogicalNodeCurrentVersion.logical_node_id == NodeVersion.logical_node_id,
+            )
+            .where(
+                Session.session_role == "primary",
+                Session.status.in_(ACTIVE_SESSION_STATUSES),
+                NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")),
+                LogicalNodeCurrentVersion.authoritative_node_version_id == Session.node_version_id,
+            )
             .order_by(Session.started_at.desc())
         ).scalars().first()
         if current is None:
@@ -354,7 +429,8 @@ def bind_primary_session(
         state = _require_run_state(session, run.id)
         current = _require_single_active_primary_session(session, run.id)
         if current is not None:
-            if current.tmux_session_name and adapter.session_exists(current.tmux_session_name):
+            current_snapshot = _tmux_session_snapshot(adapter, current.tmux_session_name)
+            if current_snapshot is not None and current_snapshot.process_alive:
                 _record_session_event(
                     session,
                     current.id,
@@ -366,10 +442,16 @@ def bind_primary_session(
                 )
                 session.flush()
                 return _session_snapshot(session, current, adapter=adapter, poller=poller)
-            _invalidate_session(session, current, status="LOST", reason="tmux_session_missing")
+            _invalidate_session(
+                session,
+                current,
+                status="LOST",
+                reason="tmux_session_missing" if current_snapshot is None else "tmux_process_exited",
+            )
 
         durable_id = uuid4()
         launch_plan = build_primary_session_plan(
+            node_version_id=version.id,
             logical_node_id=logical_node_id,
             node_run_id=run.id,
             run_number=run.run_number,
@@ -411,13 +493,9 @@ def bind_primary_session(
                 "attach_command": launch_plan.attach_command,
                 "prompt_cli_command": launch_plan.prompt_cli_command,
                 "prompt_log_path": launch_plan.prompt_log_path,
+                "codex_home_path": launch_plan.codex_home_path,
+                "trusted_workspace_paths": list(launch_plan.trusted_workspace_paths),
             },
-        )
-        _accept_codex_workspace_trust_prompt(
-            session,
-            durable_id=durable.id,
-            adapter=adapter,
-            session_name=launch_plan.session_name,
         )
         session.flush()
         return _session_snapshot(session, durable, adapter=adapter, poller=poller)
@@ -437,7 +515,8 @@ def attach_primary_session(
         if current is None:
             session.flush()
         else:
-            if current.tmux_session_name and adapter.session_exists(current.tmux_session_name):
+            current_snapshot = _tmux_session_snapshot(adapter, current.tmux_session_name)
+            if current_snapshot is not None and current_snapshot.process_alive:
                 current.status = "ATTACHED"
                 current.last_heartbeat_at = datetime.now(timezone.utc)
                 _record_session_event(
@@ -452,7 +531,12 @@ def attach_primary_session(
                 )
                 session.flush()
                 return _session_snapshot(session, current, adapter=adapter, poller=poller)
-            _invalidate_session(session, current, status="LOST", reason="attach_missing_session")
+            _invalidate_session(
+                session,
+                current,
+                status="LOST",
+                reason="attach_missing_session" if current_snapshot is None else "attach_found_dead_tmux_process",
+            )
 
     snapshot = bind_primary_session(session_factory, logical_node_id=logical_node_id, adapter=adapter, poller=poller)
     with session_scope(session_factory) as session:
@@ -492,7 +576,32 @@ def load_recovery_status(
 ) -> RecoveryStatusSnapshot:
     with query_session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
-        run = _require_active_run(session, version.id)
+        run = _active_run_for_version(session, version.id)
+        if run is None:
+            latest_failure = _latest_failed_supervision_context(session, node_version_id=version.id)
+            if latest_failure is None:
+                raise DaemonConflictError("active durable run not found")
+            failed_session = latest_failure["session"]
+            return RecoveryStatusSnapshot(
+                node_id=logical_node_id,
+                node_version_id=version.id,
+                node_run_id=latest_failure["run"].id,
+                session_id=None if failed_session is None else failed_session.id,
+                recovery_classification="non_resumable",
+                recommended_action="inspect_failed_run",
+                reason="latest_run_failed_after_supervision_recovery_failure",
+                is_resumable=False,
+                pause_flag_name=latest_failure["state"].pause_flag_name,
+                tmux_session_name=None if failed_session is None else failed_session.tmux_session_name,
+                tmux_session_exists=None if failed_session is None else _tmux_session_exists(adapter, failed_session.tmux_session_name),
+                tmux_process_alive=None if failed_session is None else _tmux_process_alive(adapter, failed_session.tmux_session_name),
+                tmux_exit_status=None if failed_session is None else _tmux_exit_status(adapter, failed_session.tmux_session_name),
+                provider=None if failed_session is None else failed_session.provider,
+                provider_session_id_present=False if failed_session is None else failed_session.provider_session_id is not None,
+                heartbeat_age_seconds=_heartbeat_age_seconds(failed_session),
+                duplicate_active_primary_sessions=0,
+                terminal_failure=latest_failure["terminal_failure"],
+            )
         state = _require_run_state(session, run.id)
         active_sessions = _active_primary_sessions(session, run.id)
         return _recovery_status_snapshot(
@@ -516,7 +625,44 @@ def recover_primary_session(
 ) -> RecoveryDecisionSnapshot:
     with session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
-        run = _require_active_run(session, version.id)
+        run = _active_run_for_version(session, version.id)
+        if run is None:
+            latest_failure = _latest_failed_supervision_context(session, node_version_id=version.id)
+            if latest_failure is None:
+                raise DaemonConflictError("active durable run not found")
+            failed_session = latest_failure["session"]
+            recovery_status = RecoveryStatusSnapshot(
+                node_id=logical_node_id,
+                node_version_id=version.id,
+                node_run_id=latest_failure["run"].id,
+                session_id=None if failed_session is None else failed_session.id,
+                recovery_classification="non_resumable",
+                recommended_action="inspect_failed_run",
+                reason="latest_run_failed_after_supervision_recovery_failure",
+                is_resumable=False,
+                pause_flag_name=latest_failure["state"].pause_flag_name,
+                tmux_session_name=None if failed_session is None else failed_session.tmux_session_name,
+                tmux_session_exists=None if failed_session is None else _tmux_session_exists(adapter, failed_session.tmux_session_name),
+                tmux_process_alive=None if failed_session is None else _tmux_process_alive(adapter, failed_session.tmux_session_name),
+                tmux_exit_status=None if failed_session is None else _tmux_exit_status(adapter, failed_session.tmux_session_name),
+                provider=None if failed_session is None else failed_session.provider,
+                provider_session_id_present=False if failed_session is None else failed_session.provider_session_id is not None,
+                heartbeat_age_seconds=_heartbeat_age_seconds(failed_session),
+                duplicate_active_primary_sessions=0,
+                terminal_failure=latest_failure["terminal_failure"],
+            )
+            snapshot = None
+            if failed_session is not None:
+                snapshot = _session_snapshot(
+                    session,
+                    failed_session,
+                    adapter=adapter,
+                    poller=poller,
+                    recovery_classification="non_resumable",
+                    recommended_action="inspect_failed_run",
+                    terminal_failure=latest_failure["terminal_failure"],
+                )
+            return RecoveryDecisionSnapshot(status="recovery_rejected", recovery_status=recovery_status, session=snapshot)
         state = _require_run_state(session, run.id)
         active_sessions = _active_primary_sessions(session, run.id)
         status = _recovery_status_snapshot(
@@ -602,6 +748,7 @@ def recover_primary_session(
             _invalidate_session(session, record, status="LOST", reason="provider_agnostic_recovery_replacement")
         durable_id = uuid4()
         launch_plan = build_recovery_primary_session_plan(
+            node_version_id=version.id,
             node_run_id=run.id,
             run_number=run.run_number,
             session_id=durable_id,
@@ -642,13 +789,9 @@ def recover_primary_session(
                 "attach_command": launch_plan.attach_command,
                 "prompt_cli_command": launch_plan.prompt_cli_command,
                 "prompt_log_path": launch_plan.prompt_log_path,
+                "codex_home_path": launch_plan.codex_home_path,
+                "trusted_workspace_paths": list(launch_plan.trusted_workspace_paths),
             },
-        )
-        _accept_codex_workspace_trust_prompt(
-            session,
-            durable_id=durable.id,
-            adapter=adapter,
-            session_name=launch_plan.session_name,
         )
         session.flush()
         from aicoding.daemon.run_orchestration import sync_resumed_run
@@ -673,7 +816,50 @@ def load_provider_recovery_status(
 ) -> ProviderRecoveryStatusSnapshot:
     with query_session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
-        run = _require_active_run(session, version.id)
+        run = _active_run_for_version(session, version.id)
+        if run is None:
+            latest_failure = _latest_failed_supervision_context(session, node_version_id=version.id)
+            if latest_failure is None:
+                raise DaemonConflictError("active durable run not found")
+            failed_session = latest_failure["session"]
+            recovery_status = RecoveryStatusSnapshot(
+                node_id=logical_node_id,
+                node_version_id=version.id,
+                node_run_id=latest_failure["run"].id,
+                session_id=None if failed_session is None else failed_session.id,
+                recovery_classification="non_resumable",
+                recommended_action="inspect_failed_run",
+                reason="latest_run_failed_after_supervision_recovery_failure",
+                is_resumable=False,
+                pause_flag_name=latest_failure["state"].pause_flag_name,
+                tmux_session_name=None if failed_session is None else failed_session.tmux_session_name,
+                tmux_session_exists=None if failed_session is None else _tmux_session_exists(adapter, failed_session.tmux_session_name),
+                tmux_process_alive=None if failed_session is None else _tmux_process_alive(adapter, failed_session.tmux_session_name),
+                tmux_exit_status=None if failed_session is None else _tmux_exit_status(adapter, failed_session.tmux_session_name),
+                provider=None if failed_session is None else failed_session.provider,
+                provider_session_id_present=False if failed_session is None else failed_session.provider_session_id is not None,
+                heartbeat_age_seconds=_heartbeat_age_seconds(failed_session),
+                duplicate_active_primary_sessions=0,
+                terminal_failure=latest_failure["terminal_failure"],
+            )
+            return ProviderRecoveryStatusSnapshot(
+                node_id=logical_node_id,
+                node_version_id=version.id,
+                node_run_id=latest_failure["run"].id,
+                session_id=None if failed_session is None else failed_session.id,
+                provider=None if failed_session is None else failed_session.provider,
+                provider_session_id=None if failed_session is None else failed_session.provider_session_id,
+                provider_supported=failed_session is not None,
+                provider_session_exists=None if failed_session is None or failed_session.provider_session_id is None else adapter.session_exists(failed_session.provider_session_id),
+                tmux_session_name=None if failed_session is None else failed_session.tmux_session_name,
+                tmux_session_exists=None if failed_session is None else _tmux_session_exists(adapter, failed_session.tmux_session_name),
+                tmux_process_alive=None if failed_session is None else _tmux_process_alive(adapter, failed_session.tmux_session_name),
+                tmux_exit_status=None if failed_session is None else _tmux_exit_status(adapter, failed_session.tmux_session_name),
+                provider_rebind_possible=False,
+                provider_recommended_action="inspect_failed_run",
+                provider_reason="latest_run_failed_after_supervision_recovery_failure",
+                recovery_status=recovery_status,
+            )
         state = _require_run_state(session, run.id)
         active_sessions = _active_primary_sessions(session, run.id)
         recovery_status = _recovery_status_snapshot(
@@ -824,13 +1010,20 @@ def nudge_primary_session(
                 pause_flag_name=state.pause_flag_name,
                 screen_state=None,
             )
-        if current.tmux_session_name is None or not adapter.session_exists(current.tmux_session_name):
-            _record_session_event(session, current.id, "nudge_skipped", {"reason": "session_missing"})
+        current_tmux_exists = _tmux_session_exists(adapter, current.tmux_session_name)
+        current_process_alive = _tmux_process_alive(adapter, current.tmux_session_name)
+        if current.tmux_session_name is None or current_tmux_exists is not True or current_process_alive is False:
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {"reason": "session_missing" if current_process_alive is not False else "session_process_exited"},
+            )
             session.flush()
             return SessionNudgeSnapshot(
                 node_id=logical_node_id,
                 session_id=current.id,
-                status="session_missing",
+                status="session_missing" if current_process_alive is not False else "session_not_running",
                 action="none",
                 session_status=current.status,
                 idle_seconds=None,
@@ -1007,7 +1200,13 @@ def auto_nudge_idle_primary_sessions(
                 poller=poller,
                 persist=True,
             )
-        except (DaemonConflictError, DaemonNotFoundError):
+        except (ConfigurationError, DaemonConflictError, DaemonNotFoundError) as exc:
+            _record_auto_nudge_failure(
+                session_factory,
+                logical_node_id=logical_node_id,
+                phase="inspect_primary_session_screen_state",
+                exc=exc,
+            )
             continue
         if screen_state.classification != "idle" or screen_state.reason != "unchanged_screen_past_idle_threshold":
             continue
@@ -1049,6 +1248,198 @@ def auto_nudge_idle_primary_sessions(
             continue
         if snapshot.status in {"nudged", "escalated_to_pause"}:
             snapshots.append(snapshot)
+    return snapshots
+
+
+def auto_supervise_primary_sessions(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    adapter: SessionAdapter,
+    poller: SessionPoller,
+) -> list[SessionSupervisionSnapshot]:
+    with query_session_scope(session_factory) as session:
+        logical_node_ids = [
+            row[0]
+            for row in session.execute(
+                select(NodeVersion.logical_node_id)
+                .join(NodeRun, NodeRun.node_version_id == NodeVersion.id)
+                .join(Session, Session.node_run_id == NodeRun.id)
+                .where(
+                    Session.session_role == "primary",
+                    NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")),
+                )
+                .distinct()
+            ).all()
+        ]
+
+    snapshots: list[SessionSupervisionSnapshot] = []
+    for logical_node_id in logical_node_ids:
+        target = _load_session_supervision_target(session_factory, logical_node_id=logical_node_id, adapter=adapter)
+        if target is None or target.tracked_session_id is None:
+            continue
+        if target.tmux_session_exists and target.tmux_process_alive is not False:
+            continue
+        missing_reason = "tracked_tmux_session_missing"
+        invalidation_reason = "supervision_detected_missing_tmux_session"
+        if target.tmux_session_exists and target.tmux_process_alive is False:
+            missing_reason = "tracked_tmux_process_exited"
+            invalidation_reason = "supervision_detected_dead_tmux_process"
+        if target.lifecycle_state not in AUTO_RESTARTABLE_LIFECYCLE_STATES:
+            _record_supervision_failure_event(
+                session_factory,
+                logical_node_id=logical_node_id,
+                session_id=target.tracked_session_id,
+                reason="restart_not_allowed_for_lifecycle_state",
+                details={
+                    "lifecycle_state": target.lifecycle_state,
+                    "run_status": target.run_status,
+                    "tmux_session_exists": target.tmux_session_exists,
+                    "tmux_process_alive": target.tmux_process_alive,
+                    "tmux_exit_status": target.tmux_exit_status,
+                },
+                invalidate_active_session=True,
+            )
+            from aicoding.daemon.run_orchestration import sync_failed_run
+
+            sync_failed_run(
+                session_factory,
+                logical_node_id=logical_node_id,
+                failure_summary=(
+                    f"Session supervision failed because the tracked tmux session was lost while the node "
+                    f"lifecycle state '{target.lifecycle_state}' was not restartable."
+                ),
+                failure_reason="restart_not_allowed_for_lifecycle_state",
+            )
+            snapshots.append(
+                SessionSupervisionSnapshot(
+                    node_id=logical_node_id,
+                    status="failed",
+                    action="mark_run_failed",
+                    lifecycle_state=target.lifecycle_state,
+                    run_status="FAILED",
+                    tracked_session_id=target.tracked_session_id,
+                    resulting_session_id=None,
+                    reason="restart_not_allowed_for_lifecycle_state",
+                )
+            )
+            continue
+        _record_supervision_event(
+            session_factory,
+            session_id=target.tracked_session_id,
+            event_type="supervision_recovery_attempted",
+            payload={
+                "lifecycle_state": target.lifecycle_state,
+                "run_status": target.run_status,
+                "reason": missing_reason,
+                "tmux_session_exists": target.tmux_session_exists,
+                "tmux_process_alive": target.tmux_process_alive,
+                "tmux_exit_status": target.tmux_exit_status,
+            },
+            invalidate_active_session=True,
+            invalidation_reason=invalidation_reason,
+        )
+        try:
+            decision = recover_primary_session(
+                session_factory,
+                logical_node_id=logical_node_id,
+                adapter=adapter,
+                poller=poller,
+            )
+        except Exception as exc:
+            _record_supervision_failure_event(
+                session_factory,
+                logical_node_id=logical_node_id,
+                session_id=target.tracked_session_id,
+                reason="restart_launch_failed",
+                details={
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                    "lifecycle_state": target.lifecycle_state,
+                    "run_status": target.run_status,
+                    "tmux_session_exists": target.tmux_session_exists,
+                    "tmux_process_alive": target.tmux_process_alive,
+                    "tmux_exit_status": target.tmux_exit_status,
+                },
+                invalidate_active_session=False,
+            )
+            from aicoding.daemon.run_orchestration import sync_failed_run
+
+            sync_failed_run(
+                session_factory,
+                logical_node_id=logical_node_id,
+                failure_summary=f"Session supervision failed because replacement launch raised {type(exc).__name__}: {exc}",
+                failure_reason="restart_launch_failed",
+            )
+            snapshots.append(
+                SessionSupervisionSnapshot(
+                    node_id=logical_node_id,
+                    status="failed",
+                    action="mark_run_failed",
+                    lifecycle_state=target.lifecycle_state,
+                    run_status="FAILED",
+                    tracked_session_id=target.tracked_session_id,
+                    resulting_session_id=None,
+                    reason="restart_launch_failed",
+                )
+            )
+            continue
+        if decision.session is None:
+            _record_supervision_failure_event(
+                session_factory,
+                logical_node_id=logical_node_id,
+                session_id=target.tracked_session_id,
+                reason=decision.status,
+                details={
+                    "recovery_status": decision.recovery_status.to_payload(),
+                },
+                invalidate_active_session=False,
+            )
+            from aicoding.daemon.run_orchestration import sync_failed_run
+
+            sync_failed_run(
+                session_factory,
+                logical_node_id=logical_node_id,
+                failure_summary=(
+                    "Session supervision failed because automatic recovery did not produce a replacement "
+                    f"or reusable session (status={decision.status})."
+                ),
+                failure_reason=decision.status,
+            )
+            snapshots.append(
+                SessionSupervisionSnapshot(
+                    node_id=logical_node_id,
+                    status="failed",
+                    action="mark_run_failed",
+                    lifecycle_state=target.lifecycle_state,
+                    run_status="FAILED",
+                    tracked_session_id=target.tracked_session_id,
+                    resulting_session_id=None,
+                    reason=decision.status,
+                )
+            )
+            continue
+        _record_supervision_event(
+            session_factory,
+            session_id=decision.session.session_id,
+            event_type="supervision_recovery_succeeded",
+            payload={
+                "decision_status": decision.status,
+                "recovery_classification": decision.recovery_status.recovery_classification,
+                "tmux_session_name": decision.session.tmux_session_name,
+            },
+        )
+        snapshots.append(
+            SessionSupervisionSnapshot(
+                node_id=logical_node_id,
+                status="recovered",
+                action="replacement_created" if decision.status == "replacement_session_created" else "session_reused",
+                lifecycle_state=target.lifecycle_state,
+                run_status=decision.session.run_status,
+                tracked_session_id=target.tracked_session_id,
+                resulting_session_id=decision.session.session_id,
+                reason=decision.status,
+            )
+        )
     return snapshots
 
 
@@ -1150,12 +1541,101 @@ def auto_advance_incremental_parent_merge_and_refresh_children(
             )
         except DaemonConflictError:
             continue
-        check_node_dependency_readiness(session_factory, node_id=child_node_id)
-        refreshed_child_node_ids.append(child_node_id)
+        rematerialized = _maybe_rematerialize_dependency_invalidated_child(
+            session_factory,
+            logical_node_id=child_node_id,
+            node_version_id=readiness.node_version_id,
+            hierarchy_registry=hierarchy_registry,
+            resources=resources,
+        )
+        post_refresh = check_node_dependency_readiness(session_factory, node_id=child_node_id)
+        if _may_leave_sibling_dependency_wait(post_refresh):
+            transition_node_lifecycle(
+                session_factory,
+                node_id=str(child_node_id),
+                target_state="READY",
+            )
+            post_refresh = check_node_dependency_readiness(session_factory, node_id=child_node_id)
+        if rematerialized or post_refresh.status in {"ready", "blocked"}:
+            refreshed_child_node_ids.append(child_node_id)
     return AutoAdvancedChildRuntimeSnapshot(
         processed_merge_count=len(merge_results),
         refreshed_child_node_ids=refreshed_child_node_ids,
     )
+
+
+def _maybe_rematerialize_dependency_invalidated_child(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    node_version_id: UUID,
+    hierarchy_registry: HierarchyRegistry,
+    resources: ResourceCatalog,
+) -> bool:
+    from aicoding.daemon.materialization import materialize_layout_children
+
+    with query_session_scope(session_factory) as session:
+        if not _is_dependency_invalidated_fresh_restart(session, node_version_id=node_version_id):
+            return False
+        version = session.get(NodeVersion, node_version_id)
+        if version is None or version.supersedes_node_version_id is None:
+            return False
+        prior_child_edges = session.execute(
+            select(NodeChild).where(NodeChild.parent_node_version_id == version.supersedes_node_version_id)
+        ).scalars().all()
+        if not prior_child_edges:
+            return False
+        prior_authority = session.get(ParentChildAuthority, version.supersedes_node_version_id)
+        if prior_authority is not None and prior_authority.authority_mode in {"manual", "hybrid"}:
+            return False
+    with session_scope(session_factory) as session:
+        current_child_edges = session.execute(
+            select(NodeChild).where(NodeChild.parent_node_version_id == node_version_id)
+        ).scalars().all()
+        for edge in current_child_edges:
+            session.delete(edge)
+        authority = session.get(ParentChildAuthority, node_version_id)
+        if authority is None:
+            authority = ParentChildAuthority(
+                parent_node_version_id=node_version_id,
+                authority_mode="layout_authoritative",
+                authoritative_layout_hash=None,
+            )
+            session.add(authority)
+        else:
+            authority.authority_mode = "layout_authoritative"
+            authority.authoritative_layout_hash = None
+        session.flush()
+    try:
+        result = materialize_layout_children(
+            session_factory,
+            hierarchy_registry,
+            resources,
+            logical_node_id=logical_node_id,
+        )
+    except DaemonConflictError:
+        return False
+    return result.status in {"created", "already_materialized"}
+
+
+def _is_dependency_invalidated_fresh_restart(session: OrmSession, *, node_version_id: UUID) -> bool:
+    events = session.execute(
+        select(RebuildEvent)
+        .where(
+            RebuildEvent.target_node_version_id == node_version_id,
+            RebuildEvent.event_kind == "candidate_created",
+        )
+        .order_by(RebuildEvent.created_at.desc(), RebuildEvent.id.desc())
+    ).scalars().all()
+    for event in events:
+        if bool((event.details_json or {}).get("fresh_dependency_restart")):
+            return True
+    return False
+
+
+def _may_leave_sibling_dependency_wait(readiness) -> bool:
+    blocker_kinds = {item.blocker_kind for item in readiness.blockers}
+    return blocker_kinds in (set(), {"lifecycle_not_ready"})
 
 
 def _list_auto_run_child_candidate_pairs(
@@ -1201,7 +1681,20 @@ def get_session_for_node(
 ) -> DurableSessionSnapshot:
     with query_session_scope(session_factory) as session:
         version = _authoritative_version(session, logical_node_id)
-        run = _require_active_run(session, version.id)
+        run = _active_run_for_version(session, version.id)
+        if run is None:
+            latest_failure = _latest_failed_supervision_context(session, node_version_id=version.id)
+            if latest_failure is None or latest_failure["session"] is None:
+                raise DaemonNotFoundError("primary session not found")
+            return _session_snapshot(
+                session,
+                latest_failure["session"],
+                adapter=adapter,
+                poller=poller,
+                recovery_classification="non_resumable",
+                recommended_action="inspect_failed_run",
+                terminal_failure=latest_failure["terminal_failure"],
+            )
         current = _active_primary_session(session, run.id)
         if current is None:
             raise DaemonNotFoundError("primary session not found")
@@ -1292,12 +1785,26 @@ def _authoritative_version(session: OrmSession, logical_node_id: UUID) -> NodeVe
     return version
 
 
+def _matched_lifecycle(session: OrmSession, *, logical_node_id: UUID, node_version_id: UUID) -> NodeLifecycleState | None:
+    lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
+    if lifecycle is None:
+        return None
+    if lifecycle.node_version_id not in {None, node_version_id}:
+        return None
+    return lifecycle
+
+
 def _require_active_run(session: OrmSession, node_version_id: UUID):
+    run = _active_run_for_version(session, node_version_id)
+    if run is None:
+        raise DaemonConflictError("active durable run not found")
+    return run
+
+
+def _active_run_for_version(session: OrmSession, node_version_id: UUID) -> NodeRun | None:
     run = session.execute(
         select(NodeRun).where(NodeRun.node_version_id == node_version_id, NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED"))).order_by(NodeRun.run_number.desc())
     ).scalars().first()
-    if run is None:
-        raise DaemonConflictError("active durable run not found")
     return run
 
 
@@ -1315,6 +1822,59 @@ def _active_primary_sessions(session: OrmSession, node_run_id: UUID) -> list[Ses
         .where(Session.node_run_id == node_run_id, Session.session_role == "primary", Session.status.in_(ACTIVE_SESSION_STATUSES))
         .order_by(Session.started_at.desc())
     ).scalars().all()
+
+
+def _latest_primary_session(session: OrmSession, node_run_id: UUID) -> Session | None:
+    return session.execute(
+        select(Session)
+        .where(Session.node_run_id == node_run_id, Session.session_role == "primary")
+        .order_by(Session.started_at.desc())
+    ).scalars().first()
+
+
+def _latest_failed_supervision_context(session: OrmSession, *, node_version_id: UUID) -> dict[str, object] | None:
+    latest_run = session.execute(
+        select(NodeRun).where(NodeRun.node_version_id == node_version_id).order_by(NodeRun.run_number.desc())
+    ).scalars().first()
+    if latest_run is None or latest_run.run_status != "FAILED":
+        return None
+    state = session.get(NodeRunState, latest_run.id)
+    if state is None:
+        return None
+    failure_row = session.execute(
+        select(SessionEvent, Session)
+        .join(Session, SessionEvent.session_id == Session.id)
+        .where(
+            Session.node_run_id == latest_run.id,
+            Session.session_role == "primary",
+            SessionEvent.event_type == "supervision_recovery_failed",
+        )
+        .order_by(SessionEvent.created_at.desc())
+    ).first()
+    if failure_row is None:
+        return None
+    failure_event, failed_session = failure_row
+    payload = dict(failure_event.payload_json or {})
+    terminal_failure = {
+        "failure_origin": "session_supervision",
+        "failure_event_type": failure_event.event_type,
+        "failure_reason": payload.get("reason"),
+        "failure_summary": payload.get("failure_summary") or latest_run.summary,
+        "error_type": payload.get("error_type"),
+        "failed_run_id": str(latest_run.id),
+        "failed_session_id": str(failed_session.id),
+        "run_status": latest_run.run_status,
+        "lifecycle_state": state.lifecycle_state,
+        "session_status": failed_session.status,
+        "recommended_action": "inspect_failed_run",
+    }
+    return {
+        "run": latest_run,
+        "state": state,
+        "session": failed_session,
+        "failure_event": failure_event,
+        "terminal_failure": terminal_failure,
+    }
 
 
 def _require_single_active_primary_session(session: OrmSession, node_run_id: UUID) -> Session | None:
@@ -1366,34 +1926,6 @@ def _invalidate_session(session: OrmSession, record: Session, *, status: str, re
     _record_session_event(session, record.id, "invalidated", {"reason": reason, "status": status})
 
 
-def _accept_codex_workspace_trust_prompt(
-    session: OrmSession,
-    *,
-    durable_id: UUID,
-    adapter: SessionAdapter,
-    session_name: str,
-) -> None:
-    if adapter.backend_name != "tmux" or not adapter.session_exists(session_name):
-        return
-    deadline = time.time() + 12.0
-    while time.time() < deadline:
-        pane_text = adapter.capture_pane(session_name, include_alt_screen=True)
-        if CODEX_WORKSPACE_TRUST_PROMPT not in pane_text or CODEX_WORKSPACE_TRUST_ACCEPT_MARKER not in pane_text:
-            time.sleep(0.25)
-            continue
-        adapter.send_input(session_name, "1", press_enter=True)
-        _record_session_event(
-            session,
-            durable_id,
-            "workspace_trust_prompt_accepted",
-            {
-                "tmux_session_name": session_name,
-                "prompt_text": CODEX_WORKSPACE_TRUST_PROMPT,
-            },
-        )
-        return
-
-
 def _record_session_event(session: OrmSession, session_id: UUID, event_type: str, payload: dict[str, object]) -> None:
     session.add(SessionEvent(id=uuid4(), session_id=session_id, event_type=event_type, payload_json=payload))
 
@@ -1424,7 +1956,89 @@ def _record_auto_nudge_failure(
                 "message": str(exc),
             },
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionSupervisionTarget:
+    logical_node_id: UUID
+    run_status: str
+    lifecycle_state: str | None
+    tracked_session_id: UUID | None
+    current_session_id: UUID | None
+    tmux_session_exists: bool
+    tmux_process_alive: bool | None
+    tmux_exit_status: int | None
+
+
+def _load_session_supervision_target(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    adapter: SessionAdapter,
+) -> _SessionSupervisionTarget | None:
+    with query_session_scope(session_factory) as session:
+        try:
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+        except (DaemonConflictError, DaemonNotFoundError):
+            return None
+        latest = _latest_primary_session(session, run.id)
+        if latest is None:
+            return None
+        current = _active_primary_session(session, run.id)
+        lifecycle = _matched_lifecycle(session, logical_node_id=logical_node_id, node_version_id=version.id)
+        tmux_session_name = None if current is None else current.tmux_session_name
+        tmux_exists = _tmux_session_exists(adapter, tmux_session_name)
+        tmux_process_alive = _tmux_process_alive(adapter, tmux_session_name)
+        return _SessionSupervisionTarget(
+            logical_node_id=logical_node_id,
+            run_status=run.run_status,
+            lifecycle_state=None if lifecycle is None else lifecycle.lifecycle_state,
+            tracked_session_id=latest.id,
+            current_session_id=None if current is None else current.id,
+            tmux_session_exists=bool(tmux_exists),
+            tmux_process_alive=tmux_process_alive,
+            tmux_exit_status=_tmux_exit_status(adapter, tmux_session_name),
+        )
+
+
+def _record_supervision_event(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    session_id: UUID,
+    event_type: str,
+    payload: dict[str, object],
+    invalidate_active_session: bool = False,
+    invalidation_reason: str = "supervision_detected_missing_tmux_session",
+) -> None:
+    with session_scope(session_factory) as session:
+        record = session.get(Session, session_id)
+        if record is None:
+            return
+        if invalidate_active_session and record.status in ACTIVE_SESSION_STATUSES:
+            _invalidate_session(session, record, status="LOST", reason=invalidation_reason)
+        _record_session_event(session, session_id, event_type, payload)
         session.flush()
+
+
+def _record_supervision_failure_event(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    session_id: UUID,
+    reason: str,
+    details: dict[str, object],
+    invalidate_active_session: bool,
+) -> None:
+    payload = {"reason": reason, **details}
+    _record_supervision_event(
+        session_factory,
+        session_id=session_id,
+        event_type="supervision_recovery_failed",
+        payload=payload,
+        invalidate_active_session=invalidate_active_session,
+        invalidation_reason="supervision_detected_missing_tmux_session",
+    )
 
 
 def _pane_active_work_marker(pane_text: str) -> str | None:
@@ -1556,10 +2170,13 @@ def _recovery_status_snapshot(
             pause_flag_name=state.pause_flag_name,
             tmux_session_name=None if current is None else current.tmux_session_name,
             tmux_session_exists=None,
+            tmux_process_alive=None,
+            tmux_exit_status=None,
             provider=None if current is None else current.provider,
             provider_session_id_present=False if current is None else current.provider_session_id is not None,
             heartbeat_age_seconds=_heartbeat_age_seconds(current),
             duplicate_active_primary_sessions=duplicate_count,
+            terminal_failure=None,
         )
     if duplicate_count > 1:
         return RecoveryStatusSnapshot(
@@ -1573,11 +2190,14 @@ def _recovery_status_snapshot(
             is_resumable=state.is_resumable,
             pause_flag_name=state.pause_flag_name,
             tmux_session_name=None if current is None else current.tmux_session_name,
-            tmux_session_exists=None if current is None or current.tmux_session_name is None else adapter.session_exists(current.tmux_session_name),
+            tmux_session_exists=None if current is None else _tmux_session_exists(adapter, current.tmux_session_name),
+            tmux_process_alive=None if current is None else _tmux_process_alive(adapter, current.tmux_session_name),
+            tmux_exit_status=None if current is None else _tmux_exit_status(adapter, current.tmux_session_name),
             provider=None if current is None else current.provider,
             provider_session_id_present=False if current is None else current.provider_session_id is not None,
             heartbeat_age_seconds=_heartbeat_age_seconds(current),
             duplicate_active_primary_sessions=duplicate_count,
+            terminal_failure=None,
         )
     if current is None:
         return RecoveryStatusSnapshot(
@@ -1592,12 +2212,17 @@ def _recovery_status_snapshot(
             pause_flag_name=state.pause_flag_name,
             tmux_session_name=None,
             tmux_session_exists=False,
+            tmux_process_alive=None,
+            tmux_exit_status=None,
             provider=None,
             provider_session_id_present=False,
             heartbeat_age_seconds=None,
             duplicate_active_primary_sessions=0,
+            terminal_failure=None,
         )
-    tmux_exists = current.tmux_session_name is not None and adapter.session_exists(current.tmux_session_name)
+    tmux_exists = _tmux_session_exists(adapter, current.tmux_session_name) is True
+    tmux_process_alive = _tmux_process_alive(adapter, current.tmux_session_name)
+    tmux_exit_status = _tmux_exit_status(adapter, current.tmux_session_name)
     heartbeat_age = _heartbeat_age_seconds(current)
     if not tmux_exists:
         return RecoveryStatusSnapshot(
@@ -1612,10 +2237,34 @@ def _recovery_status_snapshot(
             pause_flag_name=state.pause_flag_name,
             tmux_session_name=current.tmux_session_name,
             tmux_session_exists=False,
+            tmux_process_alive=None,
+            tmux_exit_status=None,
             provider=current.provider,
             provider_session_id_present=current.provider_session_id is not None,
             heartbeat_age_seconds=heartbeat_age,
             duplicate_active_primary_sessions=duplicate_count,
+            terminal_failure=None,
+        )
+    if tmux_process_alive is False:
+        return RecoveryStatusSnapshot(
+            node_id=logical_node_id,
+            node_version_id=version.id,
+            node_run_id=run.id,
+            session_id=current.id,
+            recovery_classification="lost",
+            recommended_action="create_replacement_session",
+            reason="tmux_process_exited",
+            is_resumable=state.is_resumable,
+            pause_flag_name=state.pause_flag_name,
+            tmux_session_name=current.tmux_session_name,
+            tmux_session_exists=True,
+            tmux_process_alive=False,
+            tmux_exit_status=tmux_exit_status,
+            provider=current.provider,
+            provider_session_id_present=current.provider_session_id is not None,
+            heartbeat_age_seconds=heartbeat_age,
+            duplicate_active_primary_sessions=duplicate_count,
+            terminal_failure=None,
         )
     poll_result = poller.poll(current.tmux_session_name)
     if poll_result.is_idle:
@@ -1631,10 +2280,13 @@ def _recovery_status_snapshot(
             pause_flag_name=state.pause_flag_name,
             tmux_session_name=current.tmux_session_name,
             tmux_session_exists=True,
+            tmux_process_alive=True,
+            tmux_exit_status=tmux_exit_status,
             provider=current.provider,
             provider_session_id_present=current.provider_session_id is not None,
             heartbeat_age_seconds=heartbeat_age,
             duplicate_active_primary_sessions=duplicate_count,
+            terminal_failure=None,
         )
     classification = "detached" if current.status == "BOUND" else "healthy"
     return RecoveryStatusSnapshot(
@@ -1649,10 +2301,13 @@ def _recovery_status_snapshot(
         pause_flag_name=state.pause_flag_name,
         tmux_session_name=current.tmux_session_name,
         tmux_session_exists=True,
+        tmux_process_alive=True,
+        tmux_exit_status=tmux_exit_status,
         provider=current.provider,
         provider_session_id_present=current.provider_session_id is not None,
         heartbeat_age_seconds=heartbeat_age,
         duplicate_active_primary_sessions=duplicate_count,
+        terminal_failure=None,
     )
 
 
@@ -1665,7 +2320,9 @@ def _provider_recovery_status_snapshot(
     provider = None if current is None else current.provider
     provider_session_id = None if current is None else current.provider_session_id
     tmux_session_name = None if current is None else current.tmux_session_name
-    tmux_session_exists = None if tmux_session_name is None else adapter.session_exists(tmux_session_name)
+    tmux_session_exists = _tmux_session_exists(adapter, tmux_session_name)
+    tmux_process_alive = _tmux_process_alive(adapter, tmux_session_name)
+    tmux_exit_status = _tmux_exit_status(adapter, tmux_session_name)
     provider_supported = current is not None and current.provider == adapter.backend_name and current.provider_session_id is not None
     provider_session_exists = None
     provider_rebind_possible = False
@@ -1680,7 +2337,11 @@ def _provider_recovery_status_snapshot(
         provider_reason = "provider_identity_unavailable"
     else:
         provider_session_exists = adapter.session_exists(current.provider_session_id)
-        if provider_session_exists and (current.tmux_session_name != current.provider_session_id or tmux_session_exists is False):
+        if provider_session_exists and (
+            current.tmux_session_name != current.provider_session_id
+            or tmux_session_exists is False
+            or tmux_process_alive is False
+        ):
             provider_rebind_possible = True
             provider_recommended_action = "rebind_provider_session"
             provider_reason = "provider_session_restorable"
@@ -1702,6 +2363,8 @@ def _provider_recovery_status_snapshot(
         provider_session_exists=provider_session_exists,
         tmux_session_name=tmux_session_name,
         tmux_session_exists=tmux_session_exists,
+        tmux_process_alive=tmux_process_alive,
+        tmux_exit_status=tmux_exit_status,
         provider_rebind_possible=provider_rebind_possible,
         provider_recommended_action=provider_recommended_action,
         provider_reason=provider_reason,
@@ -1716,6 +2379,35 @@ def _heartbeat_age_seconds(record: Session | None) -> float | None:
     return max((datetime.now(timezone.utc) - reference).total_seconds(), 0.0)
 
 
+def _tmux_session_snapshot(adapter: SessionAdapter, session_name: str | None):
+    if session_name is None:
+        return None
+    return adapter.describe(session_name)
+
+
+def _tmux_session_exists(adapter: SessionAdapter, session_name: str | None) -> bool | None:
+    if session_name is None:
+        return None
+    snapshot = _tmux_session_snapshot(adapter, session_name)
+    if snapshot is not None:
+        return True
+    return adapter.session_exists(session_name)
+
+
+def _tmux_process_alive(adapter: SessionAdapter, session_name: str | None) -> bool | None:
+    snapshot = _tmux_session_snapshot(adapter, session_name)
+    if snapshot is None:
+        return None
+    return snapshot.process_alive
+
+
+def _tmux_exit_status(adapter: SessionAdapter, session_name: str | None) -> int | None:
+    snapshot = _tmux_session_snapshot(adapter, session_name)
+    if snapshot is None:
+        return None
+    return snapshot.exit_status
+
+
 def _session_snapshot(
     session: OrmSession,
     record: Session,
@@ -1723,6 +2415,8 @@ def _session_snapshot(
     adapter: SessionAdapter,
     poller: SessionPoller,
     recovery_classification: str | None = None,
+    recommended_action: str | None = None,
+    terminal_failure: dict[str, object] | None = None,
 ) -> DurableSessionSnapshot:
     version = session.get(NodeVersion, record.node_version_id)
     if version is None:
@@ -1735,12 +2429,16 @@ def _session_snapshot(
     adapter_snapshot = None if record.tmux_session_name is None else adapter.describe(record.tmux_session_name)
     idle_seconds = None
     tmux_session_exists = None
+    tmux_process_alive = None
+    tmux_exit_status = None
     screen_state = None
-    recommended_action = None
     if adapter_snapshot is not None:
-        idle_seconds = poller.poll(adapter_snapshot.session_name).idle_seconds
+        tmux_process_alive = adapter_snapshot.process_alive
+        tmux_exit_status = adapter_snapshot.exit_status
+        if adapter_snapshot.process_alive:
+            idle_seconds = poller.poll(adapter_snapshot.session_name).idle_seconds
+            screen_state = _classify_session_screen_state(session, record, adapter=adapter, poller=poller, persist=False).to_payload()
         tmux_session_exists = True
-        screen_state = _classify_session_screen_state(session, record, adapter=adapter, poller=poller, persist=False).to_payload()
     elif record.tmux_session_name is not None:
         tmux_session_exists = adapter.session_exists(record.tmux_session_name)
     if recovery_classification is None and record.session_role == "primary" and record.node_run_id is not None and run is not None:
@@ -1782,8 +2480,11 @@ def _session_snapshot(
         idle_seconds=idle_seconds,
         in_alt_screen=None if adapter_snapshot is None else adapter_snapshot.in_alt_screen,
         tmux_session_exists=tmux_session_exists,
+        tmux_process_alive=tmux_process_alive,
+        tmux_exit_status=tmux_exit_status,
         attach_command=None if adapter.backend_name != "tmux" or record.tmux_session_name is None else f"tmux attach-session -t {record.tmux_session_name}",
         screen_state=screen_state,
         recovery_classification=recovery_classification,
         recommended_action=recommended_action,
+        terminal_failure=terminal_failure,
     )

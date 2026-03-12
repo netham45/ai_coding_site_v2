@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define a future direction for a tool or function that can inspect this repository's operational framework and produce a new, empty project that follows the same broad discipline.
+Define a future direction for a starter repository and, optionally later, a tool or function that can inspect this repository's operational framework and produce a new, empty project that follows the same broad discipline.
 
 This is not a proposal to clone the current product.
 
@@ -18,11 +18,15 @@ It is a proposal to clone the repository's operating model:
 - lifecycle-stage guidance
 - profile-aware workflow decomposition
 
+The current best delivery direction is to expose that operating model first as a separate repository users are encouraged to clone.
+
+Automation can follow later if it still provides enough value after the starter repository shape has stabilized.
+
 ## Desired Outcome
 
-The generated project should start life with enough structure that an AI or human contributor can build a new system without rediscovering the process doctrine from scratch.
+The starter project should start life with enough structure that an AI or human contributor can build a new system without rediscovering the process doctrine from scratch.
 
-The generated project should already contain:
+The starter project should already contain:
 
 - `AGENTS.md`
 - `plan/`
@@ -43,7 +47,7 @@ Treat this repository as two layers:
 1. Product layer
 2. Operational layer
 
-The future generator should extract only the operational layer by default.
+The future starter repo and any later generator should extract only the operational layer by default.
 
 That means the generator should carry forward:
 
@@ -67,22 +71,30 @@ It should not blindly copy:
 
 ## Working Thesis
 
-The safest way to build this is to model the current repository's operational state as a structured export, then render a new repository from that export.
+The safest way to build this is to define a concrete cloneable starter repository first, then, if still useful, model the current repository's operational state as a structured export that can render that same repository shape automatically.
 
 That gives the future implementation two separable jobs:
 
-1. Extract and normalize operational doctrine from the source repository.
-2. Render a target repository from a template pack plus project-specific answers.
+1. Define and stabilize the target starter repository.
+2. Optionally extract and normalize operational doctrine from the source repository so it can render that target repository from a template pack plus project-specific answers.
 
 This should align with the workflow-overhaul direction already captured in:
 
 - `plan/future_plans/workflow_overhaul/2026-03-10_self_hosted_workflow_overhaul_notes.md`
 
-The generated repository should ideally be bootstrapped in a way that can later map onto the same `epic -> phase -> plan -> task` substrate with profile-aware variants.
+The starter repository should ideally be bootstrapped in a way that can later map onto the same `epic -> phase -> plan -> task` substrate with profile-aware variants.
+
+## Current Review Surface
+
+The concrete starter-repo draft now lives under:
+
+- `plan/future_plans/project_skeleton_generator/draft_repo/`
+
+Review and refine that tree as the primary artifact.
 
 ## Proposed Capabilities
 
-The future generator should eventually be able to:
+The future implementation should eventually be able to:
 
 - read the source repository's doctrinal files
 - identify canonical document families
@@ -95,7 +107,7 @@ The future generator should eventually be able to:
 - identify development-log requirements
 - identify canonical verification command surfaces
 - identify the declared primary systems for the new project
-- emit a clean starter repository with placeholders instead of copied product logic
+- emit or publish a clean starter repository with placeholders instead of copied product logic
 - emit a concise `AGENTS.md` that points contributors at the active lifecycle stage instead of expanding every stage rule inline
 - emit a reviewable starter `AGENTS.md` template that shows how global doctrine and stage-local doctrine are split
 - emit starter workflow-profile guidance for planning, setup, delivery, docs, and E2E
@@ -124,11 +136,11 @@ The first version should not try to:
 
 The current best direction is:
 
-- generated `AGENTS.md` stays concise
-- lifecycle notes carry detailed stage-specific doctrine
-- each lifecycle stage contains explicit sub-steps
-- an operational-state checklist records which stage and sub-steps are active
-- stronger claims activate only when the repo reaches the corresponding stage
+- publish a separate starter repo users can clone
+- keep a concrete draft starter tree in this future-plan bundle until that repo exists
+- let lifecycle notes carry detailed stage-specific doctrine
+- keep an operational-state checklist that records which stage and sub-steps are active
+- allow stronger claims only when the repo reaches the corresponding proving level
 
 ## Post-V1 Gap
 

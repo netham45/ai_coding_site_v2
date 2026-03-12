@@ -39,16 +39,18 @@ This keeps browser tests aligned with the central Axios session approach already
 ### Current primary browser narratives
 
 - project selection and top-level creation
+- real repo-backed project selection and top-level creation against the daemon-served frontend
 - tree rendering and tree navigation
 - overview/runs/prompts/actions/provenance narrative
 - prompt save-and-regenerate narrative
-- bounded action execution narrative
+- full agreed-v1 action execution narrative
 - workflow/summaries/sessions deep-link narrative
 - blocked action state narrative
 - empty project catalog narrative
 - top-level creation validation failure narrative
 - live-candidate-blocked prompt editing narrative
 - route back/forward navigation narrative
+- representative loading, empty, and error state narratives for projects, tree, actions, and prompts
 
 ### Current browser test files
 
@@ -58,14 +60,13 @@ This keeps browser tests aligned with the central Axios session approach already
 
 ## Current Remaining Matrix Gaps
 
-The remaining browser-proof gaps are no longer about the main route or mutation narratives.
+The remaining browser-proof gaps are no longer about the agreed v1 action table or the basic shared-state primitives.
 
 They are now mainly:
 
-- dedicated loading-state browser proof
-- dedicated error-state browser proof
 - screenshot review automation beyond simple artifact capture
-- broader action-execution permutations beyond the single proved action flow
+- deeper non-v1 route/tab permutation closure
+- broader real-daemon browser narratives beyond the repo-backed project-start checkpoint
 
 ## Conclusion
 

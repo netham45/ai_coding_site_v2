@@ -8,6 +8,12 @@ This is a working-note draft for the workflow-overhaul bundle.
 
 It is not an adopted implementation plan.
 
+The future route posture should assume rigid workflow enforcement.
+
+Read routes should expose blocked-step state.
+
+Mutation routes should reject skipped required steps with concrete `4xx` blocked responses rather than silently advancing or relying on prompt compliance.
+
 ## Goal
 
 Define:

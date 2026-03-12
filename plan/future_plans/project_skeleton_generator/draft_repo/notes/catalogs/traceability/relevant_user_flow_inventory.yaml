@@ -1,0 +1,33 @@
+flows:
+  - flow_id: FLOW01
+    name: bootstrap_the_repository
+    kind: operator
+    status: planned
+    summary: Create the initial scaffold, governing artifacts, and first bounded verification command.
+    governing_notes:
+      - notes/lifecycle/03_stage_02_setup.md
+      - notes/catalogs/checklists/verification_command_catalog.md
+    expected_systems:
+      - notes
+      - plans
+      - checklists
+      - tests
+    bounded_proof:
+      - python3 -m pytest tests/unit/test_bootstrap_docs.py -q
+    e2e_target: planned
+  - flow_id: FLOW02
+    name: run_first_real_user_or_operator_narrative
+    kind: user_or_operator
+    status: planned
+    summary: Exercise the first real runtime flow through the true system boundaries the repository intends to claim.
+    governing_notes:
+      - notes/catalogs/checklists/e2e_execution_policy.md
+      - notes/lifecycle/05_stage_04_hardening_and_e2e.md
+    expected_systems:
+      - database
+      - cli
+      - daemon
+      - config
+      - prompts
+    bounded_proof: []
+    e2e_target: tests/e2e/test_e2e_first_flow.py

@@ -6,6 +6,12 @@ Show what a generated repository's starter `AGENTS.md` could look like under the
 
 This is an example output for the future generator design, not an authoritative `AGENTS.md` for this repository.
 
+The current future-plan bundle also carries a richer concrete starter-repo version at:
+
+- `plan/future_plans/project_skeleton_generator/draft_repo/AGENTS.md`
+
+Treat that draft file as the primary review surface when evaluating what a cloneable starter repo should ship today.
+
 ## Design Goals
 
 The generated `AGENTS.md` should:
@@ -114,17 +120,11 @@ Use completion language carefully:
 
 Do not describe work as complete, verified, flow-complete, or release-ready unless the current stage and proof surface justify it.
 
-## Stack Defaults
+## Stack Declaration Rule
 
-Default stack for this repository:
+This starter repository is intentionally stack-agnostic until genesis and architecture work record the real choices.
 
-- `<database_stack_or_none>`
-- `<primary_language>`
-- `<runtime_or_server_stack>`
-- `<model_or_validation_stack>`
-- `<test_framework>`
-
-If the stack changes materially, update the relevant notes and lifecycle guidance instead of letting the change remain implicit.
+Once the repository chooses primary languages, frameworks, persistence layers, or test tools, record those decisions in the relevant notes and lifecycle surfaces instead of leaving them implicit.
 
 ## Practical Contributor Rule
 
@@ -146,10 +146,10 @@ The generator should substitute at least:
 
 - `<project_mission_summary>`
 - declared primary systems
-- stack defaults
 
 It may also optionally parameterize:
 
+- declared stack decisions once known
 - repository-specific forbidden shortcuts
 - deployment or security posture
 - external service expectations

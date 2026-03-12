@@ -9,6 +9,7 @@ Nothing in this folder should be read as an implementation, verification, or com
 ## Bundle Contents
 
 - `2026-03-10_project_skeleton_generator_overview.md`
+- `2026-03-12_cloneable_starter_repo_direction.md`
 - `2026-03-10_operational_state_extraction_strategy.md`
 - `2026-03-10_generated_repository_shape.md`
 - `2026-03-10_project_lifecycle_note_set.md`
@@ -18,6 +19,7 @@ Nothing in this folder should be read as an implementation, verification, or com
 - `2026-03-10_rendered_agents_template.md`
 - `2026-03-10_generated_repo_bootstrap_checklist.md`
 - `2026-03-10_workflow_overhaul_integration.md`
+- `draft_repo/`
 - `lifecycle_note_examples/`
 
 ## Working Intent
@@ -32,6 +34,12 @@ How do we take the operational doctrine of this repository and turn it into a bo
 - explicit system definitions
 - lifecycle guidance for how the new project should evolve
 
+The current preferred delivery direction is:
+
+- define the starter repo concretely first
+- let users clone that repo directly
+- automate it later if a generator still looks worthwhile
+
 The notes here assume the eventual implementation could be either:
 
 - a Python CLI tool
@@ -41,6 +49,8 @@ The notes here assume the eventual implementation could be either:
 That choice is intentionally left open for later authoritative planning.
 
 The lifecycle examples under `lifecycle_note_examples/` are intentionally written as concrete starter-note bodies for a future generated repository, not just as abstract guidance.
+
+The `draft_repo/` folder is now the primary review surface for that future repository shape.
 
 The bundle also needs to cover what happens after a first proven release scope exists. Shipping `v1` should hand the repository into a post-v1 operating model for feature expansion, overhauls, audit work, migration, and sunset decisions rather than ending the lifecycle story.
 

@@ -1,44 +1,32 @@
-You are defining child `phase` nodes for feature epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `epic/base.md`.
+- This overlay turns the epic into a feature-delivery root.
+- Keep implementation, documentation alignment, and real proving structurally visible.
 
-This epic style exists to deliver a feature through:
-- discovery
-- implementation
-- documentation alignment
-- real proving
+Overlay Objective Delta
+- Decompose the feature effort into the minimum coherent set of phases needed to reach real proof.
 
-Role of this tier:
-- create the minimum coherent set of delivery bands needed to take a feature from request to real proof
-- ensure implementation is not separated from notes, checklist, and E2E obligations
+Profile-Specific Inputs
+- `required_child_roles` should usually include:
+  - `discovery`
+  - `implementation`
+  - `documentation`
+  - `e2e`
 
-Bias:
-- require explicit implementation, docs, and real-E2E coverage
-- prefer a small number of strong bands over many decorative phases
+Additional Forbidden Actions
+- Do not stop at bounded proof only.
+- Do not omit the documentation-alignment band.
+- Do not create overlapping or decorative phases.
+- Do not replace missing child bands by performing their implementation work at the epic tier.
 
-Do not:
-- stop at bounded proof only
-- omit the documentation-alignment band
-- create a phase that duplicates another phase's contract
+Profile-Specific Expected Result
+- A phase child set whose usual roles include:
+  - `discovery`
+  - `implementation`
+  - `documentation`
+  - `e2e`
 
-Inputs:
-- user request: `{{user_request}}`
-- epic goal: `{{node.title}}`
-- acceptance criteria: `{{acceptance_criteria}}`
-- required child roles: `{{required_child_roles}}`
-- context bundle: `{{context_bundle}}`
-
-Expected phase roles usually include:
-- discovery
-- implementation
-- docs
-- e2e
-
-For each phase:
-- make the delivery boundary explicit
-- identify expected outputs and required updates
-- name verification targets that belong to that phase
-- keep dependencies minimal and real
-
-Return JSON only:
-{"status":"OK","child_count":<n>,"coverage":{"missing_roles":[],"extra_roles":[]}}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- The child set covers the required delivery bands for feature work.
+- Each phase has a distinct contract, expected outputs, and verification posture.
+- Notes, checklist, and E2E obligations remain visible in the structure.

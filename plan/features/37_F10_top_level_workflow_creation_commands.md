@@ -32,7 +32,7 @@ Read these note files before implementing or revising this phase:
 
 - Database: persist prompt-driven request inputs, initial node version, initial compiled workflow binding, and start metadata.
 - CLI: implement top-level create/start commands for arbitrary supported node kinds.
-- Daemon: resolve the requested kind, create the top-level node version, compile it, and optionally start the run.
+- Daemon: resolve the requested kind, create the top-level node version, compile it, and when `start_run` is enabled admit the run plus bind the authoritative primary session.
 - YAML: ensure node definitions are discoverable for prompt-driven top-level creation.
 - Prompts: bind the incoming user prompt to initial node creation and main prompt context correctly.
 - Tests: exhaustively cover valid create flows, bad kinds, missing prompt cases, compile failures on create, and create-without-run versus create-and-run behavior.

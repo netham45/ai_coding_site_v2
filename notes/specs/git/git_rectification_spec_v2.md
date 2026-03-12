@@ -147,6 +147,7 @@ Implementation staging note:
 - merge execution in this phase now shells out to live `git fetch` and `git merge --no-ff --no-edit` against the per-version runtime repos
 - the daemon records replayable `merge_events`, persists `merge_conflicts` on conflict, and writes the derived parent reconcile context into the active run cursor
 - the incremental parent-merge conflict path now uses that same cursor channel to persist daemon-assembled conflict handoff context for the active parent run, and conflict resolution updates that cursor payload rather than relying on the parent AI to rediscover current conflict state from durable tables alone
+- for incremental parent-merge conflicts, `resolve_conflict` now also validates that the parent repo has been manually resolved and committed, then advances the affected merge row, merge event head, and parent lane to that resolved commit so dependency unblock can proceed
 
 ---
 
@@ -210,6 +211,9 @@ If `PL2_2` changes, the system should:
 Rule:
 
 - siblings are reused by current final commit unless their own definitions or inputs changed
+- a sibling that depends on regenerated prerequisite sibling output counts as input-changed even if its own prompt did not change
+- when that stronger dependency-invalidated restart path applies, the sibling gets a fresh version with no reused child tree and must rematerialize after parent refresh rather than carrying its old children forward
+- ancestor candidate rebuilds must remap that fresh dependency-invalidated sibling candidate into the rebuilt parent lineage and rebind its `parent_node_version_id` to the rebuilt ancestor candidate rather than leaving the parent candidate attached to the stale authoritative sibling version
 
 ---
 

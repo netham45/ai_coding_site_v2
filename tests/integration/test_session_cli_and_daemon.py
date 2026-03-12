@@ -9,8 +9,10 @@ from fastapi.testclient import TestClient
 from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.app import create_app
 from aicoding.daemon.versioning import initialize_node_version
-from aicoding.db.models import CompiledSubtask, Session as DurableSession
+from aicoding.daemon.session_records import auto_supervise_primary_sessions
+from aicoding.db.models import CompiledSubtask, NodeRunState, Session as DurableSession
 from aicoding.db.session import create_session_factory, session_scope
+from aicoding.errors import ConfigurationError
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
 from tests.helpers.daemon import DaemonBridgeClient
@@ -72,6 +74,91 @@ def test_session_show_current_reports_stale_binding_for_bootstrap(
     assert current_result.json()["recommended_action"] == "resume_existing_session"
 
 
+def test_session_show_and_recovery_status_report_preserved_dead_tmux_process(
+    cli_runner,
+    daemon_bridge_client,
+    monkeypatch,
+    migrated_public_schema,
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Dead Process CLI", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    bind_result = cli_runner(["session", "bind", "--node", node_id])
+    session_name = bind_result.json()["session_name"]
+    daemon_bridge_client.client.app.state.session_adapter.terminate_process(session_name, exit_status=19)
+
+    show_result = cli_runner(["session", "show", "--node", node_id])
+    recovery_result = cli_runner(["node", "recovery-status", "--node", node_id])
+
+    assert show_result.exit_code == 0
+    assert show_result.json()["tmux_session_exists"] is True
+    assert show_result.json()["tmux_process_alive"] is False
+    assert show_result.json()["tmux_exit_status"] == 19
+    assert show_result.json()["recovery_classification"] == "lost"
+    assert show_result.json()["recommended_action"] == "create_replacement_session"
+    assert recovery_result.exit_code == 0
+    assert recovery_result.json()["tmux_session_exists"] is True
+    assert recovery_result.json()["tmux_process_alive"] is False
+    assert recovery_result.json()["tmux_exit_status"] == 19
+    assert recovery_result.json()["recovery_classification"] == "lost"
+    assert recovery_result.json()["reason"] == "tmux_process_exited"
+
+
+def test_session_show_current_hides_superseded_version_session_after_cutover(
+    cli_runner,
+    daemon_bridge_client,
+    monkeypatch,
+    migrated_public_schema,
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Supersede CLI", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    bind_result = cli_runner(["session", "bind", "--node", node_id])
+    assert bind_result.exit_code == 0
+    old_session_id = bind_result.json()["session_id"]
+    old_version_id = bind_result.json()["node_version_id"]
+
+    assert cli_runner(["node", "cancel", "--node", node_id]).exit_code == 0
+    supersede_result = cli_runner(["node", "supersede", "--node", node_id, "--title", "Supersede CLI v2"])
+    assert supersede_result.exit_code == 0
+    candidate_version_id = supersede_result.json()["id"]
+    assert cli_runner(["node", "version", "cutover", "--version", candidate_version_id]).exit_code == 0
+
+    current_result = cli_runner(["session", "show-current"])
+    list_result = cli_runner(["session", "list", "--node", node_id])
+
+    assert current_result.exit_code == 0
+    assert current_result.json()["status"] == "none"
+    assert list_result.exit_code == 0
+    assert list_result.json()["sessions"] == []
+
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+    current_after_restart = cli_runner(["session", "show-current"])
+    show_result = cli_runner(["node", "show", "--node", node_id])
+    lifecycle_result = cli_runner(["node", "lifecycle", "show", "--node", node_id])
+
+    assert current_after_restart.exit_code == 0
+    assert current_after_restart.json()["status"] == "none"
+    assert show_result.exit_code == 0
+    assert lifecycle_result.exit_code == 0
+    assert show_result.json()["authoritative_node_version_id"] == candidate_version_id
+    assert lifecycle_result.json()["node_version_id"] == candidate_version_id
+    assert old_session_id
+    assert old_version_id != candidate_version_id
+
+
 def test_session_attach_and_resume_commands_round_trip(cli_runner, daemon_bridge_client, monkeypatch, migrated_public_schema) -> None:
     monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
     monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
@@ -111,6 +198,70 @@ def test_session_attach_and_resume_commands_round_trip(cli_runner, daemon_bridge
     assert len(list_result.json()["sessions"]) == 1
     assert recovery_result.exit_code == 0
     assert recovery_result.json()["recommended_action"] in {"attach_existing_session", "resume_existing_session"}
+
+
+def test_cli_failed_supervision_run_stays_inspectable_through_session_and_run_reads(
+    cli_runner,
+    daemon_bridge_client,
+    monkeypatch,
+    migrated_public_schema,
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
+
+    create_result = cli_runner(["node", "create", "--kind", "epic", "--title", "Failed Supervision CLI", "--prompt", "boot prompt"])
+    node_id = create_result.json()["node_id"]
+    assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
+    assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
+    assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+
+    bind_result = cli_runner(["session", "bind", "--node", node_id])
+    session_id = bind_result.json()["session_id"]
+    session_name = bind_result.json()["session_name"]
+    factory = daemon_bridge_client.client.app.state.db_session_factory
+    adapter = daemon_bridge_client.client.app.state.session_adapter
+    adapter.kill_session(session_name)
+
+    with session_scope(factory) as session:
+        state = session.query(NodeRunState).one()
+        state.lifecycle_state = "PAUSED"
+        state.pause_flag_name = "manual_pause"
+        state.is_resumable = False
+
+    def broken_create_session(session_name: str, command: str, working_directory: str, environment=None):
+        raise ConfigurationError(message="forced replacement failure", code="forced_replacement_failure")
+
+    adapter.create_session = broken_create_session  # type: ignore[method-assign]
+    auto_supervise_primary_sessions(
+        factory,
+        adapter=daemon_bridge_client.client.app.state.session_adapter,
+        poller=daemon_bridge_client.client.app.state.session_poller,
+    )
+
+    show_result = cli_runner(["session", "show", "--node", node_id])
+    run_result = cli_runner(["node", "run", "show", "--node", node_id])
+    subtask_current_result = cli_runner(["subtask", "current", "--node", node_id])
+    recovery_result = cli_runner(["node", "recovery-status", "--node", node_id])
+    resume_result = cli_runner(["session", "resume", "--node", node_id])
+    prompt_result = cli_runner(["subtask", "prompt", "--node", node_id])
+
+    assert show_result.exit_code == 0
+    assert show_result.json()["session_id"] == session_id
+    assert show_result.json()["run_status"] == "FAILED"
+    assert show_result.json()["recommended_action"] == "inspect_failed_run"
+    assert show_result.json()["terminal_failure"]["failure_origin"] == "session_supervision"
+    assert run_result.exit_code == 0
+    assert run_result.json()["run"]["run_status"] == "FAILED"
+    assert run_result.json()["terminal_failure"]["failure_origin"] == "session_supervision"
+    assert subtask_current_result.exit_code == 0
+    assert subtask_current_result.json()["run"]["run_status"] == "FAILED"
+    assert recovery_result.exit_code == 0
+    assert recovery_result.json()["recovery_classification"] == "non_resumable"
+    assert recovery_result.json()["recommended_action"] == "inspect_failed_run"
+    assert resume_result.exit_code == 0
+    assert resume_result.json()["status"] == "recovery_rejected"
+    assert prompt_result.exit_code != 0
+    assert "latest run failed after session supervision recovery failure" in prompt_result.stderr_json()["details"]["response"]["detail"]
 
 
 def test_session_provider_resume_and_provider_recovery_status_round_trip(
@@ -160,9 +311,13 @@ def test_cli_subtask_prompt_and_context_include_stage_start_context(cli_runner, 
     payload = create_result.json()
     node_id = payload["node"]["node_id"]
 
+    session_result = cli_runner(["session", "show", "--node", node_id])
     prompt_result = cli_runner(["subtask", "prompt", "--node", node_id])
     context_result = cli_runner(["subtask", "context", "--node", node_id])
 
+    assert session_result.exit_code == 0
+    assert session_result.json()["status"] == "bound"
+    assert session_result.json()["logical_node_id"] == node_id
     assert prompt_result.exit_code == 0
     assert prompt_result.json()["stage_context_json"]["startup"]["node_id"] == node_id
     assert prompt_result.json()["stage_context_json"]["startup"]["trigger_reason"] == "workflow_start"

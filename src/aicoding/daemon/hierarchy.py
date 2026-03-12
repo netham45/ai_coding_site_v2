@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.db.models import HierarchyNode, NodeHierarchyDefinition
+from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeHierarchyDefinition, NodeVersion
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import HierarchyRegistry, NodeDefinition
 
@@ -135,7 +135,19 @@ def get_hierarchy_node(session_factory: sessionmaker[Session], node_id: UUID) ->
 
 def list_children(session_factory: sessionmaker[Session], node_id: UUID) -> list[HierarchyNodeSnapshot]:
     with query_session_scope(session_factory) as session:
-        rows = session.execute(select(HierarchyNode).where(HierarchyNode.parent_node_id == node_id).order_by(HierarchyNode.created_at)).scalars().all()
+        selector = session.get(LogicalNodeCurrentVersion, node_id)
+        if selector is not None:
+            rows = session.execute(
+                select(HierarchyNode)
+                .join(NodeVersion, NodeVersion.logical_node_id == HierarchyNode.node_id)
+                .join(NodeChild, NodeChild.child_node_version_id == NodeVersion.id)
+                .where(NodeChild.parent_node_version_id == selector.authoritative_node_version_id)
+                .order_by(NodeChild.ordinal, HierarchyNode.created_at)
+            ).scalars().all()
+        else:
+            rows = session.execute(
+                select(HierarchyNode).where(HierarchyNode.parent_node_id == node_id).order_by(HierarchyNode.created_at)
+            ).scalars().all()
         return [
             HierarchyNodeSnapshot(
                 node_id=row.node_id,

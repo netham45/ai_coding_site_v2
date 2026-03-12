@@ -10,6 +10,8 @@ import pytest
 from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.history import get_prompt_record, get_summary_record, list_prompt_history, list_summary_history
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
+from aicoding.daemon.session_records import auto_supervise_primary_sessions, bind_primary_session
 from aicoding.daemon.run_orchestration import (
     approve_paused_run,
     advance_workflow,
@@ -29,6 +31,7 @@ from aicoding.daemon.run_orchestration import (
     succeed_current_subtask,
     start_subtask_attempt,
     _synthesized_command_subtask_prompt,
+    sync_paused_run,
     sync_resumed_run,
 )
 from aicoding.daemon.versioning import initialize_node_version
@@ -737,3 +740,36 @@ def test_user_gate_pause_requires_approval_before_resume(db_session_factory, mig
     assert approved.state.execution_cursor_json["pause_context"]["approved"] is True
     assert resumed.run.run_status == "RUNNING"
     assert resumed.state.pause_flag_name is None
+
+
+def test_load_current_run_progress_falls_back_to_latest_supervision_failed_run(db_session_factory, migrated_public_schema) -> None:
+    node, _, _ = _create_started_run(db_session_factory)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=lambda: adapter.now())
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    sync_paused_run(db_session_factory, logical_node_id=node.node_id, pause_flag_name="manual_pause")
+    adapter.kill_session(bound.tmux_session_name or "")
+
+    auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+    progress = load_current_run_progress(db_session_factory, logical_node_id=node.node_id)
+
+    assert progress.run.run_status == "FAILED"
+    assert progress.state.lifecycle_state == "FAILED_TO_PARENT"
+    assert progress.terminal_failure is not None
+    assert progress.terminal_failure["failure_origin"] == "session_supervision"
+
+
+def test_load_current_subtask_prompt_reports_closed_supervision_failed_run(db_session_factory, migrated_public_schema) -> None:
+    node, _, _ = _create_started_run(db_session_factory)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=lambda: adapter.now())
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    sync_paused_run(db_session_factory, logical_node_id=node.node_id, pause_flag_name="manual_pause")
+    adapter.kill_session(bound.tmux_session_name or "")
+
+    auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+
+    with pytest.raises(DaemonConflictError) as exc:
+        load_current_subtask_prompt(db_session_factory, logical_node_id=node.node_id)
+
+    assert "latest run failed after session supervision recovery failure" in str(exc.value.detail)

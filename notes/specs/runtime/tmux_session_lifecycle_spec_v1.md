@@ -49,9 +49,11 @@ It narrows specifically to tmux/session lifecycle doctrine.
 5. Fresh primary-session bootstrap must use the canonical CLI prompt retrieval surface rather than reconstructing prompt text ad hoc inside tmux startup logic.
 6. Prompt logging under `./prompt_logs/<project_name>/...` is an audit artifact, not the authoritative prompt source.
 7. Fresh and replacement tmux sessions must be launched with the daemon-owned runtime environment required for CLI, auth-token, database, prompt, and provider access; tmux-server ambient environment is not authoritative.
-8. Primary-session cwd must follow the configured daemon-owned workspace root when one exists, rather than defaulting silently to the repo root.
-9. Recovery must prefer safe reuse of an existing valid session before replacement.
-10. Replacement of a lost session must preserve the prior durable session history.
+8. Primary-session cwd must resolve to the authoritative node runtime repo when one exists; only nodes without a bootstrapped runtime repo may fall back to the configured daemon-owned workspace root.
+9. Tmux pane/session existence and live runtime-process health are separate signals; a preserved dead pane must remain inspectable but may not be treated as a healthy session.
+10. Recovery must prefer safe reuse of an existing valid session before replacement.
+11. Replacement of a lost session must preserve the prior durable session history.
+12. For unfinished runnable work, the daemon must supervise authoritative tracked primary sessions and ensure the required tmux session remains running; if safe replacement cannot be completed, the unfinished run must fail durably rather than remaining silently stuck.
 
 ---
 
@@ -94,6 +96,11 @@ Before tmux binding is legal:
 - the active run must be admitted
 - the compiled workflow cursor must exist durably
 
+Top-level startup note:
+
+- `workflow start` and the project-scoped website top-level create route treat `start_run = true` as a daemon-owned request to admit the run and bind the authoritative primary session in the same startup flow
+- `--no-run` or `start_run = false` still stops at compiled/ready without creating a primary session
+
 ### 2. Bind request accepted
 
 `session bind --node <node_id>` is the daemon-owned request that creates or reuses the authoritative primary session binding.
@@ -111,17 +118,20 @@ If the existing durable record points at a missing tmux session:
 For a fresh primary session:
 
 - the daemon derives the tmux session name from durable run/session identity
-- the daemon launches a tmux session in the configured workspace-root cwd when one exists
+- the daemon launches a tmux session in the authoritative node runtime repo when one exists
+- the daemon enables tmux `remain-on-exit` for daemon-managed primary sessions so fast bootstrap failures leave an inspectable pane instead of disappearing immediately
+- if the node has not yet bootstrapped a runtime repo, the daemon may fall back to the configured workspace-root cwd
 - the daemon injects the daemon-owned runtime environment into tmux session creation rather than relying on preexisting tmux-server environment inheritance
 - the daemon must not forward the parent shell's `TERM` into tmux session creation; tmux must set the pane terminal type itself, otherwise detached pytest/runtime launches can inherit `TERM=dumb` and break Codex bootstrap
 - the daemon records launch metadata durably
+- session inspection surfaces must expose both tmux pane existence and live-process/exit-status state so preserved dead panes are distinguishable from healthy live sessions
 
 ### 4. Prompt bootstrap and Codex launch
 
 Fresh primary-session bootstrap is expected to:
 
 - reference the canonical CLI prompt command:
-  - `python3 -m aicoding.cli.main subtask prompt --node <node_id>`
+  - `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>`
 - write the returned prompt to:
   - `./prompt_logs/<project_name>/...`
 - invoke Codex with an instruction equivalent to:
@@ -138,8 +148,9 @@ Implementation note:
 Provider integration note:
 
 - live Codex may still present a workspace-trust prompt for a daemon-owned workspace even when launched with `codex --yolo ...`
-- tmux-backed runtime integration must handle that provider prompt before the actual stage prompt can run
-- that provider-acceptance step is part of the real tmux/Codex integration boundary, not a substitute for the task prompt itself
+- tmux-backed fresh and recovery launch must preseed a session-owned Codex `config.toml` with trusted-workspace entries for the intended workspace path and any adjacent daemon-owned path Codex resolves during startup
+- tmux-backed launch should also invoke Codex with an explicit `-C <working_directory>` so provider-side workspace resolution does not drift away from the daemon-owned session cwd
+- the daemon no longer drives that provider UI through tmux send-keys fallback logic; if provider-side trust preseed fails to suppress the prompt, that is treated as a launch-contract defect
 
 ### 5. Active execution
 
@@ -158,6 +169,7 @@ That means:
 
 - the durable session record is still valid
 - the tmux session still exists
+- the pane process is still alive
 - the system should prefer reattach, not replacement
 
 ### 7. Stale session
@@ -167,6 +179,7 @@ A session may be stale but still recoverable.
 That means:
 
 - the durable record still points to a live tmux session
+- the pane process is still alive
 - heartbeat or screen activity is old enough to classify the session as stale
 - the system may resume or nudge depending on the runtime policy
 
@@ -179,6 +192,10 @@ When that happens:
 - the old durable session must remain inspectable as prior history
 - the run may still be resumable
 - replacement logic, not silent reuse, becomes the valid path
+
+Implementation note:
+
+- a primary session is also treated as `lost` when tmux still preserves the pane but the pane process has already exited; that case must surface `tmux_session_exists=true` together with `tmux_process_alive=false` and any known exit status
 
 ---
 
@@ -268,6 +285,19 @@ If the expected tmux session is dead and the runtime chooses replacement:
 - the new primary session should have its own durable session row
 - the replacement launch must be inspectable as a recovery event, not merely a new bind
 
+### Autonomous supervision requirement
+
+The daemon may not rely only on operator-triggered `session resume` or `session bind` calls to keep active work alive.
+
+For authoritative tracked primary sessions tied to unfinished work:
+
+- the daemon should periodically inspect whether the expected tmux session still exists
+- if the expected tmux session is gone and the node/run is still eligible for execution, the daemon should attempt safe replacement automatically
+- automatic creation or replacement should be limited to runnable or already-active work; it must not start tmux sessions for terminal, cancelled, superseded, or otherwise non-runnable nodes
+- if the task or run is not complete and safe replacement cannot be created, the daemon should record that failed recovery durably and fail the run rather than leaving it in a silent stuck state
+
+This autonomous supervision contract is part of the authoritative tmux lifecycle, not a best-effort optional enhancement.
+
 ### Resume command for dead-session recovery
 
 When the recovery path chooses the provider-specific Codex resume route for a dead expected tmux session, the replacement launch contract is:
@@ -292,7 +322,7 @@ The prompt bootstrap contract exists to keep prompt delivery:
 
 The authoritative prompt source for fresh bootstrap is the current-stage CLI retrieval command:
 
-- `python3 -m aicoding.cli.main subtask prompt --node <node_id>`
+- `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>`
 
 ### Prompt log
 
@@ -355,10 +385,16 @@ The tmux lifecycle depends on these operator and AI-facing surfaces at minimum:
 - `session events --session <session_id>`
 - `node recovery-status --node <node_id>`
 - `subtask current --node <node_id>`
-- `subtask prompt --node <node_id>`
+- `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>`
 - `subtask context --node <node_id>`
 
 If tmux lifecycle behavior cannot be explained through those surfaces plus durable state, the implementation is incomplete.
+
+Implementation note:
+
+- if session supervision marks the tracked primary session lost, records `supervision_recovery_failed`, and the run becomes terminally failed, `session show --node <node_id>`, `node run show --node <node_id>`, `subtask current --node <node_id>`, and `node recovery-status --node <node_id>` must remain inspectable through the latest failed run/session snapshot rather than collapsing immediately to a generic active-run error
+- those fallback payloads should expose a bounded `terminal_failure` bundle and an `inspect_failed_run` recommendation
+- `subtask prompt` and `subtask context` should remain non-runnable once that terminal failure is durable, but their rejection should explicitly direct the caller back to the failed-run inspection surfaces instead of saying only that no active run exists
 
 ---
 

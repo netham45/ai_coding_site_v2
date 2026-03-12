@@ -118,6 +118,7 @@ Condition:
 - active session record exists
 - heartbeat is stale
 - tmux session still exists
+- pane process is still alive
 
 Action:
 
@@ -131,13 +132,17 @@ Action:
 Condition:
 
 - active session record exists
-- tmux session no longer exists
+- tmux session no longer exists, or tmux preserved the pane after the runtime process already exited
 
 Action:
 
 - treat the original session as lost
 - create replacement session if run is resumable
 - preserve old session history
+
+Inspection rule:
+
+- when tmux preserves a dead pane, recovery and inspection surfaces must report `tmux_session_exists=true`, `tmux_process_alive=false`, and the pane exit status when tmux exposes it; the preserved pane is an audit surface, not proof of a healthy running session
 
 Implementation staging note:
 
@@ -185,6 +190,11 @@ Action:
 - do not auto-resume
 - pause for user or require explicit operator intervention
 
+Implementation staging note:
+
+- when session supervision itself is what terminally failed the run, the latest failed run/session must remain readable through ordinary inspection surfaces such as `session show --node <id>`, `ai-tool subtask current --node <id>`, and `ai-tool node recovery-status --node <id>`
+- those reads should expose a bounded terminal-failure explanation and recommend inspection rather than further recovery
+
 ## Case 8: Git state mismatch
 
 Condition:
@@ -228,11 +238,12 @@ Load:
 - run state
 - active primary session
 - latest subtask attempt
-- lifecycle state
+- lifecycle state bound to the same `node_version_id` as the active run
 
 If no active run exists:
 
 - recovery should not create one implicitly unless the user explicitly requested a new run
+- recovery must also ignore stale lifecycle or daemon-authority rows whose bound `node_version_id` no longer matches the active authoritative version
 
 ## Step 2: Check resumability
 

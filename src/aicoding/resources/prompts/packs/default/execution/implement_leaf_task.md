@@ -44,7 +44,7 @@ Execution rules:
 Completion contract:
 - if the work is complete, record a concise durable summary
 - after `subtask succeed`, follow the routed daemon outcome instead of manually chaining `summary register`, `subtask complete`, `workflow advance`, or post-success next-stage probing
-- if the routed outcome is `next_stage`, fetch the next stage prompt with `python3 -m aicoding.cli.main subtask prompt --node {{node_id}}` and continue in the same session
+- if the routed outcome is `next_stage`, fetch the next stage prompt with `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node {{node_id}}` and continue in the same session
 - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands
 - if blocked, fail safely with the smallest actionable explanation
 - do not stall silently or switch to unrelated work

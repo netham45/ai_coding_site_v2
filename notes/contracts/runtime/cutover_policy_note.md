@@ -94,6 +94,55 @@ Reason:
 
 ---
 
+## Required Cutover Scope Enumeration
+
+`upstream lineage cutover` is only implementation-ready if the runtime can enumerate the exact required scope.
+
+The runtime should expose a conceptual function:
+
+`enumerate_required_cutover_scope(candidate_root_version_id) -> scope_summary`
+
+The returned scope summary must include:
+
+- `candidate_root_version_id`
+- required descendant candidate versions
+- required ancestor candidate versions
+- scope kind such as `local`, `subtree`, or `upstream`
+- stopping reason such as `root_reached`, `explicit_scope_boundary`, or `no_parent`
+- authoritative baseline version ids the candidate was built against
+
+Enumeration order rule:
+
+- the required candidate version list should be emitted in deterministic replay-safe order
+- descendants should appear before rebuilt ancestors
+- where multiple candidates remain unordered after dependency analysis, use a stable layout or creation-order tie break
+
+Current implementation status:
+
+- `src/aicoding/daemon/rebuild_coordination.py` exposes `enumerate_required_cutover_scope(...)`
+- rebuild-backed candidates now enumerate required sibling and ancestor membership from durable `RebuildEvent` history
+- emitted candidate ordering is deterministic and descendant-first so replay-sensitive scope members appear before rebuilt ancestors
+- non-rebuild candidates still collapse to `local` scope
+- cutover-readiness inspection now aggregates blockers across the enumerated required scope instead of judging only the requested candidate version
+- manual cutover now uses that same grouped scope for authority transfer, rebinding each switched logical node's live runtime ownership to the new authoritative version inside the same mutation batch
+- when the requested candidate is a rebuilt ancestor, cutover-readiness may return `ready_with_follow_on_replay` if the only remaining blockers belong to dependency-invalidated fresh-restart descendants that are explicitly waiting for post-cutover parent refresh/rematerialization
+- direct cutover of the dependency-invalidated descendant itself remains blocked; the follow-on exception is grouped-scope-only
+
+Recommended default rule:
+
+- unless a narrower explicit policy is provided and proven safe, stop only when the rebuilt path reaches the highest ancestor whose effective output still consumes the candidate subtree
+
+Implementation rule:
+
+- cutover readiness must be computed against this enumerated scope, not against the candidate root in isolation
+- manual candidate cutover should switch authority for the full enumerated scope, not only for the requested root candidate version
+
+Current limitation:
+
+- grouped readiness and manual cutover now share the same required scope, but the broader post-cutover fresh-rematerialization narrative still remains partial and is not yet proved end to end for every rebuild-backed lineage shape with real prerequisite merge progression
+
+---
+
 ## Default Cutover Policy
 
 The default policy should be:
@@ -281,6 +330,39 @@ This note does not force the final exact table names, but the runtime concept sh
 
 ---
 
+## Authoritative-Baseline Drift
+
+If a candidate rebuild starts from authoritative baseline A and the authoritative lineage advances to baseline B before cutover:
+
+- the candidate must not auto-cut over
+- cutover readiness must report a blocker equivalent to `authoritative_lineage_changed_since_rebuild_started`
+- the candidate may later be rebuilt or revalidated from B according to policy
+
+Reason:
+
+- otherwise the system can cut over a candidate lineage built against stale assumptions after the active authoritative tree already changed
+
+---
+
+## Canonical Live Coordination Blockers
+
+Cutover-readiness and rebuild-coordination surfaces should expose explicit blocker kinds such as:
+
+- `active_authoritative_run`
+- `active_authoritative_primary_session`
+- `candidate_compile_failed`
+- `candidate_merge_conflict`
+- `candidate_replay_incomplete`
+- `required_descendant_not_stable`
+- `required_ancestor_not_stable`
+- `approval_required`
+- `candidate_superseded`
+- `authoritative_lineage_changed_since_rebuild_started`
+
+These blocker kinds should be durable and inspectable rather than reconstructed ad hoc from mixed tables at read time.
+
+---
+
 ## Cutover Preconditions
 
 Before new lineage becomes authoritative, at minimum verify:
@@ -292,10 +374,21 @@ Before new lineage becomes authoritative, at minimum verify:
 - final commits are recorded for required rebuilt nodes
 - no unresolved merge conflicts remain
 - no blocking user gate remains unresolved
+- the candidate baseline still matches the current authoritative lineage or has been explicitly revalidated after baseline drift
 
 If any precondition fails:
 
 - cutover must not occur
+
+The candidate lineage should be considered `stable_for_cutover` only if all required scope members:
+
+- exist
+- are still the current candidate versions for their logical nodes
+- compiled successfully
+- have required final commits or replay-complete state recorded
+- have no unresolved candidate merge conflicts
+- have no unresolved user or policy gate
+- have not been invalidated by supersession or authoritative-baseline drift
 
 ---
 
@@ -355,6 +448,51 @@ This keeps authority transfer inspectable and reversible until approval.
 
 ---
 
+## Candidate Replay Versus Live Incremental Merge
+
+The runtime now has two distinct merge models.
+
+### Authoritative live incremental merge
+
+- daemon-owned
+- completion-driven
+- mutates the current authoritative parent lineage in place
+- records actual applied merge order as historical runtime truth
+
+### Candidate-lineage replay
+
+- rebuild-owned
+- deterministic and dependency-safe
+- replays child finals into a fresh candidate lineage from seed or baseline state
+- prepares a candidate lineage for later cutover
+
+Implementation rule:
+
+- candidate cutover must evaluate candidate replay state, not live incremental merge state
+- authoritative live `applied_merge_order` is useful audit history but is not the binding replay order for candidate rebuild unless the candidate child set is identical and no dependency-visible inputs changed
+
+---
+
+## Candidate Replay Input Selection
+
+Candidate replay should source child inputs in this precedence order:
+
+1. regenerated candidate child final for that lineage
+2. explicitly reused authoritative child final whose reuse classification is still valid
+3. otherwise the child is not replayable yet and candidate replay remains incomplete
+
+Recommended replay order:
+
+- topological over the rebuilt and reused child set
+- if multiple children remain unordered after dependency analysis, use a stable layout or ordinal order
+
+Reason:
+
+- authoritative live merge order is completion-driven operational history
+- candidate replay should be deterministic so rebuild audit and cutover-readiness stay reproducible
+
+---
+
 ## Rollback Semantics
 
 In this model, rollback should usually mean:
@@ -374,12 +512,42 @@ This is simpler and more auditable than trying to “undo” the old lineage.
 
 ---
 
+## Reuse And Invalidation Rules During Candidate Rebuild
+
+A sibling child may be reused into a candidate lineage only if all of the following remain true:
+
+- its authoritative final exists
+- it is not itself being regenerated in the candidate lineage
+- it does not depend directly or transitively on rebuilt sibling output that changes effective parent-visible state
+- its compile/render inputs remain equivalent for the candidate lineage
+- policy does not require rematerialization against a new candidate parent baseline
+
+A sibling must be regenerated or blocked pending refresh if any of the following are true:
+
+- it depends on rebuilt sibling output that changes effective parent-visible state
+- it was bootstrapped from parent state that is no longer the candidate parent baseline it would run against
+- its compile/render inputs changed in the candidate lineage
+- its descendants or generated structure depend on rebuilt sibling or parent output
+
+Recommended implementation surface:
+
+- persist a child replay classification such as `reuse`, `regenerate`, or `blocked_pending_parent_refresh`
+- persist an explanatory reason such as `reused_unaffected_child`, `invalidated_by_dependency_change`, `invalidated_by_parent_state_change`, or `invalidated_by_compile_input_change`
+
+---
+
 ## Pseudocode
 
 ```python
 def maybe_cut_over_lineage(logical_node_id, candidate_root_version_id):
-    candidate_scope = get_required_cutover_scope(candidate_root_version_id)
+    candidate_scope = enumerate_required_cutover_scope(candidate_root_version_id)
     if not scope_is_stable(candidate_scope):
+        return "not_ready"
+
+    if candidate_replay_is_incomplete(candidate_scope):
+        return "not_ready"
+
+    if authoritative_baseline_changed(candidate_scope):
         return "not_ready"
 
     if has_unresolved_user_gate(candidate_scope):
@@ -396,6 +564,9 @@ This is intentionally simple. The implementation must expand:
 - what the required scope is
 - how authority markers are updated
 - how views switch over
+- how replay completeness is computed
+- how reused versus regenerated child finals are selected
+- how authoritative-baseline drift blocks a pending cutover
 
 ---
 

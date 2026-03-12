@@ -422,6 +422,8 @@ def _session_audit_snapshot(session: Session, row: Session) -> SessionAuditSnaps
             idle_seconds=None,
             in_alt_screen=None,
             tmux_session_exists=None,
+            tmux_process_alive=None,
+            tmux_exit_status=None,
             attach_command=None,
             recovery_classification=None,
         ),

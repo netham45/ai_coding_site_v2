@@ -17,6 +17,7 @@ from aicoding.db.models import NodeLifecycleState
 @dataclass(frozen=True, slots=True)
 class AuthorityStateSnapshot:
     node_id: str
+    node_version_id: UUID | None
     authority: str
     current_state: str
     current_run_id: UUID
@@ -28,6 +29,7 @@ class AuthorityStateSnapshot:
     def to_payload(self) -> dict[str, object]:
         return {
             "node_id": self.node_id,
+            "node_version_id": None if self.node_version_id is None else str(self.node_version_id),
             "authority": self.authority,
             "current_state": self.current_state,
             "current_run_id": str(self.current_run_id),
@@ -59,9 +61,13 @@ def load_authority_state(session_factory: sessionmaker[Session], node_id: str) -
         state = session.execute(_node_state_query(node_id)).scalar_one_or_none()
         if state is None or state.current_run_id is None:
             raise DaemonNotFoundError("node authority record not found")
+        target_version_id = _current_node_version_id(session, node_id)
+        if target_version_id is not None and state.node_version_id not in {None, target_version_id}:
+            raise DaemonNotFoundError("node authority record not found")
         lifecycle = session.get(NodeLifecycleState, node_id)
         return AuthorityStateSnapshot(
             node_id=state.node_id,
+            node_version_id=state.node_version_id,
             authority=state.authority,
             current_state=_canonical_state(lifecycle.lifecycle_state if lifecycle is not None else state.lifecycle_state),
             current_run_id=state.current_run_id,
@@ -81,14 +87,37 @@ def apply_authority_mutation(
     with session_scope(session_factory) as session:
         _lock_node(session, node_id)
         state = session.execute(_node_state_query(node_id)).scalar_one_or_none()
+        target_version_id = _current_node_version_id(session, node_id)
 
         if command == "node.run.start":
             lifecycle = session.get(NodeLifecycleState, node_id)
+            if target_version_id is not None and lifecycle is not None and lifecycle.node_version_id not in {None, target_version_id}:
+                lifecycle.current_run_id = None
+                lifecycle.run_status = None
+                lifecycle.current_task_id = None
+                lifecycle.current_subtask_id = None
+                lifecycle.current_subtask_attempt = None
+                lifecycle.last_completed_subtask_id = None
+                lifecycle.execution_cursor_json = {}
+                lifecycle.is_resumable = False
+                lifecycle.pause_flag_name = None
+                lifecycle.node_version_id = target_version_id
+            if target_version_id is not None and state is not None and state.node_version_id not in {None, target_version_id}:
+                state.current_run_id = None
+                state.node_version_id = target_version_id
+                state.lifecycle_state = "ready"
             if state is not None and state.current_run_id is not None:
                 raise DaemonConflictError("node already has an active durable run")
             if lifecycle is None:
-                lifecycle = NodeLifecycleState(node_id=node_id, lifecycle_state="READY", execution_cursor_json={})
+                lifecycle = NodeLifecycleState(
+                    node_id=node_id,
+                    node_version_id=target_version_id,
+                    lifecycle_state="READY",
+                    execution_cursor_json={},
+                )
                 session.add(lifecycle)
+            elif target_version_id is not None:
+                lifecycle.node_version_id = target_version_id
             previous_state = state.lifecycle_state if state is not None else None
             run_id = uuid4()
             _apply_transition(lifecycle, target_state="RUNNING", current_run_id=run_id)
@@ -153,6 +182,7 @@ def apply_authority_mutation(
         if state is None:
             state = DaemonNodeState(
                 node_id=node_id,
+                node_version_id=target_version_id,
                 current_run_id=run_id,
                 lifecycle_state=resulting_state,
                 authority="daemon",
@@ -162,6 +192,8 @@ def apply_authority_mutation(
             session.add(state)
         else:
             state.current_run_id = run_id
+            if target_version_id is not None:
+                state.node_version_id = target_version_id
             state.lifecycle_state = resulting_state
             state.authority = "daemon"
             state.last_command = command
@@ -170,6 +202,7 @@ def apply_authority_mutation(
         session.flush()
         return AuthorityStateSnapshot(
             node_id=state.node_id,
+            node_version_id=state.node_version_id,
             authority=state.authority,
             current_state=current_state,
             current_run_id=state.current_run_id,
@@ -186,3 +219,14 @@ def _canonical_state(state: str) -> str:
         "paused": "PAUSED_FOR_USER",
         "cancelled": "CANCELLED",
     }.get(state, state)
+
+
+def _current_node_version_id(session: Session, node_id: str) -> UUID | None:
+    from aicoding.db.models import LogicalNodeCurrentVersion
+
+    try:
+        logical_node_id = UUID(node_id)
+    except ValueError:
+        return None
+    selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+    return None if selector is None else selector.authoritative_node_version_id

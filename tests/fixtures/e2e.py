@@ -12,6 +12,7 @@ from tests.helpers.e2e import (
     build_real_daemon_env,
     create_test_database,
     drop_test_database,
+    launch_real_daemon_process,
     migrate_test_database,
     reserve_local_listener,
 )
@@ -48,29 +49,12 @@ def real_daemon_harness_factory(tmp_path: Path, monkeypatch):
             session_backend=session_backend,
             extra_env=extra_env,
         )
-        try:
-            with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
-                "w", encoding="utf-8"
-            ) as stderr_handle:
-                process = subprocess.Popen(
-                    [
-                        "python3",
-                        "-m",
-                        "uvicorn",
-                        "aicoding.daemon.app:create_app",
-                        "--factory",
-                        "--fd",
-                        str(listener.fileno()),
-                    ],
-                    cwd=Path(__file__).resolve().parents[2],
-                    env=env,
-                    text=True,
-                    stdout=stdout_handle,
-                    stderr=stderr_handle,
-                    pass_fds=(listener.fileno(),),
-                )
-        finally:
-            listener.close()
+        process = launch_real_daemon_process(
+            env=env,
+            listener=listener,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+        )
         harness = RealDaemonHarness(
             env=env,
             base_url=f"http://127.0.0.1:{port}",

@@ -23,6 +23,8 @@ Practical companion notes for this bundle now also include:
 - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_pydantic_model_draft.md`
 - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_route_design.md`
 - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_helper_assembly_draft.md`
+- `plan/future_plans/workflow_overhaul/2026-03-12_workflow_profile_persistence_and_surface_decisions.md`
+- `plan/future_plans/workflow_overhaul/2026-03-12_web_ui_integration_plan.md`
 
 ## Current Observations
 
@@ -35,12 +37,43 @@ Practical companion notes for this bundle now also include:
 
 ## Design Guardrails
 
-- Keep the existing `epic -> phase -> plan -> task` ladder as the structural baseline.
+- Keep the existing `epic -> phase -> plan -> task` ladder as the default built-in semantic ladder for this future bundle.
+- Do not treat that ladder as an exclusive top-level rule.
+- Preserve the repository doctrine that top-ness is structural, not semantic.
+- Any node kind should remain eligible to start as a top-level node when its hierarchy definition allows `allow_parentless: true`, even if the default built-in examples continue to center `epic`-rooted flows.
 - Do not introduce new node kinds such as `planning_epic`, `feature_epic`, `review_epic`, or `documentation_epic` as the first move.
 - Treat those variations as declarative workflow profiles or epic styles layered onto the existing node kinds.
 - Keep structure and policy declarative in YAML.
 - Keep compilation, legality checks, balancing enforcement, completion gating, and state transitions code-owned.
 - Do not let profile selection become a prompt-only behavior; runtime-visible policy must be declared and frozen into compiled state.
+
+## Top-Level Policy Alignment
+
+This future-plan bundle should inherit, not replace, the current configurable-hierarchy doctrine.
+
+That means:
+
+- `epic`, `phase`, `plan`, and `task` remain the draft built-in semantic tiers used by the examples in this bundle
+- top-level eligibility must still be derived from hierarchy definitions rather than from tier names alone
+- any future profile-aware startup surface must accept any node kind whose hierarchy definition permits parentless creation
+- the future built-in direction for this bundle is that `epic`, `phase`, `plan`, and `task` should all be able to run as top-level parentless nodes
+- every workflow profile in this draft bundle should be startable at the top level through its own `applies_to_kind` when that kind is configured parentless
+- the bundle must not silently reintroduce `epic` as the only legal top-level node kind just because most current draft examples start from an epic
+
+The existing reconciliation note for that rule is:
+
+- `plan/reconcilliation/01_top_level_node_hierarchy_reconciliation.md`
+
+Future implementation work for workflow profiles should be considered incomplete if it adds profile-aware epic startup while leaving non-epic parentless startup behavior unspecified or untested.
+
+The intended future operator model is:
+
+- `epic.feature` may start as a top-level `epic`
+- `phase.discovery` may start as a top-level `phase`
+- `plan.execution` may start as a top-level `plan`
+- `task.docs` may start as a top-level `task`
+
+The profile-aware layer should adapt to that structural choice rather than forcing all starts through an epic root.
 
 ## Main Recommendation
 
@@ -59,6 +92,8 @@ That means:
 
 This is a better fit for the current configurable hierarchy direction than adding many new kinds whose only purpose is prompt and policy selection.
 
+It also keeps the future workflow-overhaul direction compatible with parentless starts at other tiers when a project intentionally configures them.
+
 ## Why Profiles Instead Of New Kinds
 
 Profiles are the cleaner future path because they:
@@ -70,6 +105,8 @@ Profiles are the cleaner future path because they:
 - give the daemon one clear place to validate required role coverage and closure obligations
 
 New kinds may still become useful later, but they should be justified by structural differences, not merely by different decomposition prompts.
+
+If a project wants a top-level `phase`, `plan`, `task`, or custom kind, that should remain a hierarchy decision plus an applicable workflow-profile decision, not a special exception path.
 
 ## Tier Contracts
 
@@ -143,6 +180,141 @@ Task should not:
 - claim completion without evidence
 - invent new sibling work without escalating or failing clearly
 
+## Enforcement Ladder
+
+The future implementation should use multiple layers of enforcement rather than trusting prompt wording alone.
+
+### 1. YAML declares obligations, but does not self-enforce
+
+Profiles and layouts should declare:
+
+- whether a tier is expected to decompose into children
+- which child roles are required
+- which repository updates and verification categories must be satisfied
+- which completion labels are forbidden until those obligations are met
+
+But YAML should not be the only guard.
+
+The daemon and compiler must convert these declarations into runtime-visible legality checks.
+
+### 2. Compiler freezes the decomposition contract into workflow state
+
+For any non-leaf profile that expects children, compile-frozen workflow state should include at least:
+
+- selected workflow profile
+- effective layout
+- required child roles
+- whether decomposition is required before stronger completion claims are legal
+- allowed narrow exceptions for parent-local reconciliation work
+
+This frozen state is what later prompts, CLI inspection surfaces, and daemon legality checks should read.
+
+### 3. Daemon-owned completion gating is the hard guard
+
+For decomposition-required profiles such as the draft built-in `epic`, `phase`, and `plan` profiles, the daemon should reject status advancement to `complete`, `flow_complete`, or `release_ready` when:
+
+- no child set has been materialized
+- required child roles are missing
+- required child work has not reached the profile's declared closure bar
+- required repository updates or verification categories remain unsatisfied
+
+The important rule is:
+
+- non-leaf tiers must not be able to "complete as-is" when their profile contract says they owe child decomposition
+
+If a session tries to skip that rule, the response should be a concrete operator-visible mutation failure rather than a soft warning.
+
+Example future response posture:
+
+- HTTP `4xx`
+- machine-readable code such as `workflow_step_requirements_unsatisfied` or `children_required_before_completion`
+- message such as `you did not spawn children before attempting merge or completion`
+- structured details describing the missing requirements, such as required child roles and current child count
+
+### 4. Prompts are advisory guards that align the session with the hard gate
+
+Prompt guards should tell a non-leaf session:
+
+- your primary job is to define, create, or reconcile children
+- do not substitute parent-local execution for missing child decomposition
+- if the current layout or child set is wrong, replan or replace it explicitly rather than silently doing the work yourself
+
+This keeps the session aligned with the daemon-owned legality model instead of discovering the rule only at completion time.
+
+### 4a. The compiled workflow should be rigid about step order
+
+The future workflow-overhaul direction should prefer rigid compiled workflows over permissive "best effort" narratives.
+
+That means:
+
+- steps should have explicit entry conditions
+- steps should have explicit completion conditions
+- later steps should not become legal merely because a session asks for them
+- trying to jump from an earlier decomposition step to merge, finalize, or completion should fail with a daemon-owned blocked response
+
+The workflow should not rely on the AI choosing to be disciplined.
+
+The runtime should make step skipping illegal.
+
+### 4b. Subtask completion should require concrete proof records
+
+Every compiled subtask should eventually have explicit completion predicates, such as:
+
+- required durable artifacts written
+- required child nodes materialized
+- required child-role coverage satisfied
+- required command results recorded
+- required summaries or review findings persisted
+- required merge or reconciliation events present when the subtask is a merge-oriented step
+
+If those predicates are not satisfied, the daemon should reject subtask completion rather than silently allowing the workflow to advance.
+
+### 5. Merge and documentation work are the only narrow parent-local exception bands
+
+Nodes above `task` should be dissuaded from doing substantive new implementation work during mergeback or documentation alignment.
+
+The intended exception scope is narrow:
+
+- basic merge-conflict resolution
+- basic regression or integration bug checks needed to make child outputs compose cleanly
+- documentation or checklist alignment that accurately reflects the merged child output
+
+Higher tiers should not:
+
+- use merge as a backdoor for new feature work
+- absorb unfinished child implementation because it is convenient
+- rewrite the intended child-owned scope during documentation passes
+
+If merge or documentation reveals substantive new implementation, that should trigger:
+
+- child remediation
+- explicit replan
+- or a blocked/partial outcome
+
+not silent parent-owned execution drift.
+
+### 6. CLI and UI should make blocked reasons inspectable
+
+Future inspection surfaces such as `workflow brief`, `node types`, and website detail views should show:
+
+- whether the current profile requires decomposition
+- required child-role coverage
+- current child-role coverage
+- allowed narrow reconciliation exceptions
+- why completion is currently blocked
+
+Operators should be able to see the rule without reading prompt text.
+
+### 7. Verification must prove the full enforcement ladder
+
+Later implementation should prove this at multiple layers:
+
+- bounded tests for compiler and daemon legality checks
+- integration tests for blocked completion and inspection surfaces
+- integration tests for concrete `4xx` mutation failures when a session attempts to skip required steps
+- real E2E proof that non-leaf nodes cannot bypass decomposition by completing directly
+- real E2E proof that narrow merge/documentation reconciliation remains legal without opening a parent-owned implementation loophole
+
 ## Proposed Workflow Profiles
 
 The initial profile set worth exploring:
@@ -173,6 +345,8 @@ Supporting lower-tier profiles likely include:
 These names are only draft vocabulary.
 
 The important part is that each profile changes explicit contracts, not just prompt phrasing.
+
+Each draft profile should also remain usable as a top-level entry profile for its own node kind once that kind is allowed to start parentless.
 
 ## What A Profile Must Control
 

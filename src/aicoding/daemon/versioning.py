@@ -9,11 +9,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from aicoding.daemon.branches import build_canonical_branch_name, inherited_seed_commit
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.rebuild_coordination import (
+    cancel_rebuild_coordination_blockers,
+    enumerate_required_cutover_scope,
     inspect_cutover_readiness,
+    inspect_rebuild_coordination,
     record_rebuild_coordination_event,
     require_cutover_ready,
 )
 from aicoding.db.models import (
+    DaemonNodeState,
     HierarchyNode,
     LogicalNodeCurrentVersion,
     NodeChild,
@@ -131,6 +135,9 @@ def initialize_node_version(session_factory: sessionmaker[Session], *, logical_n
                 latest_created_node_version_id=version.id,
             )
         )
+        lifecycle = session.get(NodeLifecycleState, str(node.node_id))
+        if lifecycle is not None:
+            lifecycle.node_version_id = version.id
         session.flush()
         return _snapshot(version)
 
@@ -141,13 +148,37 @@ def create_superseding_node_version(
     logical_node_id: UUID,
     title: str | None = None,
     prompt: str | None = None,
+    clone_structure: bool = True,
+    clone_dependencies: bool | None = None,
+    cancel_active_subtree: bool = False,
 ) -> NodeVersionSnapshot:
+    if cancel_active_subtree:
+        coordination = inspect_rebuild_coordination(session_factory, logical_node_id=logical_node_id, scope="subtree")
+        if coordination.status != "clear":
+            cancellation = cancel_rebuild_coordination_blockers(
+                session_factory,
+                logical_node_id=logical_node_id,
+                scope="subtree",
+                summary="Cancelled for supersede request before regeneration.",
+            )
+            record_rebuild_coordination_event(
+                session_factory,
+                logical_node_id=logical_node_id,
+                target_node_version_id=_load_authoritative_version_id(session_factory, logical_node_id),
+                event_kind="live_conflict_cancelled",
+                event_status="cancelled",
+                scope="subtree",
+                trigger_reason="manual_supersede",
+                details_json={**cancellation.to_payload(), "phase": "supersede"},
+            )
     with session_scope(session_factory) as session:
         version = create_superseding_node_version_in_session(
             session,
             logical_node_id=logical_node_id,
             title=title,
             prompt=prompt,
+            clone_structure=clone_structure,
+            clone_dependencies=clone_dependencies,
         )
         return _snapshot(version)
 
@@ -159,6 +190,8 @@ def create_superseding_node_version_in_session(
     title: str | None = None,
     prompt: str | None = None,
     parent_node_version_id: UUID | None | object = _MISSING,
+    clone_structure: bool = True,
+    clone_dependencies: bool | None = None,
 ) -> NodeVersion:
     selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
     if selector is None:
@@ -207,7 +240,16 @@ def create_superseding_node_version_in_session(
     )
     session.add(version)
     session.flush()
-    _clone_version_scoped_edges(session, source_version_id=latest.id, target_version_id=version.id)
+    if clone_dependencies is None:
+        clone_dependencies = clone_structure
+    if clone_structure or clone_dependencies:
+        _clone_version_scoped_edges(
+            session,
+            source_version_id=latest.id,
+            target_version_id=version.id,
+            clone_children=clone_structure,
+            clone_dependencies=clone_dependencies,
+        )
     selector.latest_created_node_version_id = version.id
     session.flush()
     return version
@@ -215,7 +257,8 @@ def create_superseding_node_version_in_session(
 
 def cutover_candidate_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> NodeLineageSnapshot:
     readiness = inspect_cutover_readiness(session_factory, version_id=version_id)
-    if readiness.status != "ready":
+    scope = enumerate_required_cutover_scope(session_factory, version_id=version_id)
+    if readiness.status not in {"ready", "ready_with_follow_on_replay"}:
         record_rebuild_coordination_event(
             session_factory,
             logical_node_id=readiness.logical_node_id,
@@ -224,39 +267,53 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
             event_status="blocked",
             scope="cutover",
             trigger_reason="manual_cutover",
-            details_json=readiness.to_payload(),
+            details_json={
+                **readiness.to_payload(),
+                "required_cutover_scope": scope.to_payload(),
+            },
         )
     with session_scope(session_factory) as session:
         version = session.get(NodeVersion, version_id)
         if version is None:
             raise DaemonNotFoundError("node version not found")
-        require_cutover_ready(session, version_id=version.id)
+        require_cutover_ready(session, version_id=version_id)
 
-        selector = session.get(LogicalNodeCurrentVersion, version.logical_node_id)
-        if selector is None:
-            raise DaemonNotFoundError("logical node version selector not found")
+        for scoped_version_id in scope.required_candidate_version_ids:
+            scoped_version = session.get(NodeVersion, scoped_version_id)
+            if scoped_version is None:
+                raise DaemonNotFoundError("node version not found")
+            selector = session.get(LogicalNodeCurrentVersion, scoped_version.logical_node_id)
+            if selector is None:
+                raise DaemonNotFoundError("logical node version selector not found")
 
-        old_authoritative = session.get(NodeVersion, selector.authoritative_node_version_id)
-        if old_authoritative is None:
-            raise DaemonNotFoundError("authoritative version not found")
+            old_authoritative = session.get(NodeVersion, selector.authoritative_node_version_id)
+            if old_authoritative is None:
+                raise DaemonNotFoundError("authoritative version not found")
 
-        old_authoritative.status = "superseded"
-        version.status = "authoritative"
-        selector.authoritative_node_version_id = version.id
-        selector.latest_created_node_version_id = version.id
+            if old_authoritative.id != scoped_version.id:
+                old_authoritative.status = "superseded"
+            scoped_version.status = "authoritative"
+            selector.authoritative_node_version_id = scoped_version.id
+            selector.latest_created_node_version_id = scoped_version.id
 
-        lifecycle = session.get(NodeLifecycleState, str(version.logical_node_id))
-        if lifecycle is not None and lifecycle.lifecycle_state == "COMPLETE":
-            lifecycle.lifecycle_state = "DRAFT"
-            lifecycle.run_status = None
-            lifecycle.current_run_id = None
-            lifecycle.current_task_id = None
-            lifecycle.current_subtask_id = None
-            lifecycle.current_subtask_attempt = None
-            lifecycle.last_completed_subtask_id = None
-            lifecycle.execution_cursor_json = {}
-            lifecycle.is_resumable = False
-            lifecycle.pause_flag_name = None
+            lifecycle = session.get(NodeLifecycleState, str(scoped_version.logical_node_id))
+            if lifecycle is not None:
+                lifecycle.node_version_id = scoped_version.id
+                if lifecycle.lifecycle_state == "COMPLETE":
+                    lifecycle.lifecycle_state = "DRAFT"
+                    lifecycle.run_status = None
+                    lifecycle.current_run_id = None
+                    lifecycle.current_task_id = None
+                    lifecycle.current_subtask_id = None
+                    lifecycle.current_subtask_attempt = None
+                    lifecycle.last_completed_subtask_id = None
+                    lifecycle.execution_cursor_json = {}
+                    lifecycle.is_resumable = False
+                    lifecycle.pause_flag_name = None
+
+            daemon_state = session.get(DaemonNodeState, str(scoped_version.logical_node_id))
+            if daemon_state is not None:
+                daemon_state.node_version_id = scoped_version.id
 
         session.flush()
         lineage = _lineage_snapshot(session, version.logical_node_id)
@@ -268,7 +325,10 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
         event_status="allowed",
         scope="cutover",
         trigger_reason="manual_cutover",
-        details_json={"authoritative_node_version_id": str(lineage.authoritative_node_version_id)},
+        details_json={
+            "authoritative_node_version_id": str(lineage.authoritative_node_version_id),
+            "required_cutover_scope": scope.to_payload(),
+        },
     )
     return lineage
 
@@ -349,31 +409,49 @@ def _current_parent_version_id(session: Session, parent_node_id: UUID | None) ->
     return None if selector is None else selector.authoritative_node_version_id
 
 
+def _load_authoritative_version_id(session_factory: sessionmaker[Session], logical_node_id: UUID) -> UUID:
+    with query_session_scope(session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+        if selector is None:
+            raise DaemonNotFoundError("logical node version selector not found")
+        return selector.authoritative_node_version_id
+
+
 def _ensure_no_active_run_conflict(session: Session, logical_node_id: UUID) -> None:
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     if lifecycle is None:
+        return
+    selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+    if selector is not None and lifecycle.node_version_id not in {None, selector.authoritative_node_version_id}:
         return
     if lifecycle.current_run_id is not None and lifecycle.run_status in {"RUNNING", "PAUSED"}:
         raise DaemonConflictError("logical node has an active or paused run; resolve it before superseding")
 
 
-def _clone_version_scoped_edges(session: Session, *, source_version_id: UUID, target_version_id: UUID) -> None:
-    source_children = session.execute(
-        select(NodeChild).where(NodeChild.parent_node_version_id == source_version_id)
-    ).scalars().all()
-    for edge in source_children:
-        session.add(
-            NodeChild(
-                parent_node_version_id=target_version_id,
-                child_node_version_id=edge.child_node_version_id,
-                layout_child_id=edge.layout_child_id,
-                origin_type=edge.origin_type,
-                ordinal=edge.ordinal,
+def _clone_version_scoped_edges(
+    session: Session,
+    *,
+    source_version_id: UUID,
+    target_version_id: UUID,
+    clone_children: bool = True,
+    clone_dependencies: bool = True,
+) -> None:
+    if clone_children:
+        source_children = session.execute(
+            select(NodeChild).where(NodeChild.parent_node_version_id == source_version_id)
+        ).scalars().all()
+        for edge in source_children:
+            session.add(
+                NodeChild(
+                    parent_node_version_id=target_version_id,
+                    child_node_version_id=edge.child_node_version_id,
+                    layout_child_id=edge.layout_child_id,
+                    origin_type=edge.origin_type,
+                    ordinal=edge.ordinal,
+                )
             )
-        )
-
     source_authority = session.get(ParentChildAuthority, source_version_id)
-    if source_authority is not None:
+    if clone_children and source_authority is not None:
         session.add(
             ParentChildAuthority(
                 parent_node_version_id=target_version_id,
@@ -382,20 +460,20 @@ def _clone_version_scoped_edges(session: Session, *, source_version_id: UUID, ta
                 last_reconciled_at=source_authority.last_reconciled_at,
             )
         )
-
-    source_dependencies = session.execute(
-        select(NodeDependency).where(NodeDependency.node_version_id == source_version_id)
-    ).scalars().all()
-    for dependency in source_dependencies:
-        session.add(
-            NodeDependency(
-                id=uuid4(),
-                node_version_id=target_version_id,
-                depends_on_node_version_id=dependency.depends_on_node_version_id,
-                dependency_type=dependency.dependency_type,
-                required_state=dependency.required_state,
+    if clone_dependencies:
+        source_dependencies = session.execute(
+            select(NodeDependency).where(NodeDependency.node_version_id == source_version_id)
+        ).scalars().all()
+        for dependency in source_dependencies:
+            session.add(
+                NodeDependency(
+                    id=uuid4(),
+                    node_version_id=target_version_id,
+                    depends_on_node_version_id=dependency.depends_on_node_version_id,
+                    dependency_type=dependency.dependency_type,
+                    required_state=dependency.required_state,
+                )
             )
-        )
 
 
 # legacy helper removed; cutover readiness now lives in rebuild_coordination.py

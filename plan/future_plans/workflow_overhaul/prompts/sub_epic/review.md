@@ -1,26 +1,21 @@
-You are defining child `plan` nodes for review sub-epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `sub_epic/base.md`.
+- This overlay turns the phase into a review band.
+- Emphasize diagnosis, evidence gathering, and remediation handoff clarity.
 
-This delivery band exists to inspect the current state, gather evidence, and produce actionable findings.
+Overlay Objective Delta
+- Produce review plans that gather evidence and leave remediation-ready findings.
 
-Bias:
-- emphasize diagnosis, evidence gathering, and traceability
-- keep finding categories and remediation handoff clear
+Additional Forbidden Actions
+- Do not blur review into remediation unless the phase contract truly combines them.
+- Do not produce vague "check everything" plans.
+- Do not lose track of which artifacts provide evidence.
+- Do not resolve substantive fixes at the review phase.
 
-Do not:
-- blur review work into remediation work unless the phase contract explicitly combines them
-- produce vague "check everything" plans
-- lose track of which artifacts provide the evidence for a finding
+Profile-Specific Expected Result
+- A plan child set for inspection, evidence gathering, and handoff.
 
-Each plan should make explicit:
-- what it is inspecting
-- what evidence it must gather
-- what finding or judgment categories it can produce
-- what remediation handoff artifacts it must leave behind
-
-Closure bar:
-- review outputs must support a downstream remediation band without redoing the inspection
-
-Return JSON only:
-{"status":"OK","child_count":<n>}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- Each plan has a clear inspection scope.
+- Evidence and finding categories are explicit.
+- Remediation handoff can proceed without redoing the inspection.

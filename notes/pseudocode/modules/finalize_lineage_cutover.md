@@ -65,12 +65,18 @@ Optional outputs:
 
 ```text
 function finalize_lineage_cutover(logical_node_id, candidate_root_version_id):
-  candidate_scope = get_required_cutover_scope(candidate_root_version_id)
+  candidate_scope = enumerate_required_cutover_scope(candidate_root_version_id)
   authoritative_scope = get_current_authoritative_scope(logical_node_id)
 
   record_cutover_precheck(logical_node_id, candidate_root_version_id, candidate_scope)
 
   if not scope_is_stable(candidate_scope):
+    return CutoverResult(status = "not_ready")
+
+  if authoritative_baseline_changed(candidate_scope):
+    return CutoverResult(status = "not_ready")
+
+  if candidate_replay_is_incomplete(candidate_scope):
     return CutoverResult(status = "not_ready")
 
   if has_unresolved_merge_conflicts(candidate_scope):
@@ -89,6 +95,21 @@ function finalize_lineage_cutover(logical_node_id, candidate_root_version_id):
   return CutoverResult(status = "cutover_complete")
 ```
 
+`scope_is_stable(...)` should include:
+
+- all required candidate versions exist
+- all required descendants and ancestors in the enumerated scope are stable
+- replay-complete status is recorded for nodes that require candidate replay
+- reused children remain valid for this candidate lineage
+- no scope member has been superseded
+
+Current implementation note:
+
+- `enumerate_required_cutover_scope(...)` now exists as a durable rebuild-backed helper
+- cutover-readiness inspection now evaluates the enumerated scope instead of only the requested candidate version
+- manual cutover already switches the enumerated scope together; remaining gaps are around broader real-flow proof and replay/rematerialization follow-through, not single-version readiness logic
+- grouped cutover also has one narrow follow-on exception: ancestor cutover may proceed with dependency-invalidated descendant replay blockers when those descendants are explicitly waiting for post-cutover parent refresh/rematerialization instead of claiming they are already replay-complete
+
 ---
 
 ## Cutover scope rule
@@ -100,6 +121,12 @@ Recommended default scope:
 That means the changed node, required descendants, and required rebuilt ancestors must all be stable before authority transfer.
 
 Local success alone is insufficient by default.
+
+The default implementation should therefore assume:
+
+- the candidate root is not enough
+- required descendants alone are not enough
+- required rebuilt ancestors up to the stopping point must also be ready
 
 ---
 
@@ -142,6 +169,9 @@ Operators should be able to inspect:
 - latest candidate version
 - whether cutover is ready, blocked, paused, or complete
 - why cutover was denied or paused
+- which versions are inside the enumerated required scope
+- whether replay is incomplete versus conflict-blocked versus drift-blocked
+- whether the candidate baseline no longer matches the current authoritative lineage
 
 ---
 
@@ -149,6 +179,13 @@ Operators should be able to inspect:
 
 - whether first implementation should support bounded local cutover scopes at all
 - whether merge-to-parent and merge-to-base approvals should be modeled as separate gates from lineage-authority cutover
+- whether operator override for authoritative-baseline drift should ever be allowed or always require rebuild restart
+
+## Candidate Replay And Cutover Invariants
+
+- Candidate replay must be evaluated against the candidate lineage, not the authoritative live parent lane.
+- A candidate lineage is not `stable_for_cutover` while any required replay child is missing, invalidated, or blocked pending refresh.
+- Authoritative live `merge_events` are useful audit input, but candidate replay readiness must not depend on the authoritative live lane continuing to advance.
 
 ---
 

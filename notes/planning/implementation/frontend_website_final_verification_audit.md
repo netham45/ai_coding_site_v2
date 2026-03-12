@@ -41,10 +41,10 @@ Record the explicit current browser-proof map for the implemented website scope 
 
 - `/projects/:projectId/nodes/:nodeId/:tab`
   - bounded proof: yes
-  - Playwright proof: broader partial
+  - Playwright proof: yes for the agreed v1 route and action matrix
   - notes:
     - overview, workflow, runs, prompts, actions, summaries, sessions, and provenance are browser-proven
-    - blocked/error permutations are still partial
+    - representative loading, empty, blocked, and error permutations are now browser-proven across tree, actions, and prompts surfaces
 
 - `/projects/:projectId/nodes/:nodeId`
   - bounded proof: indirect
@@ -113,27 +113,43 @@ Record the explicit current browser-proof map for the implemented website scope 
   - daemon/API proof: yes
   - browser proof: yes
 
+- `pause_run`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `resume_run`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `session_attach`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `session_resume`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `session_provider_resume`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `reconcile_children:*`
+  - daemon/API proof: yes
+  - browser proof: yes
+
+- `regenerate_node`
+  - daemon/API proof: yes
+  - browser proof: yes
+
 - prompt `save and regenerate`
   - daemon/API proof: yes
   - browser proof: yes
   - note:
     - this lives on the prompts tab rather than the generic actions tab
 
-### Daemon/API-proven but not yet browser-executed action flows
+### Remaining action gap
 
-- `pause_run`
-- `resume_run`
-- `session_attach`
-- `session_resume`
-- `session_provider_resume`
-- `reconcile_children:*`
-- `regenerate_node`
-
-These exist in the generic action catalog and are represented in deterministic mock data, but they do not yet each have dedicated browser execution proof.
-
-Corrective verification phase:
-
-- `plan/web/verification/03_v1_action_and_shared_state_browser_closure.md`
+No remaining agreed v1 browser-owned action is only daemon/API-proven.
 
 ## Shared Primitive Coverage
 
@@ -141,23 +157,22 @@ Corrective verification phase:
 
 - `LoadingState`
   - bounded proof: yes
+  - browser proof: yes
 
 - `EmptyState`
   - bounded proof: yes
+  - browser proof: yes
 
 - `ErrorState`
   - bounded proof: yes
+  - browser proof: yes
 
 - `StatusBadge`
   - bounded proof: yes
 
 ### Remaining gap
 
-The primitives are exercised indirectly in browser flows, but there is not yet a dedicated browser pass that intentionally drives multiple loading, empty, and error states.
-
-Corrective verification phase:
-
-- `plan/web/verification/03_v1_action_and_shared_state_browser_closure.md`
+The remaining shared-state gap is not basic primitive rendering. It is broader screenshot-review automation and deeper permutation closure beyond the agreed v1 action matrix.
 
 ## Mutation Invalidation Coverage
 
@@ -191,12 +206,11 @@ Current status:
 
 ## Explicit Untested Or Partially Tested Flows
 
-- browser proof for dedicated loading/error states across major views
 - browser screenshot review automation beyond simple artifact capture
+- explicit query-family invalidation assertions by query key rather than by observed behavior alone
 
 Corrective verification phases:
 
-- `plan/web/verification/03_v1_action_and_shared_state_browser_closure.md`
 - `plan/web/verification/02_real_repo_backed_project_start_and_bootstrap.md`
 
 ## Audit Result
@@ -207,10 +221,11 @@ The current website surface is implemented and browser-proven for the main happy
 - top-level creation
 - tree navigation
 - prompt edit and regenerate
-- one bounded action execution
+- the agreed v1 action matrix
 - provenance inspection
 
-The verification surface is not yet full-closure for every route, tab, blocked state, or visual review target.
+The verification surface is still not full-closure for every conceivable route permutation, real repo-backed browser proof, or visual review target.
+The verification surface is still not full-closure for every conceivable route permutation or visual review target.
 
 That is acceptable only if the website is described honestly as:
 

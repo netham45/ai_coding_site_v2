@@ -13,10 +13,13 @@ from aicoding.db.models import (
     HierarchyNode,
     IncrementalChildMergeState,
     LogicalNodeCurrentVersion,
+    NodeChild,
     NodeDependency,
     NodeDependencyBlocker,
     NodeLifecycleState,
     ParentIncrementalMergeLane,
+    ParentChildAuthority,
+    RebuildEvent,
     NodeVersion,
 )
 from aicoding.db.session import query_session_scope, session_scope
@@ -181,7 +184,7 @@ def check_node_dependency_readiness(
 ) -> DependencyReadinessSnapshot:
     with session_scope(session_factory) as session:
         node_version = _authoritative_version(session, node_id)
-        lifecycle = session.get(NodeLifecycleState, str(node_id))
+        lifecycle, lifecycle_is_stale = _matched_lifecycle(session, logical_node_id=node_id, node_version_id=node_version.id)
         validation = _validate_dependency_graph(session, node_id=node_id, persist=False)
         if validation.status != "valid":
             blockers = _persist_blockers(
@@ -214,7 +217,7 @@ def check_node_dependency_readiness(
                     )
                 )
                 continue
-            target_lifecycle = session.get(NodeLifecycleState, str(target.logical_node_id))
+            target_lifecycle, _ = _matched_lifecycle(session, logical_node_id=target.logical_node_id, node_version_id=target.id)
             current_state = None if target_lifecycle is None else target_lifecycle.lifecycle_state
             if current_state in IMPOSSIBLE_WAIT_STATES:
                 blockers.append(
@@ -253,7 +256,13 @@ def check_node_dependency_readiness(
             )
             if merge_backed_blocker is not None:
                 blockers.append(merge_backed_blocker)
-        blockers = _runtime_blockers(node_version=node_version, lifecycle=lifecycle, blockers=blockers)
+        blockers = _runtime_blockers(
+            session,
+            node_version=node_version,
+            lifecycle=lifecycle,
+            lifecycle_is_stale=lifecycle_is_stale,
+            blockers=blockers,
+        )
         blockers = _persist_blockers(session, node_version_id=node_version.id, blockers=blockers)
         if any(item.blocker_kind == "impossible_wait" for item in blockers):
             status = "impossible_wait"
@@ -282,7 +291,7 @@ def admit_node_run(
     readiness = check_node_dependency_readiness(session_factory, node_id=node_id)
     with query_session_scope(session_factory) as session:
         node_version = _authoritative_version(session, node_id)
-        lifecycle = session.get(NodeLifecycleState, str(node_id))
+        lifecycle, _ = _matched_lifecycle(session, logical_node_id=node_id, node_version_id=node_version.id)
         try:
             authority = load_authority_state(session_factory, str(node_id))
         except DaemonNotFoundError:
@@ -505,9 +514,11 @@ def _authoritative_version(session: Session, node_id: UUID) -> NodeVersion:
 
 
 def _runtime_blockers(
+    session: Session,
     *,
     node_version: NodeVersion,
     lifecycle: NodeLifecycleState | None,
+    lifecycle_is_stale: bool,
     blockers: list[DependencyBlockerSnapshot],
 ) -> list[DependencyBlockerSnapshot]:
     if node_version.compiled_workflow_id is None:
@@ -521,15 +532,16 @@ def _runtime_blockers(
             )
         )
     if lifecycle is None:
-        blockers.append(
-            DependencyBlockerSnapshot(
-                blocker_kind="lifecycle_not_ready",
-                dependency_id=None,
-                node_version_id=node_version.id,
-                target_node_version_id=None,
-                details_json={"message": "node lifecycle row is missing"},
+        if not lifecycle_is_stale:
+            blockers.append(
+                DependencyBlockerSnapshot(
+                    blocker_kind="lifecycle_not_ready",
+                    dependency_id=None,
+                    node_version_id=node_version.id,
+                    target_node_version_id=None,
+                    details_json={"message": "node lifecycle row is missing"},
+                )
             )
-        )
         return blockers
     if lifecycle.pause_flag_name:
         blockers.append(
@@ -558,6 +570,16 @@ def _runtime_blockers(
                 },
             )
         )
+    if _requires_manual_or_hybrid_tree_rebuild(session, node_version=node_version):
+        blockers.append(
+            DependencyBlockerSnapshot(
+                blocker_kind="child_tree_rebuild_required",
+                dependency_id=None,
+                node_version_id=node_version.id,
+                target_node_version_id=None,
+                details_json={"authority_mode": _prior_child_authority_mode(session, node_version=node_version)},
+            )
+        )
     if lifecycle.lifecycle_state not in {"READY", "RUNNING", "PAUSED_FOR_USER", "COMPLETE"}:
         blockers.append(
             DependencyBlockerSnapshot(
@@ -569,6 +591,20 @@ def _runtime_blockers(
             )
         )
     return blockers
+
+
+def _matched_lifecycle(
+    session: Session,
+    *,
+    logical_node_id: UUID,
+    node_version_id: UUID,
+) -> tuple[NodeLifecycleState | None, bool]:
+    lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
+    if lifecycle is None:
+        return None, False
+    if lifecycle.node_version_id not in {None, node_version_id}:
+        return None, True
+    return lifecycle, False
 
 
 def _merge_backed_dependency_blocker(
@@ -678,3 +714,48 @@ def _blocker_snapshot(row: NodeDependencyBlocker) -> DependencyBlockerSnapshot:
         target_node_version_id=row.target_node_version_id,
         details_json=row.details_json,
     )
+
+
+def _requires_manual_or_hybrid_tree_rebuild(session: Session, *, node_version: NodeVersion) -> bool:
+    if node_version.supersedes_node_version_id is None:
+        return False
+    if not _is_dependency_invalidated_fresh_restart(session, node_version_id=node_version.id):
+        return False
+    authority_mode = _prior_child_authority_mode(session, node_version=node_version)
+    if authority_mode not in {"manual", "hybrid"}:
+        return False
+    return not _manual_or_hybrid_tree_rebuild_satisfied(session, node_version=node_version)
+
+
+def _prior_child_authority_mode(session: Session, *, node_version: NodeVersion) -> str | None:
+    if node_version.supersedes_node_version_id is None:
+        return None
+    authority = session.get(ParentChildAuthority, node_version.supersedes_node_version_id)
+    return None if authority is None else authority.authority_mode
+
+
+def _manual_or_hybrid_tree_rebuild_satisfied(session: Session, *, node_version: NodeVersion) -> bool:
+    authority = session.get(ParentChildAuthority, node_version.id)
+    if authority is None or authority.authority_mode not in {"manual", "hybrid"}:
+        return False
+    current_child_edge = session.execute(
+        select(NodeChild.child_node_version_id).where(NodeChild.parent_node_version_id == node_version.id).limit(1)
+    ).first()
+    if current_child_edge is not None:
+        return True
+    return authority.authority_mode == "manual" and authority.last_reconciled_at is not None
+
+
+def _is_dependency_invalidated_fresh_restart(session: Session, *, node_version_id: UUID) -> bool:
+    events = session.execute(
+        select(RebuildEvent)
+        .where(
+            RebuildEvent.target_node_version_id == node_version_id,
+            RebuildEvent.event_kind == "candidate_created",
+        )
+        .order_by(RebuildEvent.created_at.desc(), RebuildEvent.id.desc())
+    ).scalars().all()
+    for event in events:
+        if bool((event.details_json or {}).get("fresh_dependency_restart")):
+            return True
+    return False

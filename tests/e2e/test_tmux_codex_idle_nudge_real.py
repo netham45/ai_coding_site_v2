@@ -167,14 +167,18 @@ def _wait_for_daemon_nudge(
     last_summary_payload: dict[str, object] | None = None
     last_events_payload: dict[str, object] | None = None
     last_pane_text = ""
+    active_session_id = session_id
+    active_session_name = session_name
 
     while time.time() < deadline:
         harness.assert_process_alive(prefix="Real daemon process exited while waiting for a daemon idle nudge.")
         session_payload = _cli_json(harness, "session", "show", "--node", node_id)
+        active_session_id = str(session_payload["session_id"])
+        active_session_name = str(session_payload["session_name"])
         progress_payload = _cli_json(harness, "node", "run", "show", "--node", node_id)
         summary_payload = _cli_json(harness, "summary", "history", "--node", node_id)
-        events_payload = _cli_json(harness, "session", "events", "--session", session_id)
-        last_pane_text = _tmux_capture(session_name)
+        events_payload = _cli_json(harness, "session", "events", "--session", active_session_id)
+        last_pane_text = _tmux_capture(active_session_name)
         last_session_payload = session_payload
         last_progress_payload = progress_payload
         last_summary_payload = summary_payload
@@ -303,6 +307,8 @@ def _wait_for_post_nudge_completion(
     last_session_payload: dict[str, object] | None = None
     last_events_payload: dict[str, object] | None = None
     last_pane_text = ""
+    active_session_id = session_id
+    active_session_name = session_name
 
     while time.time() < deadline:
         harness.assert_process_alive(prefix="Real daemon process exited while waiting for post-nudge completion.")
@@ -310,8 +316,11 @@ def _wait_for_post_nudge_completion(
         runs_payload = _cli_json(harness, "node", "runs", "--node", node_id)
         summary_payload = _cli_json(harness, "summary", "history", "--node", node_id)
         session_payload = _session_show_json_or_none(harness, node_id=node_id)
-        events_payload = _cli_json(harness, "session", "events", "--session", session_id)
-        last_pane_text = _tmux_capture(session_name)
+        if session_payload is not None:
+            active_session_id = str(session_payload["session_id"])
+            active_session_name = str(session_payload["session_name"])
+        events_payload = _cli_json(harness, "session", "events", "--session", active_session_id)
+        last_pane_text = _tmux_capture(active_session_name)
         last_progress_payload = progress_payload
         last_runs_payload = runs_payload
         last_summary_payload = summary_payload
@@ -503,6 +512,9 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
             session_id=session_id,
             session_name=session_name,
         )
+        effective_session_id = str(nudged_session_payload["session_id"])
+        effective_session_name = str(nudged_session_payload["session_name"])
+        sessions_to_cleanup.add(effective_session_name)
 
         assert any(event["event_type"] == "nudged" for event in pre_nudge_events["events"]), (
             "Expected the daemon to record a nudged event after a real idle timeout.\n"
@@ -554,7 +566,12 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
         assert "{{node_id}}" not in pre_nudge_pane
 
         post_nudge_progress, post_nudge_runs, post_nudge_summary_history, post_nudge_session, post_nudge_events, post_nudge_pane = (
-            _wait_for_post_nudge_completion(harness, node_id=node_id, session_id=session_id, session_name=session_name)
+            _wait_for_post_nudge_completion(
+                harness,
+                node_id=node_id,
+                session_id=effective_session_id,
+                session_name=effective_session_name,
+            )
         )
 
         latest_attempt_after = None if post_nudge_progress is None else post_nudge_progress["latest_attempt"]
@@ -609,7 +626,7 @@ def test_tmux_task_session_stays_quiet_until_daemon_nudges_then_reports_completi
         summary_show = _cli_json(harness, "summary", "show", "--summary", summary_id)
         assert str(summary_show["content"]).strip() == "nudged completion body"
         if post_nudge_session is not None:
-            assert post_nudge_session["session_id"] == session_id
+            assert post_nudge_session["session_id"] == effective_session_id
     finally:
         for session_name in sessions_to_cleanup:
             subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, capture_output=True, text=True)

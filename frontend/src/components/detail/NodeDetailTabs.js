@@ -1,4 +1,4 @@
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import LoadingState from "../primitives/LoadingState.js";
@@ -20,7 +20,16 @@ import { getNodeVersion, getPromptHistory, regenerateNode, supersedeNode } from 
 import { getSessions } from "../../lib/api/sessions.js";
 import { getSummaryHistory } from "../../lib/api/summaries.js";
 import { queryKeys } from "../../lib/query/keys.js";
-import { getCurrentWorkflow, getRunProgress, getRuns } from "../../lib/api/workflows.js";
+import {
+  getCurrentSubtask,
+  getCurrentSubtaskContext,
+  getCurrentSubtaskPrompt,
+  getCurrentWorkflow,
+  getRunProgress,
+  getRuns,
+  getSubtaskAttempt,
+  getSubtaskAttempts,
+} from "../../lib/api/workflows.js";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -170,11 +179,261 @@ function OverviewPanel({ nodeId }) {
   );
 }
 
+function describeJsonValue(value) {
+  if (value == null) {
+    return "n/a";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function WorkflowTaskTree({
+  tasks,
+  currentSubtaskId,
+  expandedTaskIds,
+  onToggleTask,
+  selectedSubtaskId,
+  onSelectSubtask,
+}) {
+  if (!tasks?.length) {
+    return createElement(EmptyState, { title: "No tasks", body: "The compiled workflow has no tasks." });
+  }
+
+  return createElement(
+    "div",
+    { className: "workflow-task-tree", "data-testid": "workflow-task-tree" },
+    tasks.map((task) => {
+      const isExpanded = expandedTaskIds.has(task.id);
+      return createElement(
+        "section",
+        { key: task.id, className: "workflow-task-group", "data-testid": `workflow-task-${task.id}` },
+        [
+          createElement(
+            "button",
+            {
+              key: "toggle",
+              type: "button",
+              className: "workflow-task-toggle",
+              onClick: () => onToggleTask(task.id),
+              "data-testid": `workflow-task-toggle-${task.id}`,
+              "aria-expanded": isExpanded ? "true" : "false",
+            },
+            `${isExpanded ? "Hide" : "Show"} ${task.task_key} (${task.subtasks.length} subtasks)`,
+          ),
+          isExpanded
+            ? createElement(
+                "div",
+                { key: "subtasks", className: "workflow-subtask-list" },
+                task.subtasks.map((subtask) => {
+                  const isSelected = selectedSubtaskId === subtask.id;
+                  const isCurrent = currentSubtaskId === subtask.id;
+                  return createElement(
+                    "button",
+                    {
+                      key: subtask.id,
+                      type: "button",
+                      className: `workflow-subtask-row ${isSelected ? "workflow-subtask-row--selected" : ""}`,
+                      onClick: () => onSelectSubtask(subtask.id),
+                      "data-testid": `workflow-subtask-${subtask.id}`,
+                    },
+                    [
+                      createElement(
+                        "div",
+                        { key: "main", className: "workflow-subtask-row__main" },
+                        [
+                          createElement("strong", { key: "title" }, subtask.title ?? subtask.source_subtask_key),
+                          createElement(
+                            "span",
+                            { key: "meta", className: "workflow-subtask-row__meta" },
+                            `${subtask.subtask_type} • ordinal ${subtask.ordinal}`,
+                          ),
+                        ],
+                      ),
+                      isCurrent
+                        ? createElement(StatusBadge, {
+                            key: "current",
+                            label: "current",
+                            tone: "info",
+                          })
+                        : null,
+                    ],
+                  );
+                }),
+              )
+            : null,
+        ],
+      );
+    }),
+  );
+}
+
+function AttemptHistoryList({ attempts, selectedAttemptId, onSelectAttempt }) {
+  if (!attempts?.length) {
+    return createElement(EmptyState, {
+      title: "No attempts yet",
+      body: "No subtask attempts have been recorded for this node yet.",
+    });
+  }
+
+  return createElement(
+    "div",
+    { className: "workflow-attempt-list", "data-testid": "workflow-attempt-list" },
+    attempts.map((attempt) =>
+      createElement(
+        "button",
+        {
+          key: attempt.id,
+          type: "button",
+          className: `workflow-attempt-row ${selectedAttemptId === attempt.id ? "workflow-attempt-row--selected" : ""}`,
+          onClick: () => onSelectAttempt(attempt.id),
+          "data-testid": `workflow-attempt-${attempt.id}`,
+        },
+        [
+          createElement(
+            "div",
+            { key: "main", className: "workflow-attempt-row__main" },
+            [
+              createElement("strong", { key: "title" }, `Attempt ${attempt.attempt_number}`),
+              createElement(
+                "span",
+                { key: "meta", className: "workflow-attempt-row__meta" },
+                `${attempt.compiled_subtask_id} • ${attempt.started_at ?? "not started"}`,
+              ),
+            ],
+          ),
+          createElement(StatusBadge, {
+            key: "status",
+            label: attempt.status.toLowerCase(),
+            tone: attempt.status === "COMPLETE" ? "success" : attempt.status === "FAILED" ? "danger" : "info",
+          }),
+        ],
+      ),
+    ),
+  );
+}
+
 function WorkflowPanel({ nodeId }) {
   const workflowQuery = useQuery({
     queryKey: queryKeys.nodeWorkflow(nodeId),
     queryFn: async () => (await getCurrentWorkflow(nodeId)).data,
   });
+
+  const currentSubtaskQuery = useQuery({
+    queryKey: queryKeys.nodeCurrentSubtask(nodeId),
+    queryFn: async () => (await getCurrentSubtask(nodeId)).data,
+  });
+
+  const currentPromptQuery = useQuery({
+    queryKey: queryKeys.nodeCurrentSubtaskPrompt(nodeId),
+    queryFn: async () => (await getCurrentSubtaskPrompt(nodeId)).data,
+    enabled: Boolean(currentSubtaskQuery.data?.current_subtask?.id),
+  });
+
+  const currentContextQuery = useQuery({
+    queryKey: queryKeys.nodeCurrentSubtaskContext(nodeId),
+    queryFn: async () => (await getCurrentSubtaskContext(nodeId)).data,
+    enabled: Boolean(currentSubtaskQuery.data?.current_subtask?.id),
+  });
+
+  const attemptsQuery = useQuery({
+    queryKey: queryKeys.nodeSubtaskAttempts(nodeId),
+    queryFn: async () => (await getSubtaskAttempts(nodeId)).data,
+    enabled: Boolean(currentSubtaskQuery.data?.state?.node_run_id),
+  });
+
+  const [expandedTaskIds, setExpandedTaskIds] = useState(() => new Set());
+  const [selectedSubtaskId, setSelectedSubtaskId] = useState(null);
+  const [selectedAttemptId, setSelectedAttemptId] = useState(null);
+
+  const taskMap = useMemo(() => {
+    const tasks = workflowQuery.data?.tasks ?? [];
+    const map = new Map();
+    for (const task of tasks) {
+      map.set(task.id, task);
+    }
+    return map;
+  }, [workflowQuery.data]);
+
+  const subtaskMap = useMemo(() => {
+    const map = new Map();
+    for (const task of workflowQuery.data?.tasks ?? []) {
+      for (const subtask of task.subtasks ?? []) {
+        map.set(subtask.id, { ...subtask, task_id: task.id, task_key: task.task_key, task_title: task.title ?? task.task_key });
+      }
+    }
+    return map;
+  }, [workflowQuery.data]);
+
+  const currentSubtask = currentSubtaskQuery.data?.current_subtask ?? null;
+  const attempts = attemptsQuery.data?.attempts ?? [];
+  const firstTaskId = workflowQuery.data?.tasks?.[0]?.id ?? null;
+  const firstSubtaskId = workflowQuery.data?.tasks?.find((task) => task.subtasks?.length)?.subtasks?.[0]?.id ?? null;
+  const effectiveExpandedTaskIds = expandedTaskIds.size
+    ? expandedTaskIds
+    : new Set([currentSubtask?.compiled_task_id ?? firstTaskId].filter(Boolean));
+  const effectiveSelectedSubtaskId = selectedSubtaskId ?? currentSubtask?.id ?? firstSubtaskId;
+  const effectiveSelectedAttemptId = selectedAttemptId ?? currentSubtaskQuery.data?.latest_attempt?.id ?? attempts[0]?.id ?? null;
+
+  useEffect(() => {
+    const workflow = workflowQuery.data;
+    if (!workflow?.tasks?.length) {
+      return;
+    }
+    setExpandedTaskIds((current) => {
+      const next = new Set(current);
+      if (!next.size) {
+        next.add(workflow.tasks[0].id);
+      }
+      if (currentSubtask?.compiled_task_id) {
+        next.add(currentSubtask.compiled_task_id);
+      }
+      return next;
+    });
+  }, [currentSubtask?.compiled_task_id, workflowQuery.data]);
+
+  useEffect(() => {
+    const workflow = workflowQuery.data;
+    if (!workflow?.tasks?.length) {
+      return;
+    }
+    const firstSubtaskId = workflow.tasks.find((task) => task.subtasks?.length)?.subtasks?.[0]?.id ?? null;
+    const preferredSubtaskId = currentSubtask?.id ?? firstSubtaskId;
+    if (!preferredSubtaskId) {
+      return;
+    }
+    setSelectedSubtaskId((current) => (current && subtaskMap.has(current) ? current : preferredSubtaskId));
+  }, [currentSubtask?.id, subtaskMap, workflowQuery.data]);
+
+  useEffect(() => {
+    if (!attempts.length) {
+      setSelectedAttemptId(null);
+      return;
+    }
+    const preferredAttemptId = currentSubtaskQuery.data?.latest_attempt?.id ?? attempts[0].id;
+    setSelectedAttemptId((current) => (current && attempts.some((attempt) => attempt.id === current) ? current : preferredAttemptId));
+  }, [attempts, currentSubtaskQuery.data?.latest_attempt?.id]);
+
+  const selectedSubtask = effectiveSelectedSubtaskId ? subtaskMap.get(effectiveSelectedSubtaskId) ?? null : null;
+
+  const selectedAttemptQuery = useQuery({
+    queryKey: queryKeys.subtaskAttempt(effectiveSelectedAttemptId),
+    queryFn: async () => (await getSubtaskAttempt(effectiveSelectedAttemptId)).data,
+    enabled: Boolean(effectiveSelectedAttemptId),
+  });
+
+  function toggleTask(taskId) {
+    setExpandedTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }
 
   return createElement(QueryPanel, {
     query: workflowQuery,
@@ -197,22 +456,145 @@ function WorkflowPanel({ nodeId }) {
                 { label: "Subtask count", value: String(workflow.subtask_count) },
                 { label: "Source docs", value: String(workflow.source_document_count) },
                 { label: "Created", value: workflow.created_at },
+                { label: "Current task", value: currentSubtaskQuery.data?.state?.current_task_id },
+                { label: "Current subtask", value: currentSubtask?.id },
               ],
             }),
           ),
           createElement(
             DetailCard,
-            { key: "tasks", title: "Tasks", testId: "workflow-tasks-card" },
-            workflow.tasks?.length
-              ? createElement(
-                  "ul",
-                  { className: "detail-list" },
-                  workflow.tasks.map((task) =>
-                    createElement("li", { key: task.id }, `${task.task_key} (${task.subtasks.length} subtasks)`),
-                  ),
-                )
-              : createElement(EmptyState, { title: "No tasks", body: "The compiled workflow has no tasks." }),
+            { key: "tasks", title: "Workflow Tasks", testId: "workflow-tasks-card" },
+            createElement(WorkflowTaskTree, {
+              tasks: workflow.tasks,
+              currentSubtaskId: currentSubtask?.id ?? null,
+              expandedTaskIds: effectiveExpandedTaskIds,
+              onToggleTask: toggleTask,
+              selectedSubtaskId: effectiveSelectedSubtaskId,
+              onSelectSubtask: setSelectedSubtaskId,
+            }),
           ),
+          currentSubtaskQuery.isError && currentSubtaskQuery.error?.status !== 404
+            ? createElement(
+                DetailCard,
+                { key: "current-error", title: "Current Execution", testId: "workflow-current-subtask-card" },
+                createElement(ErrorState, {
+                  title: "Could not load current subtask",
+                  body: currentSubtaskQuery.error.message,
+                }),
+              )
+            : createElement(
+                DetailCard,
+                { key: "current", title: "Current Execution", testId: "workflow-current-subtask-card" },
+                currentSubtask
+                  ? createElement(KeyValueList, {
+                      rows: [
+                        { label: "Run id", value: currentSubtaskQuery.data?.run?.id ?? currentSubtaskQuery.data?.state?.node_run_id },
+                        { label: "Task", value: taskMap.get(currentSubtask.compiled_task_id)?.title ?? taskMap.get(currentSubtask.compiled_task_id)?.task_key ?? currentSubtask.compiled_task_id },
+                        { label: "Subtask key", value: currentSubtask.source_subtask_key },
+                        { label: "Subtask type", value: currentSubtask.subtask_type },
+                        { label: "Attempt", value: String(currentSubtaskQuery.data?.state?.current_subtask_attempt ?? "") || "n/a" },
+                        { label: "Depends on", value: currentSubtask.depends_on_compiled_subtask_ids?.length ? currentSubtask.depends_on_compiled_subtask_ids.join(", ") : "none" },
+                      ],
+                    })
+                  : createElement(EmptyState, {
+                      title: "No active subtask",
+                      body: "This node is not currently executing a compiled subtask.",
+                    }),
+              ),
+          selectedSubtask
+            ? createElement(
+                DetailCard,
+                { key: "selected-subtask", title: "Selected Subtask", testId: "workflow-selected-subtask-card" },
+                [
+                  createElement(KeyValueList, {
+                    key: "list",
+                    rows: [
+                      { label: "Subtask id", value: selectedSubtask.id },
+                      { label: "Task", value: selectedSubtask.task_title },
+                      { label: "Subtask key", value: selectedSubtask.source_subtask_key },
+                      { label: "Type", value: selectedSubtask.subtask_type },
+                      { label: "Prompt", value: selectedSubtask.prompt_text ?? "none" },
+                      { label: "Command", value: selectedSubtask.command_text ?? "none" },
+                      { label: "Environment policy", value: selectedSubtask.environment_policy_ref ?? "none" },
+                      { label: "Retry policy", value: describeJsonValue(selectedSubtask.retry_policy_json) },
+                    ],
+                  }),
+                  currentPromptQuery.data && selectedSubtask.id === currentPromptQuery.data.compiled_subtask_id
+                    ? createElement(
+                        "div",
+                        { key: "prompt", className: "detail-card__notice", "data-testid": "workflow-current-prompt-card" },
+                        [
+                          createElement(StatusBadge, { key: "badge", label: "current prompt", tone: "info" }),
+                          createElement("p", { key: "text" }, currentPromptQuery.data.prompt_text ?? currentPromptQuery.data.command_text ?? "No prompt text available."),
+                        ],
+                      )
+                    : null,
+                  currentContextQuery.data && selectedSubtask.id === currentContextQuery.data.compiled_subtask_id
+                    ? createElement(
+                        "div",
+                        { key: "context", className: "detail-card__notice", "data-testid": "workflow-current-context-card" },
+                        [
+                          createElement(StatusBadge, { key: "badge", label: "current context", tone: "neutral" }),
+                          createElement(
+                            "p",
+                            { key: "text" },
+                            `Latest summary: ${currentContextQuery.data.latest_summary ?? "none"} • attempt ${currentContextQuery.data.attempt_number ?? "n/a"}`,
+                          ),
+                        ],
+                      )
+                    : null,
+                ],
+              )
+            : null,
+          attemptsQuery.isError && attemptsQuery.error?.status !== 404
+            ? createElement(
+                DetailCard,
+                { key: "attempt-error", title: "Attempt History", testId: "workflow-attempt-history-card" },
+                createElement(ErrorState, {
+                  title: "Could not load subtask attempts",
+                  body: attemptsQuery.error.message,
+                }),
+              )
+            : createElement(
+                DetailCard,
+                { key: "attempts", title: "Attempt History", testId: "workflow-attempt-history-card" },
+                createElement(AttemptHistoryList, {
+                  attempts,
+                  selectedAttemptId: effectiveSelectedAttemptId,
+                  onSelectAttempt: setSelectedAttemptId,
+                }),
+              ),
+          effectiveSelectedAttemptId
+            ? createElement(
+                DetailCard,
+                { key: "attempt-detail", title: "Selected Attempt", testId: "workflow-selected-attempt-card" },
+                selectedAttemptQuery.isLoading
+                  ? createElement(LoadingState, { label: "Loading selected attempt." })
+                  : selectedAttemptQuery.isError
+                    ? createElement(ErrorState, {
+                        title: "Could not load subtask attempt",
+                        body: selectedAttemptQuery.error.message,
+                      })
+                    : [
+                        createElement(KeyValueList, {
+                          key: "list",
+                          rows: [
+                            { label: "Attempt id", value: selectedAttemptQuery.data.id },
+                            { label: "Status", value: selectedAttemptQuery.data.status },
+                            { label: "Compiled subtask", value: selectedAttemptQuery.data.compiled_subtask_id },
+                            { label: "Started", value: selectedAttemptQuery.data.started_at },
+                            { label: "Ended", value: selectedAttemptQuery.data.ended_at },
+                            { label: "Summary", value: selectedAttemptQuery.data.summary ?? "none" },
+                          ],
+                        }),
+                        createElement(RawJsonToggle, {
+                          key: "json",
+                          payload: selectedAttemptQuery.data,
+                          testId: "workflow-selected-attempt-json",
+                        }),
+                      ],
+              )
+            : null,
           createElement(RawJsonToggle, { key: "json", payload: workflow, testId: "workflow-raw-json" }),
         ],
       ),
@@ -421,6 +803,7 @@ function PromptPanel({ projectId, nodeId }) {
     await mutation.mutateAsync({
       title: version.title,
       prompt: normalizedPrompt,
+      cancel_active_subtree: true,
     });
   }
 

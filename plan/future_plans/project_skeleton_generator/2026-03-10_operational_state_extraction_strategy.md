@@ -183,7 +183,7 @@ Ask for or receive:
 - project name
 - short mission statement
 - chosen primary systems
-- chosen stack defaults
+- chosen stack decisions, if already known
 - whether the repo wants exactly five systems or a configurable count
 - desired strictness level for docs and checklists
 

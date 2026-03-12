@@ -26,6 +26,15 @@ Instead:
 - keep route handlers thin
 - let response models be filled from those helpers
 
+The helper layer should not invent legality at read time.
+
+It should expose compile-frozen and daemon-derived enforcement state such as:
+
+- decomposition-required posture
+- required child-role coverage
+- current blocked actions
+- current-step or next-legal-step hints
+
 This matches the repository's current backend style.
 
 ## Response-To-Helper Mapping

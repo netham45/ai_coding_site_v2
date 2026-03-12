@@ -1,0 +1,31 @@
+kind: layout_definition
+id: discovery_phase_to_plans
+name: Discovery Phase To Plans
+description: Discovery-driven plan layout for the ncurses editor evaluation phase.
+children:
+  - id: editor_scope_and_interaction_spec
+    kind: plan
+    tier: 2
+    name: Editor Scope And Interaction Spec
+    goal: Lock the implementation stack and define the MVP editor behaviors for files, the Escape menu, and multiple-window interaction.
+    rationale: The request leaves the ncurses stack choice and several UI semantics ambiguous, so the implementation phase should not start until those decisions are explicit.
+    dependencies: []
+    acceptance:
+      - The editor implementation language and terminal-library choice are explicit.
+      - The MVP behavior for open, save, save as, new, and close is defined.
+      - The meaning of multiple windows is concrete enough for task-level implementation.
+      - Known non-goals and open risks are recorded.
+    ordinal: 1
+  - id: implementation_breakdown_and_orchestration_plan
+    kind: plan
+    tier: 2
+    name: Implementation Breakdown And Orchestration Plan
+    goal: Turn the approved editor scope into executable task slices for editor core, file actions, window management, and verification inside the orchestrator tree.
+    rationale: The user explicitly wants a full epic -> phase -> plan -> task tree, so discovery must end with a task-ready breakdown rather than only a prose summary.
+    dependencies:
+      - editor_scope_and_interaction_spec
+    acceptance:
+      - Task slices cover editor core, file lifecycle, menu handling, and multi-window behavior.
+      - Verification expectations for the ncurses editor MVP are explicit.
+      - The implementation sequence reflects real dependencies instead of speculative parallelism.
+    ordinal: 2

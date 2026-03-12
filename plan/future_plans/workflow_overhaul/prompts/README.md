@@ -12,18 +12,52 @@ They exist so the full four-tier workflow prompt contracts can be reviewed and i
 
 Current scope:
 
-- `epic/`: top-level decomposition prompts
-- `sub_epic/`: phase-like delivery-band decomposition prompts
-- `plan/`: task-layout prompts for concrete execution plans
-- `task/`: leaf-execution prompts for bounded work packets
+- `epic/`: tier base prompt, profile overlays, and epic briefing prompt
+- `sub_epic/`: tier base prompt, profile overlays, and phase briefing prompt
+- `plan/`: tier base prompt, profile overlays, and plan briefing prompt
+- `task/`: tier base prompt and leaf profile overlays
+
+The current prompt bundle is example-heavy at the epic tier because the self-hosted workflow-overhaul drafts mostly start there today.
+
+That should not be read as a future restriction that only epic nodes may start at the top level.
+
+The intended future runtime rule remains:
+
+- top-ness is structural, not semantic
+- any node kind may be created parentless when its hierarchy definition allows `allow_parentless: true`
+- prompt selection should adapt to the chosen top-level kind rather than forcing every future workflow-profile narrative through an epic root
+- every draft profile should be able to drive a top-level start for its own node kind when that kind is allowed to run parentless
 
 These files should be treated as design inputs for future authoritative work, not as a source of truth for current runtime behavior.
+
+All prompts in this folder should now be read together with:
+
+- `../2026-03-12_prompt_contract.md`
+
+The intended shared sections are:
+
+- `Role`
+- `Objective`
+- `Lifecycle Position`
+- `Inputs`
+- `Allowed Actions`
+- `Forbidden Actions`
+- `Expected Result`
+- `Completion Conditions`
+- `Escalation Or Failure`
+- `Response Contract`
+
+The intended composition model is:
+
+- put the full shared tier contract in `base.md`
+- keep profile files as overlays that add or tighten profile-specific rules
+- keep `global_brief.md` as the tier briefing contract where applicable
 
 ## Draft Index
 
 ### Epic tier
 
-- `epic/generic.md`
+- `epic/base.md`
 - `epic/global_brief.md`
 - `epic/planning.md`
 - `epic/feature.md`
@@ -32,7 +66,7 @@ These files should be treated as design inputs for future authoritative work, no
 
 ### Sub-epic tier
 
-- `sub_epic/generic.md`
+- `sub_epic/base.md`
 - `sub_epic/global_brief.md`
 - `sub_epic/discovery.md`
 - `sub_epic/implementation.md`
@@ -43,7 +77,7 @@ These files should be treated as design inputs for future authoritative work, no
 
 ### Plan tier
 
-- `plan/generic.md`
+- `plan/base.md`
 - `plan/global_brief.md`
 - `plan/authoring.md`
 - `plan/execution.md`
@@ -51,7 +85,7 @@ These files should be treated as design inputs for future authoritative work, no
 
 ### Task tier
 
-- `task/generic.md`
+- `task/base.md`
 - `task/implementation.md`
 - `task/review.md`
 - `task/verification.md`

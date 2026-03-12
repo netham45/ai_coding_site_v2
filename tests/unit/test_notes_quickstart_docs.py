@@ -9,6 +9,7 @@ def test_flows_readme_references_current_note_paths() -> None:
 
     assert "notes/scenarios/journeys/common_user_journeys_analysis.md" in text
     assert "notes/specs/architecture/code_vs_yaml_delineation.md" in text
+    assert "notes/catalogs/traceability/relevant_user_flow_inventory.yaml" in text
     assert "Python defines compilation" in text
     assert "`.yaml` flow assets for executable simulation-derived flow contracts" in text
     assert "C++ defines compilation" not in text
@@ -19,10 +20,13 @@ def test_getting_started_quickstart_mentions_current_entrypoint_and_query_loop()
         REPO_ROOT / "notes" / "scenarios" / "walkthroughs" / "getting_started_hypothetical_task_guide.md"
     ).read_text(encoding="utf-8")
 
+    assert "PYTHONPATH=src python3 -m aicoding.cli.main admin doctor" in text
+    assert "PYTHONPATH=src python3 -m aicoding.cli.main ..." in text
+    assert "PYTHONPATH=src python3 -m aicoding.daemon.main" in text
     assert "workflow start \\" in text
     assert "--kind epic" in text
     assert "session show-current" in text
-    assert "subtask prompt --node <node_id>" in text
+    assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>" in text
     assert "workflow advance --node <node_id>" in text
     assert "top-ness is defined only by the absence of a parent node" in text
     assert "the shipped built-in YAML and workflow-start path still expose only `epic` as parentless today" in text

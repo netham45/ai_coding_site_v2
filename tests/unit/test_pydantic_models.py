@@ -54,8 +54,8 @@ def test_daemon_status_response_serializes_stably() -> None:
         background_tasks=["session_recovery"],
         write_probe={"write_path": "available"},
         schema_compatibility=SchemaCompatibilityResponse(
-            current_revision="0029_incr_parent_merge_state",
-            expected_revision="0029_incr_parent_merge_state",
+            current_revision="0030_live_runtime_binding",
+            expected_revision="0030_live_runtime_binding",
             status="up_to_date",
             compatible=True,
         ),
@@ -68,8 +68,8 @@ def test_daemon_status_response_serializes_stably() -> None:
         "background_tasks": ["session_recovery"],
         "write_probe": {"write_path": "available"},
         "schema_compatibility": {
-            "current_revision": "0029_incr_parent_merge_state",
-            "expected_revision": "0029_incr_parent_merge_state",
+            "current_revision": "0030_live_runtime_binding",
+            "expected_revision": "0030_live_runtime_binding",
             "status": "up_to_date",
             "compatible": True,
         },

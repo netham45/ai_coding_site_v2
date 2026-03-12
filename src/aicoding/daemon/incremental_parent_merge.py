@@ -423,11 +423,19 @@ def _has_remaining_completed_unmerged(session: Session, *, parent_node_version_i
 
 
 def _set_working_tree_state_in_session(session: Session, *, logical_node_id: UUID, state: str) -> None:
+    selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     if lifecycle is None:
-        lifecycle = NodeLifecycleState(node_id=str(logical_node_id), lifecycle_state="DRAFT", working_tree_state=state)
+        lifecycle = NodeLifecycleState(
+            node_id=str(logical_node_id),
+            node_version_id=None if selector is None else selector.authoritative_node_version_id,
+            lifecycle_state="DRAFT",
+            working_tree_state=state,
+        )
         session.add(lifecycle)
     else:
+        if selector is not None:
+            lifecycle.node_version_id = selector.authoritative_node_version_id
         lifecycle.working_tree_state = state
 
 

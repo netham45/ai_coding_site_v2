@@ -45,6 +45,7 @@ queryClient.setQueryData(queryKeys.projectBootstrap("repo_alpha"), {
   },
   root_node_id: null,
   route_hint: null,
+  top_level_nodes: [],
 });
 queryClient.setQueryData(queryKeys.nodeKinds(), {
   definitions: [
@@ -106,6 +107,10 @@ if (!html.includes('data-testid="top-level-prompt-input"')) {
 
 if (!html.includes('data-testid="project-daemon-context"')) {
   throw new Error("Expected the daemon context card to render on the project page.");
+}
+
+if (!html.includes('data-testid="project-top-level-nodes-panel"')) {
+  throw new Error("Expected the existing top-level nodes panel to render on the project page.");
 }
 
 console.log("project-bootstrap-check: ok");

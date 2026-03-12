@@ -43,6 +43,20 @@ def test_session_poller_detects_idle_state_deterministically() -> None:
     assert result.idle_seconds >= 15
 
 
+def test_fake_session_adapter_can_preserve_dead_session_process() -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    adapter.create_session("node-1", "printf 'ready'", ".")
+    adapter.terminate_process("node-1", exit_status=17)
+
+    snapshot = adapter.describe("node-1")
+
+    assert snapshot is not None
+    assert snapshot.process_alive is False
+    assert snapshot.exit_status == 17
+    assert adapter.session_exists("node-1") is True
+
+
 def test_tmux_session_adapter_smoke_lifecycle() -> None:
     adapter = TmuxSessionAdapter()
     session_name = f"aicoding-test-{uuid4().hex[:8]}"
@@ -56,6 +70,23 @@ def test_tmux_session_adapter_smoke_lifecycle() -> None:
         assert snapshot.working_directory
         assert adapter.session_exists(session_name) is True
         assert "ready" in captured
+    finally:
+        adapter.kill_session(session_name)
+
+
+def test_tmux_session_adapter_preserves_dead_pane_with_remain_on_exit() -> None:
+    adapter = TmuxSessionAdapter()
+    session_name = f"aicoding-dead-{uuid4().hex[:8]}"
+    try:
+        adapter.create_session(session_name, "bash -lc 'exit 7'", ".")
+        time.sleep(0.4)
+        snapshot = adapter.describe(session_name)
+
+        assert snapshot is not None
+        assert adapter.session_exists(session_name) is True
+        assert snapshot.process_alive is False
+        assert snapshot.exit_status == 7
+        assert "Pane is dead" in adapter.capture_pane(session_name, include_alt_screen=True)
     finally:
         adapter.kill_session(session_name)
 

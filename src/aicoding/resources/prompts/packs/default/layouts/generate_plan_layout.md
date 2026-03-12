@@ -78,5 +78,5 @@ Required CLI workflow:
 
 Completion contract:
 - after `subtask succeed`, follow the routed daemon outcome instead of manually chaining `summary register`, `subtask complete`, or `workflow advance`
-- if the routed outcome is `next_stage`, fetch the next stage prompt with `python3 -m aicoding.cli.main subtask prompt --node {{node_id}}` and continue in the same session
+- if the routed outcome is `next_stage`, fetch the next stage prompt with `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node {{node_id}}` and continue in the same session
 - if the routed outcome is `completed`, stop and do not probe the closed parent run with additional low-level workflow commands

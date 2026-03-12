@@ -230,7 +230,8 @@ Implementation staging note:
 - hierarchy-created nodes are seeded at `DRAFT`
 - daemon-started legacy nodes that do not yet have a lifecycle row are temporarily bootstrapped through `READY` so pre-versioned authority tests and simple operational commands can still exercise run admission
 - this bootstrap path should be removed once node versioning and compiled workflow admission become authoritative
-- node lifecycle is still currently keyed by logical node id rather than node version id, so version cutover changes the current authoritative version selector without yet preserving separate lifecycle rows per historical version
+- node lifecycle rows are still keyed by logical node id, but the live row now carries `node_version_id` and must only be trusted when that bound version matches the authoritative or explicit restart-target version being acted on
+- this means the repository still uses one live lifecycle row per logical node, but that row is version-owned live authority rather than version-agnostic logical-node state
 
 ---
 
@@ -308,6 +309,10 @@ Recommended high-level transitions:
 - `RUNNING -> PAUSED_FOR_USER`
 - `RUNNING -> FAILED_TO_PARENT`
 - `RUNNING -> COMPLETE`
+- `READY -> WAITING_ON_SIBLING_DEPENDENCY`
+- `COMPLETE -> WAITING_ON_SIBLING_DEPENDENCY`
+- `FAILED_TO_PARENT -> WAITING_ON_SIBLING_DEPENDENCY`
+- `WAITING_ON_SIBLING_DEPENDENCY -> READY`
 - `COMPLETE -> RECTIFYING_UPSTREAM`
 - `RECTIFYING_UPSTREAM -> COMPLETE`
 - `COMPLETE -> SUPERSEDED`
@@ -318,6 +323,7 @@ Recommended high-level transitions:
 
 - some of these may be represented as current-state fields and not separate workflow engine states, but the lifecycle model must still support the semantics
 - `VALIDATION_PENDING`, `REVIEW_PENDING`, and `TESTING_PENDING` may be entered explicitly or treated as visible subtask-owned phases depending on implementation
+- dependency-invalidated sibling restart is an explicit reason a node may move back into `WAITING_ON_SIBLING_DEPENDENCY` after it had already reached `READY`, `COMPLETE`, or `FAILED_TO_PARENT`; that reset must not make the fresh dependent version runnable again until prerequisite sibling merge, refresh, and rematerialization conditions clear
 
 ---
 
@@ -692,6 +698,7 @@ This V2 lifecycle spec resolves or reduces the following prior gaps:
 Remaining follow-on work still needed:
 
 - fold hybrid manual-vs-layout child-set rules into implementation-facing hierarchy metadata
+- keep the hierarchy-wide real proving path current so explicit lifecycle transitions to `COMPLETE` after manual/no-run finalization remain covered by the same incremental parent-merge runtime contract as ordinary run completion
 - finalize active-old-run handling during supersession
 Implementation note: subtree regeneration and upstream rectification now create durable candidate lineages plus `rebuild_events`; candidate cutover is blocked until the rebuild path marks the candidate stable. The runtime now also exposes explicit rebuild-coordination and cutover-readiness reads so active-run and active-session conflicts are inspectable before mutation.
 Implementation note: the current default compiled workflow now includes `validate_node` as a durable gate after execution, and `workflow advance` enforces required validation success before the run can continue or complete.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.db.models import NodeLifecycleState
+from aicoding.db.models import LogicalNodeCurrentVersion, NodeLifecycleState, NodeRun, NodeRunState
 from aicoding.db.session import query_session_scope, session_scope
 
 NODE_LIFECYCLE_STATES = {
@@ -42,10 +42,10 @@ NODE_RUN_STATUSES = {
 }
 
 ALLOWED_NODE_TRANSITIONS = {
-    "DRAFT": {"COMPILED", "COMPILE_FAILED", "CANCELLED"},
+    "DRAFT": {"COMPILED", "COMPILE_FAILED", "WAITING_ON_SIBLING_DEPENDENCY", "CANCELLED"},
     "COMPILE_FAILED": {"COMPILED", "SUPERSEDED"},
-    "COMPILED": {"READY"},
-    "READY": {"RUNNING", "CANCELLED"},
+    "COMPILED": {"READY", "WAITING_ON_SIBLING_DEPENDENCY"},
+    "READY": {"RUNNING", "WAITING_ON_SIBLING_DEPENDENCY", "CANCELLED"},
     "RUNNING": {
         "WAITING_ON_CHILDREN",
         "WAITING_ON_SIBLING_DEPENDENCY",
@@ -60,15 +60,15 @@ ALLOWED_NODE_TRANSITIONS = {
         "CANCELLED",
     },
     "WAITING_ON_CHILDREN": {"RUNNING", "PAUSED_FOR_USER"},
-    "WAITING_ON_SIBLING_DEPENDENCY": {"RUNNING", "PAUSED_FOR_USER"},
+    "WAITING_ON_SIBLING_DEPENDENCY": {"READY", "RUNNING", "PAUSED_FOR_USER"},
     "VALIDATION_PENDING": {"REVIEW_PENDING"},
     "REVIEW_PENDING": {"TESTING_PENDING"},
     "TESTING_PENDING": {"RUNNING"},
     "PAUSED_FOR_USER": {"RUNNING", "RECTIFYING_SELF", "RECTIFYING_UPSTREAM", "CANCELLED"},
     "RECTIFYING_SELF": {"RUNNING"},
     "RECTIFYING_UPSTREAM": {"RUNNING"},
-    "FAILED_TO_PARENT": {"SUPERSEDED"},
-    "COMPLETE": {"SUPERSEDED"},
+    "FAILED_TO_PARENT": {"WAITING_ON_SIBLING_DEPENDENCY", "SUPERSEDED"},
+    "COMPLETE": {"WAITING_ON_SIBLING_DEPENDENCY", "SUPERSEDED"},
     "SUPERSEDED": set(),
     "CANCELLED": set(),
 }
@@ -83,6 +83,7 @@ LIFECYCLE_STATE_ALIASES = {
 @dataclass(frozen=True, slots=True)
 class NodeLifecycleSnapshot:
     node_id: str
+    node_version_id: UUID | None
     lifecycle_state: str
     run_status: str | None
     current_run_id: UUID | None
@@ -102,6 +103,7 @@ class NodeLifecycleSnapshot:
     def to_payload(self) -> dict[str, object]:
         return {
             "node_id": self.node_id,
+            "node_version_id": None if self.node_version_id is None else str(self.node_version_id),
             "lifecycle_state": self.lifecycle_state,
             "run_status": self.run_status,
             "current_run_id": None if self.current_run_id is None else str(self.current_run_id),
@@ -131,6 +133,7 @@ def _lifecycle_query(node_id: str):
 def _snapshot(record: NodeLifecycleState) -> NodeLifecycleSnapshot:
     return NodeLifecycleSnapshot(
         node_id=record.node_id,
+        node_version_id=record.node_version_id,
         lifecycle_state=record.lifecycle_state,
         run_status=record.run_status,
         current_run_id=record.current_run_id,
@@ -214,6 +217,33 @@ def seed_node_lifecycle(session_factory: sessionmaker[Session], *, node_id: str,
         return _snapshot(record)
 
 
+def bind_node_lifecycle_version(
+    session_factory: sessionmaker[Session],
+    *,
+    node_id: str,
+    node_version_id: UUID,
+    reset_runtime: bool = False,
+) -> NodeLifecycleSnapshot:
+    with session_scope(session_factory) as session:
+        _lock_node(session, node_id)
+        record = session.execute(_lifecycle_query(node_id)).scalar_one_or_none()
+        if record is None:
+            raise DaemonNotFoundError("node lifecycle record not found")
+        if reset_runtime:
+            record.run_status = None
+            record.current_run_id = None
+            record.current_task_id = None
+            record.current_subtask_id = None
+            record.current_subtask_attempt = None
+            record.last_completed_subtask_id = None
+            record.execution_cursor_json = {}
+            record.is_resumable = False
+            record.pause_flag_name = None
+        record.node_version_id = node_version_id
+        session.flush()
+        return _snapshot(record)
+
+
 def load_node_lifecycle(session_factory: sessionmaker[Session], node_id: str) -> NodeLifecycleSnapshot:
     with query_session_scope(session_factory) as session:
         record = session.execute(_lifecycle_query(node_id)).scalar_one_or_none()
@@ -236,6 +266,34 @@ def transition_node_lifecycle(
         if record is None:
             raise DaemonNotFoundError("node lifecycle record not found")
         _apply_transition(record, target_state=target_state, pause_flag_name=pause_flag_name)
+        if target_state == "COMPLETE":
+            from aicoding.daemon.incremental_parent_merge import record_completed_child_for_incremental_merge_in_session
+
+            selector = session.get(LogicalNodeCurrentVersion, UUID(node_id))
+            if selector is not None:
+                active_run = session.execute(
+                    select(NodeRun)
+                    .where(
+                        NodeRun.node_version_id == selector.authoritative_node_version_id,
+                        NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")),
+                    )
+                    .order_by(NodeRun.run_number.desc())
+                ).scalars().first()
+                if active_run is not None:
+                    active_run.run_status = "COMPLETE"
+                    active_run.ended_at = active_run.ended_at or datetime.now(timezone.utc)
+                    run_state = session.get(NodeRunState, active_run.id)
+                    if run_state is not None:
+                        run_state.lifecycle_state = "COMPLETE"
+                        run_state.current_task_id = None
+                        run_state.current_compiled_subtask_id = None
+                        run_state.current_subtask_attempt = None
+                        run_state.pause_flag_name = None
+                        run_state.is_resumable = False
+                record_completed_child_for_incremental_merge_in_session(
+                    session,
+                    child_node_version_id=selector.authoritative_node_version_id,
+                )
         session.flush()
         return _snapshot(record)
 

@@ -1,27 +1,21 @@
-You are defining child `plan` nodes for implementation sub-epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `sub_epic/base.md`.
+- This overlay turns the phase into an implementation band.
+- Keep notes, checklist, and development-log obligations visible where the phase requires them.
 
-This delivery band exists to ship the code and bounded proof for a declared implementation scope.
+Overlay Objective Delta
+- Produce crisp implementation plans that leave code changes reviewable and bounded-proof-ready.
 
-Bias:
-- produce plans with crisp execution boundaries
-- make artifact targets explicit
-- ensure notes, checklist, and development-log obligations remain visible where the phase requires them
+Additional Forbidden Actions
+- Do not create broad plans like "implement everything."
+- Do not push proving or documentation obligations into an unspecified later band when they belong here.
+- Do not split only by file count.
+- Do not absorb task-level implementation instead of creating child plans.
 
-Do not:
-- create broad plans such as "implement everything"
-- push proving or documentation obligations into an unspecified later band if they belong here
-- split by file count alone when there is no real execution boundary
+Profile-Specific Expected Result
+- A plan child set for implementation and supporting bounded proof.
 
-Each plan should make explicit:
-- what system boundary it changes
-- what artifacts are expected
-- what bounded tests or diagnostics it must run
-- what later bands depend on its output
-
-Closure bar:
-- implementation outputs must be reviewable and bounded-proof-ready for downstream docs or E2E bands
-
-Return JSON only:
-{"status":"OK","child_count":<n>}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- Each plan has a crisp execution boundary.
+- Artifacts and bounded-proof obligations are explicit.
+- Downstream docs or E2E bands can consume the output without reinterpreting it.

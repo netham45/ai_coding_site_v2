@@ -1,0 +1,75 @@
+# Workflow Overhaul Authoritative Plan Family Breakdown
+
+## Entry 1
+
+- Timestamp: 2026-03-12T10:20:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown
+- Task title: Workflow overhaul authoritative plan family breakdown
+- Status: started
+- Affected systems: notes, plans, development logs, document consistency tests
+- Summary: Began a future-plan-only review to decompose the current workflow-overhaul bundle into likely authoritative plan slices grounded in the real codebase, current tests, and authoritative notes.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_self_hosted_workflow_overhaul_notes.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_proposed_note_and_code_updates.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_support_gap_closure.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_route_design.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_e2e_coverage_matrix.md`
+  - `notes/specs/runtime/node_lifecycle_spec_v2.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `notes/specs/cli/cli_surface_spec_v2.md`
+- Commands and tests run:
+  - `rg -n "workflow_profile|supported_workflow_profiles|default_workflow_profile|node kinds|workflow start|materialize-children|layout_id|workflow brief|node profiles|node types" src tests notes plan -S`
+  - `rg --files src tests | rg "(yaml_schemas|hierarchy|workflow_start|workflows|materialization|app|parser|handlers|test_workflow_start|test_materialization|test_hierarchy|test_workflow_start_flow|test_flow_01_create_top_level_node_real)"`
+  - `sed -n '1,240p' ...` on the main future-plan and implementation surfaces under review
+- Result: In progress. The repo already has enough stable code structure to ground a real plan-family decomposition, but the workflow-overhaul bundle still needs explicit per-slice contract and verification framing based on the current implementation surfaces.
+- Next step: Finish the code/test review and author the actual future-plan breakdown document with slice-by-slice subtasks and contract gaps.
+
+## Entry 2
+
+- Timestamp: 2026-03-12T10:45:00-06:00
+- Task ID: 2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown
+- Task title: Workflow overhaul authoritative plan family breakdown
+- Status: complete
+- Affected systems: notes, plans, development logs, document consistency tests
+- Summary: Added a repo-grounded future-plan breakdown that decomposes the current workflow-overhaul bundle into likely authoritative plan slices, each with current code surfaces, missing contracts, implementation subtasks, dependencies, and proving needs.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown.md`
+  - `AGENTS.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_self_hosted_workflow_overhaul_notes.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_proposed_note_and_code_updates.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_support_gap_closure.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_definition_schema_draft.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_route_design.md`
+  - `plan/future_plans/workflow_overhaul/2026-03-10_workflow_profile_e2e_coverage_matrix.md`
+  - `plan/reconcilliation/01_top_level_node_hierarchy_reconciliation.md`
+  - `notes/specs/runtime/node_lifecycle_spec_v2.md`
+  - `notes/specs/yaml/yaml_schemas_spec_v2.md`
+  - `notes/specs/cli/cli_surface_spec_v2.md`
+- Commands and tests run:
+  - `rg -n "workflow_profile|supported_workflow_profiles|default_workflow_profile|node kinds|workflow start|materialize-children|layout_id|workflow brief|node profiles|node types" src tests notes plan -S`
+  - `rg --files src tests | rg "(yaml_schemas|hierarchy|workflow_start|workflows|materialization|app|parser|handlers|test_workflow_start|test_materialization|test_hierarchy|test_workflow_start_flow|test_flow_01_create_top_level_node_real)"`
+  - `sed -n '1,260p' src/aicoding/yaml_schemas.py`
+  - `sed -n '1,260p' src/aicoding/hierarchy.py`
+  - `sed -n '1,260p' src/aicoding/daemon/workflow_start.py`
+  - `sed -n '1,320p' src/aicoding/daemon/workflows.py`
+  - `sed -n '1,360p' src/aicoding/daemon/materialization.py`
+  - `sed -n '1,320p' src/aicoding/daemon/app.py`
+  - `sed -n '1,340p' src/aicoding/cli/parser.py`
+  - `sed -n '1,320p' src/aicoding/cli/handlers.py`
+  - `sed -n '1,260p' src/aicoding/daemon/models.py`
+  - `sed -n '1,240p' tests/unit/test_workflow_start.py`
+  - `sed -n '1,260p' tests/unit/test_materialization.py`
+  - `sed -n '1,260p' tests/integration/test_workflow_start_flow.py`
+  - `rg -n "node types|node profiles|workflow brief|/api/workflow-profiles|/api/nodes/.*/types|/api/nodes/.*/profiles|/api/nodes/.*/workflow-brief" src tests -S`
+  - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`
+- Result:
+  - Passed: `tests/unit/test_task_plan_docs.py` and `tests/unit/test_document_schema_docs.py` (`13 passed`).
+  - Added:
+    - `plan/future_plans/workflow_overhaul/2026-03-12_authoritative_plan_family_breakdown.md`
+    - `plan/tasks/2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown.md`
+    - `notes/logs/doc_updates/2026-03-12_workflow_overhaul_authoritative_plan_family_breakdown.md`
+  - The resulting breakdown recommends seven future authoritative slices: YAML/schema adoption, startup/create and parentless top-level policy, profile-aware materialization, compiled workflow profile context and brief generation, profile inspection surfaces, prompt-pack adoption, and verification/checklist adoption.
+- Next step: If the bundle is promoted later, open the umbrella sequencing plan plus Slice A and Slice B first, because the current codebase needs the schema and startup contracts frozen before any broader workflow-profile coding should begin.

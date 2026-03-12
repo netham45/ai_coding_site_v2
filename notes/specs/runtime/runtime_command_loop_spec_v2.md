@@ -206,6 +206,7 @@ Implementation staging note:
 - `session show-current` now resolves from the durable primary-session table instead of only the session harness adapter
 - `session show-current` now also returns the bound `logical_node_id`, `node_kind`, `node_title`, current `run_status`, and derived `recovery_classification` so session bootstrap can safely discover what work it is attached to before reading workflow or subtask state
 - session bind/replacement flows now record concrete tmux launch metadata, including the derived session name, launch command, working directory, and tmux attach target
+- daemon-managed primary tmux sessions now enable `remain-on-exit` by default, and the session surfaces distinguish tmux pane existence from live-process health with explicit `tmux_process_alive` and `tmux_exit_status` fields
 - compile-time source capture must be idempotent within one compile pass: repeated resolved inputs for the same `(source_group, relative_path, source_role)` may not create duplicate `node_version_source_documents` rows, and sibling-tier `node_definition` overrides present in one workspace must not break compile for a different node kind
 - built-in validation commands used by leaf/runtime workflows must target the active workspace, not repository-internal fixture paths; the default validation gate and validation hook now use `python3 -m pytest -q` rather than repo-specific schema-test paths
 - command-based validation subtasks now default to an implicit `command_exit_code == 0` gate when no explicit `checks` list is authored, so built-in validation hooks can remain concise without breaking `workflow advance`
@@ -225,6 +226,7 @@ Implementation staging note:
 - `node reconcile --node <id>` now exposes the packaged parent-local reconcile prompt plus the current derived reconcile context
 - `subtask context --node <id>` now includes durable `parent_reconcile_context` when a staged child merge has already run for the active parent node run
 - that same `parent_reconcile_context` channel now also carries daemon-assembled incremental merge conflict handoff context when the parent merge lane blocks on a conflicted child merge
+- when the operator or parent AI resolves the conflicted parent repo and records `resolve_conflict`, the daemon now uses that same durable path to advance the affected incremental child merge row and parent lane to the resolved parent head before dependent siblings can unblock
 - `subtask prompt --node <id>` and `subtask context --node <id>` now expose the same daemon-assembled `stage_context_json` bundle so stage startup does not depend on terminal scrollback or ad hoc session memory
 - that bundle currently includes:
   - startup metadata from the authoritative node version and run
@@ -238,6 +240,7 @@ Implementation staging note:
 - the stage portion currently includes compiled task/subtask ids, source subtask key, subtask type, title, and frozen environment request metadata
 - compile-time rendering now freezes prompt and command text before runtime stage execution begins; stage startup consumes that frozen rendered payload plus `stage_context_json` rather than rerendering templates at prompt-fetch time
 - `subtask environment --node <id>` now exposes the current compiled subtask's frozen environment request so the session can tell whether the next step is host, delegated-profile, or best-effort isolation work before starting the attempt
+- if session supervision already durably failed the latest run, `subtask current --node <id>` now degrades to that failed run snapshot with a bounded `terminal_failure` bundle, while `subtask prompt --node <id>` and `subtask context --node <id>` reject with explicit guidance to inspect the failed run/session surfaces instead of probing the closed run
 
 ### Progress marking
 
@@ -298,6 +301,7 @@ Implementation staging note:
 - `session provider-resume --node <id>` now attempts provider-aware rebound before falling back to the provider-agnostic recovery path
 - `session show --node <id>`, `session show --session <id>`, and `session show-current` now also expose the same `recommended_action` when the selected row is the active primary session, so session-control clients can decide whether to attach or resume from the ordinary session read path
 - the current staged classifier distinguishes `healthy`, `detached`, `stale_but_recoverable`, `lost`, `missing`, `ambiguous`, and `non_resumable`
+- a preserved dead tmux pane is classified as `lost`, not `detached` or `healthy`, even though `tmux_session_exists` remains true for inspection purposes
 - the current provider-aware enhancement is intentionally bounded: it only performs direct rebind when the durable provider identity matches the active backend and that provider session still exists
 - `session nudge --node <id>` now performs bounded idle inspection against the active primary session, evaluates the captured pane content even when the provider UI is in alt-screen, records durable nudge audit events, and escalates to `PAUSED_FOR_USER` when the configured nudge budget is exhausted
 
@@ -685,6 +689,7 @@ Implementation staging note:
 - materialization creates child hierarchy rows, authoritative child versions, compiled workflows, ready lifecycle state, and sibling dependency edges in durable storage
 - parent-visible scheduling is currently exposed as derived classifications (`ready`, `blocked`, `invalid`, `impossible_wait`) rather than a separate schedule snapshot table
 - the daemon now runs a background child auto-start loop that first advances pending incremental parent merges plus stale-child refresh for auto-run children, then admits `ready` child nodes with trigger reason `auto_run_child` and binds their primary sessions without an operator `node run start` or `session bind`
+- a child becomes eligible for daemon-owned incremental merge processing either when its active run reaches terminal `COMPLETE` or when an operator/manual flow explicitly transitions the child lifecycle to `COMPLETE` after the authoritative child version already has a recorded `final_commit_sha`
 - final authoritative parent reconcile now happens only after all required children are already merged upward into the parent lineage the daemon is orchestrating; the reconcile stage is parent-local synthesis, not the first child-to-parent merge step
 - dependency-blocked siblings remain unstarted until readiness changes
 

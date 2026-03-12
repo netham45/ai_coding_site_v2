@@ -24,11 +24,12 @@
 - After `git merge-children --node <id>`, the active parent run now carries `parent_reconcile_context` in `node_run_state.execution_cursor_json`.
 - `subtask context --node <id>` now includes that reconcile context so the active session can resume the reconcile stage without reconstructing child state from memory.
 - `node child-results --node <id>` and `node reconcile --node <id>` now expose already-applied incremental merge order from durable merge history for the authoritative live parent lineage rather than a synthetic final-stage plan.
+- The authoritative incremental merge lane is now seeded both by daemon-owned run terminal completion and by an explicit lifecycle transition to `COMPLETE` when the authoritative child version already has a recorded `final_commit_sha`. That keeps finalized no-run/manual hierarchy paths on the same merge-backed runtime contract as ordinary child runs.
 
 ## Newly explicit limitation
 
 - The live authoritative reconcile path is now post-merge parent-local synthesis, but the candidate-version rectification path still replays child merges from seed when rebuilding a non-authoritative lineage.
-- The repo still does not have full real E2E proof for the hierarchy-wide incremental merge plus final parent reconcile narrative.
+- The remaining real E2E gap for this family is now candidate-lineage rectification and rebuild replay. The hierarchy-wide authoritative incremental merge plus final parent reconcile narrative now has passing real proof through the full-tree runtime suite.
 
 ## Immediate follow-up expectation
 

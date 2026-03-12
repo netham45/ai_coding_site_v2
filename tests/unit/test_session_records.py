@@ -7,13 +7,15 @@ from uuid import uuid4
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.live_git import repo_path_for_version
 from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
 from aicoding.daemon.session_records import (
-    CODEX_WORKSPACE_TRUST_ACCEPT_MARKER,
-    CODEX_WORKSPACE_TRUST_PROMPT,
+    _maybe_rematerialize_dependency_invalidated_child,
     auto_advance_incremental_parent_merge_and_refresh_children,
+    auto_supervise_primary_sessions,
     attach_primary_session,
     bind_primary_session,
+    get_session_for_node,
     inspect_primary_session_screen_state,
     load_provider_recovery_status,
     load_recovery_status,
@@ -25,10 +27,14 @@ from aicoding.daemon.session_records import (
     resume_primary_session,
     show_current_primary_session,
 )
+from aicoding.daemon.materialization import inspect_materialized_children, materialize_layout_children
+from aicoding.daemon.regeneration import _record_rebuild_event
+from aicoding.daemon.run_orchestration import sync_paused_run
+from aicoding.daemon.run_orchestration import cancel_active_run
 from aicoding.db.models import Session as DurableSession
-from aicoding.db.models import NodeRunState
+from aicoding.db.models import LogicalNodeCurrentVersion, NodeRun, NodeRunState, NodeVersion, ParentChildAuthority
 from aicoding.db.session import session_scope
-from aicoding.daemon.versioning import initialize_node_version
+from aicoding.daemon.versioning import create_superseding_node_version, cutover_candidate_version, initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -81,28 +87,30 @@ def test_bind_attach_resume_and_list_sessions(db_session_factory, migrated_publi
     assert events[0].payload_json["tmux_session_name"] == bound.tmux_session_name
 
 
-def test_bind_primary_session_accepts_codex_workspace_trust_prompt(db_session_factory, migrated_public_schema) -> None:
+def test_bind_primary_session_uses_authoritative_node_runtime_repo_when_present(
+    db_session_factory,
+    migrated_public_schema,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
     clock = FakeClock()
-    adapter = FakeSessionAdapter(now=clock.now, backend_name="tmux")
-    original_create_session = adapter.create_session
-
-    def create_session_with_trust_prompt(session_name: str, command: str, working_directory: str, environment=None):
-        snapshot = original_create_session(session_name, command, working_directory, environment)
-        adapter._sessions[session_name].pane_text = (
-            f"{CODEX_WORKSPACE_TRUST_PROMPT}\n\n{CODEX_WORKSPACE_TRUST_ACCEPT_MARKER}\n"
-        )
-        return snapshot
-
-    adapter.create_session = create_session_with_trust_prompt  # type: ignore[method-assign]
+    adapter = FakeSessionAdapter(now=clock.now)
     poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
     node = _create_started_node(db_session_factory)
 
+    with session_scope(db_session_factory) as session:
+        current = session.get(LogicalNodeCurrentVersion, node.node_id)
+        assert current is not None
+        repo_path = repo_path_for_version(current.authoritative_node_version_id)
+    repo_path.mkdir(parents=True, exist_ok=True)
+    (repo_path / ".git").mkdir()
+
     bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
     events = list_session_events(db_session_factory, session_id=bound.session_id)
-    pane_text = adapter.capture_pane(bound.tmux_session_name or "")
 
-    assert [item.event_type for item in events][:2] == ["bound", "workspace_trust_prompt_accepted"]
-    assert "1\n" in pane_text
+    assert bound.cwd == str(repo_path)
+    assert events[0].payload_json["cwd"] == str(repo_path)
 
 
 def test_show_current_primary_session_reports_binding_metadata_and_stale_recovery(
@@ -132,6 +140,26 @@ def test_show_current_primary_session_reports_binding_metadata_and_stale_recover
     assert stale.session_id == bound.session_id
     assert stale.recovery_classification == "stale_but_recoverable"
     assert stale.recommended_action == "resume_existing_session"
+
+
+def test_show_current_primary_session_ignores_superseded_version_session_after_cutover(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    cancel_active_run(db_session_factory, logical_node_id=node.node_id)
+    candidate = create_superseding_node_version(db_session_factory, logical_node_id=node.node_id)
+    cutover_candidate_version(db_session_factory, version_id=candidate.id)
+
+    current = show_current_primary_session(db_session_factory, adapter=adapter, poller=poller)
+
+    assert bound.node_version_id != candidate.id
+    assert current is None
 
 
 def test_bind_primary_session_rejects_duplicate_active_primary_sessions(db_session_factory, migrated_public_schema) -> None:
@@ -179,6 +207,76 @@ def test_resume_replaces_missing_session(db_session_factory, migrated_public_sch
     assert [item.status for item in catalog.sessions] == ["LOST", "RESUMED"]
 
 
+def test_auto_supervise_primary_sessions_replaces_missing_tracked_session(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    adapter.kill_session(bound.tmux_session_name or "")
+
+    snapshots = auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+    catalog = list_sessions_for_node(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    latest_events = list_session_events(db_session_factory, session_id=catalog.sessions[-1].session_id)
+
+    assert [item.status for item in catalog.sessions] == ["LOST", "RESUMED"]
+    assert snapshots[0].status == "recovered"
+    assert snapshots[0].action == "replacement_created"
+    assert latest_events[-1].event_type == "supervision_recovery_succeeded"
+
+
+def test_auto_supervise_primary_sessions_replaces_dead_tracked_tmux_process(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    adapter.terminate_process(bound.tmux_session_name or "", exit_status=23)
+
+    snapshots = auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+    catalog = list_sessions_for_node(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    original_events = list_session_events(db_session_factory, session_id=bound.session_id)
+
+    assert [item.status for item in catalog.sessions] == ["LOST", "RESUMED"]
+    assert snapshots[0].status == "recovered"
+    assert snapshots[0].action == "replacement_created"
+    assert any(
+        item.event_type == "supervision_recovery_attempted"
+        and item.payload_json["reason"] == "tracked_tmux_process_exited"
+        and item.payload_json["tmux_process_alive"] is False
+        and item.payload_json["tmux_exit_status"] == 23
+        for item in original_events
+    )
+
+
+def test_auto_supervise_primary_sessions_fails_unrestartable_unfinished_run(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    sync_paused_run(db_session_factory, logical_node_id=node.node_id, pause_flag_name="manual_pause")
+    adapter.kill_session(bound.tmux_session_name or "")
+
+    snapshots = auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+    catalog = list_sessions_for_node(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    events = list_session_events(db_session_factory, session_id=bound.session_id)
+
+    with session_scope(db_session_factory) as session:
+        run = session.query(NodeRun).one()
+        state = session.query(NodeRunState).one()
+
+    assert snapshots[0].status == "failed"
+    assert snapshots[0].reason == "restart_not_allowed_for_lifecycle_state"
+    assert catalog.sessions[0].status == "LOST"
+    assert any(item.event_type == "supervision_recovery_failed" for item in events)
+    assert run.run_status == "FAILED"
+    assert state.lifecycle_state == "FAILED_TO_PARENT"
+
+
 def test_recovery_status_distinguishes_stale_and_providerless_sessions(db_session_factory, migrated_public_schema) -> None:
     clock = FakeClock()
     adapter = FakeSessionAdapter(now=clock.now)
@@ -200,6 +298,31 @@ def test_recovery_status_distinguishes_stale_and_providerless_sessions(db_sessio
     assert healthy.provider_session_id_present is False
     assert stale.recovery_classification == "stale_but_recoverable"
     assert stale.recommended_action == "resume_existing_session"
+
+
+def test_recovery_status_marks_preserved_dead_tmux_pane_as_lost(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    adapter.terminate_process(bound.tmux_session_name or "", exit_status=9)
+
+    shown = get_session_for_node(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    recovery = load_recovery_status(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+
+    assert shown.tmux_session_exists is True
+    assert shown.tmux_process_alive is False
+    assert shown.tmux_exit_status == 9
+    assert shown.recovery_classification == "lost"
+    assert shown.recommended_action == "create_replacement_session"
+    assert shown.screen_state is None
+    assert recovery.recovery_classification == "lost"
+    assert recovery.reason == "tmux_process_exited"
+    assert recovery.tmux_session_exists is True
+    assert recovery.tmux_process_alive is False
+    assert recovery.tmux_exit_status == 9
 
 
 def test_provider_specific_recovery_rebinds_restorable_provider_session(db_session_factory, migrated_public_schema) -> None:
@@ -289,6 +412,7 @@ def test_auto_advance_incremental_parent_merge_and_refresh_children_runs_merge_p
 
     monkeypatch.setattr("aicoding.daemon.session_records.check_node_dependency_readiness", fake_check)
     monkeypatch.setattr("aicoding.daemon.session_records.refresh_child_live_git_from_parent_head", fake_refresh)
+    monkeypatch.setattr("aicoding.daemon.session_records.transition_node_lifecycle", lambda *args, **kwargs: SimpleNamespace())
 
     snapshot = auto_advance_incremental_parent_merge_and_refresh_children(
         db_session_factory,
@@ -299,6 +423,279 @@ def test_auto_advance_incremental_parent_merge_and_refresh_children_runs_merge_p
     assert snapshot.processed_merge_count == 1
     assert snapshot.refreshed_child_node_ids == [stale_child_node_id]
     assert refresh_calls == [stale_child_version_id]
+
+
+def test_auto_advance_incremental_parent_merge_transitions_fresh_restart_child_to_ready_after_refresh(
+    monkeypatch, db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent_node_id = uuid4()
+    stale_child_node_id = uuid4()
+    stale_child_version_id = uuid4()
+
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records.process_pending_incremental_parent_merges",
+        lambda session_factory: [SimpleNamespace(parent_node_version_id=uuid4(), child_node_version_id=uuid4(), status="merged")],
+    )
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records._list_auto_run_child_candidate_pairs",
+        lambda session_factory, hierarchy_registry, resources: [(parent_node_id, stale_child_node_id)],
+    )
+
+    refresh_calls: list[object] = []
+    transition_calls: list[tuple[str, str]] = []
+    readiness_sequence = iter(
+        [
+            SimpleNamespace(
+                status="blocked",
+                node_version_id=stale_child_version_id,
+                blockers=[SimpleNamespace(blocker_kind="blocked_on_parent_refresh")],
+            ),
+            SimpleNamespace(
+                status="blocked",
+                node_version_id=stale_child_version_id,
+                blockers=[SimpleNamespace(blocker_kind="lifecycle_not_ready")],
+            ),
+            SimpleNamespace(status="ready", node_version_id=stale_child_version_id, blockers=[]),
+        ]
+    )
+
+    def fake_check(session_factory, *, node_id):
+        assert node_id == stale_child_node_id
+        return next(readiness_sequence)
+
+    def fake_refresh(session_factory, *, child_version_id):
+        refresh_calls.append(child_version_id)
+        return SimpleNamespace()
+
+    def fake_transition(session_factory, *, node_id, target_state):
+        transition_calls.append((node_id, target_state))
+        return SimpleNamespace()
+
+    monkeypatch.setattr("aicoding.daemon.session_records.check_node_dependency_readiness", fake_check)
+    monkeypatch.setattr("aicoding.daemon.session_records.refresh_child_live_git_from_parent_head", fake_refresh)
+    monkeypatch.setattr("aicoding.daemon.session_records._maybe_rematerialize_dependency_invalidated_child", lambda *args, **kwargs: True)
+    monkeypatch.setattr("aicoding.daemon.session_records.transition_node_lifecycle", fake_transition)
+
+    snapshot = auto_advance_incremental_parent_merge_and_refresh_children(
+        db_session_factory,
+        hierarchy_registry=registry,
+        resources=catalog,
+    )
+
+    assert snapshot.processed_merge_count == 1
+    assert snapshot.refreshed_child_node_ids == [stale_child_node_id]
+    assert refresh_calls == [stale_child_version_id]
+    assert transition_calls == [(str(stale_child_node_id), "READY")]
+
+
+def test_auto_advance_incremental_parent_merge_keeps_manual_fresh_restart_child_blocked_after_refresh(
+    monkeypatch, db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent_node_id = uuid4()
+    stale_child_node_id = uuid4()
+    stale_child_version_id = uuid4()
+
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records.process_pending_incremental_parent_merges",
+        lambda session_factory: [SimpleNamespace(parent_node_version_id=uuid4(), child_node_version_id=uuid4(), status="merged")],
+    )
+    monkeypatch.setattr(
+        "aicoding.daemon.session_records._list_auto_run_child_candidate_pairs",
+        lambda session_factory, hierarchy_registry, resources: [(parent_node_id, stale_child_node_id)],
+    )
+
+    refresh_calls: list[object] = []
+    transition_calls: list[tuple[str, str]] = []
+    readiness_sequence = iter(
+        [
+            SimpleNamespace(
+                status="blocked",
+                node_version_id=stale_child_version_id,
+                blockers=[SimpleNamespace(blocker_kind="blocked_on_parent_refresh")],
+            ),
+            SimpleNamespace(
+                status="blocked",
+                node_version_id=stale_child_version_id,
+                blockers=[
+                    SimpleNamespace(blocker_kind="child_tree_rebuild_required"),
+                    SimpleNamespace(blocker_kind="lifecycle_not_ready"),
+                ],
+            ),
+        ]
+    )
+
+    def fake_check(session_factory, *, node_id):
+        assert node_id == stale_child_node_id
+        return next(readiness_sequence)
+
+    def fake_refresh(session_factory, *, child_version_id):
+        refresh_calls.append(child_version_id)
+        return SimpleNamespace()
+
+    def fake_transition(session_factory, *, node_id, target_state):
+        transition_calls.append((node_id, target_state))
+        return SimpleNamespace()
+
+    monkeypatch.setattr("aicoding.daemon.session_records.check_node_dependency_readiness", fake_check)
+    monkeypatch.setattr("aicoding.daemon.session_records.refresh_child_live_git_from_parent_head", fake_refresh)
+    monkeypatch.setattr("aicoding.daemon.session_records._maybe_rematerialize_dependency_invalidated_child", lambda *args, **kwargs: False)
+    monkeypatch.setattr("aicoding.daemon.session_records.transition_node_lifecycle", fake_transition)
+
+    snapshot = auto_advance_incremental_parent_merge_and_refresh_children(
+        db_session_factory,
+        hierarchy_registry=registry,
+        resources=catalog,
+    )
+
+    assert snapshot.processed_merge_count == 1
+    assert snapshot.refreshed_child_node_ids == [stale_child_node_id]
+    assert refresh_calls == [stale_child_version_id]
+    assert transition_calls == []
+
+
+def test_maybe_rematerialize_dependency_invalidated_child_rebuilds_empty_layout_tree(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    right = create_hierarchy_node(db_session_factory, registry, kind="phase", title="Right", prompt="right", parent_node_id=parent.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(right.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=right.node_id)
+
+    first_materialization = materialize_layout_children(
+        db_session_factory,
+        registry,
+        catalog,
+        logical_node_id=right.node_id,
+    )
+    assert first_materialization.child_count > 0
+
+    fresh = create_superseding_node_version(
+        db_session_factory,
+        logical_node_id=right.node_id,
+        clone_structure=False,
+    )
+    with session_scope(db_session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, right.node_id)
+        assert selector is not None
+        old_version = session.get(NodeVersion, selector.authoritative_node_version_id)
+        fresh_version = session.get(NodeVersion, fresh.id)
+        assert old_version is not None
+        assert fresh_version is not None
+        old_version.status = "superseded"
+        fresh_version.status = "authoritative"
+        selector.authoritative_node_version_id = fresh.id
+        selector.latest_created_node_version_id = fresh.id
+        session.flush()
+    _record_rebuild_event(
+        db_session_factory,
+        root_logical_node_id=right.node_id,
+        root_node_version_id=fresh.id,
+        target_node_version_id=fresh.id,
+        event_kind="candidate_created",
+        event_status="pending",
+        scope="subtree",
+        trigger_reason="test_fresh_dependency_restart",
+        details_json={"supersedes_node_version_id": str(first_materialization.parent_node_version_id), "fresh_dependency_restart": True},
+    )
+
+    rematerialized = _maybe_rematerialize_dependency_invalidated_child(
+        db_session_factory,
+        logical_node_id=right.node_id,
+        node_version_id=fresh.id,
+        hierarchy_registry=registry,
+        resources=catalog,
+    )
+    inspected = inspect_materialized_children(
+        db_session_factory,
+        catalog,
+        logical_node_id=right.node_id,
+    )
+
+    assert rematerialized is True
+    assert inspected.parent_node_version_id == fresh.id
+    assert inspected.child_count > 0
+
+
+def test_maybe_rematerialize_dependency_invalidated_child_resets_placeholder_manual_authority(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    right = create_hierarchy_node(db_session_factory, registry, kind="phase", title="Right", prompt="right", parent_node_id=parent.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(right.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=right.node_id)
+
+    first_materialization = materialize_layout_children(
+        db_session_factory,
+        registry,
+        catalog,
+        logical_node_id=right.node_id,
+    )
+    assert first_materialization.child_count > 0
+
+    fresh = create_superseding_node_version(
+        db_session_factory,
+        logical_node_id=right.node_id,
+        clone_structure=False,
+    )
+    with session_scope(db_session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, right.node_id)
+        assert selector is not None
+        old_version = session.get(NodeVersion, selector.authoritative_node_version_id)
+        fresh_version = session.get(NodeVersion, fresh.id)
+        assert old_version is not None
+        assert fresh_version is not None
+        old_version.status = "superseded"
+        fresh_version.status = "authoritative"
+        selector.authoritative_node_version_id = fresh.id
+        selector.latest_created_node_version_id = fresh.id
+        session.add(
+            ParentChildAuthority(
+                parent_node_version_id=fresh.id,
+                authority_mode="manual",
+                authoritative_layout_hash=None,
+            )
+        )
+        session.flush()
+    _record_rebuild_event(
+        db_session_factory,
+        root_logical_node_id=right.node_id,
+        root_node_version_id=fresh.id,
+        target_node_version_id=fresh.id,
+        event_kind="candidate_created",
+        event_status="pending",
+        scope="subtree",
+        trigger_reason="test_fresh_dependency_restart",
+        details_json={"supersedes_node_version_id": str(first_materialization.parent_node_version_id), "fresh_dependency_restart": True},
+    )
+
+    rematerialized = _maybe_rematerialize_dependency_invalidated_child(
+        db_session_factory,
+        logical_node_id=right.node_id,
+        node_version_id=fresh.id,
+        hierarchy_registry=registry,
+        resources=catalog,
+    )
+    inspected = inspect_materialized_children(
+        db_session_factory,
+        catalog,
+        logical_node_id=right.node_id,
+    )
+
+    assert rematerialized is True
+    assert inspected.authority_mode == "layout_authoritative"
+    assert inspected.child_count > 0
 
 
 def test_screen_classifier_distinguishes_active_quiet_and_idle(db_session_factory, migrated_public_schema) -> None:
@@ -458,3 +855,35 @@ def test_nudge_primary_session_uses_repeated_prompt_then_escalates(db_session_fa
     assert escalated.status == "escalated_to_pause"
     assert escalated.pause_flag_name == "idle_nudge_limit_exceeded"
     assert [item.event_type for item in events if item.event_type in {"nudged", "nudge_escalated"}] == ["nudged", "nudged", "nudge_escalated"]
+
+
+def test_failed_supervision_run_remains_inspectable_through_session_and_recovery_reads(db_session_factory, migrated_public_schema) -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=clock.now)
+    node = _create_started_node(db_session_factory)
+
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    sync_paused_run(db_session_factory, logical_node_id=node.node_id, pause_flag_name="manual_pause")
+    adapter.kill_session(bound.tmux_session_name or "")
+
+    snapshots = auto_supervise_primary_sessions(db_session_factory, adapter=adapter, poller=poller)
+    shown = get_session_for_node(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    recovery = load_recovery_status(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    decision = recover_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+
+    assert snapshots[0].status == "failed"
+    assert shown.session_id == bound.session_id
+    assert shown.run_status == "FAILED"
+    assert shown.recovery_classification == "non_resumable"
+    assert shown.recommended_action == "inspect_failed_run"
+    assert shown.terminal_failure is not None
+    assert shown.terminal_failure["failure_origin"] == "session_supervision"
+    assert shown.terminal_failure["failure_reason"] == "restart_not_allowed_for_lifecycle_state"
+    assert recovery.recovery_classification == "non_resumable"
+    assert recovery.recommended_action == "inspect_failed_run"
+    assert recovery.terminal_failure is not None
+    assert recovery.terminal_failure["failed_session_id"] == str(bound.session_id)
+    assert decision.status == "recovery_rejected"
+    assert decision.session is not None
+    assert decision.session.terminal_failure is not None

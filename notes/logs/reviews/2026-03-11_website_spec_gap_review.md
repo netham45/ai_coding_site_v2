@@ -1,0 +1,57 @@
+# Development Log: Website Spec Gap Review
+
+## Entry 1
+
+- Timestamp: 2026-03-11
+- Task ID: web_v1_gap_correction_planning
+- Task title: Website implementation review against website plans and frontend future plans
+- Status: complete
+- Affected systems: website, daemon, tests, notes
+- Summary: Reviewed the shipped website implementation against the current web feature plans and the frontend website future-plan notes, with focus on tree behavior, top-level creation flow persistence, detail depth, and regeneration semantics.
+- Plans and notes consulted:
+  - `plan/tasks/2026-03-11_web_v1_gap_correction_planning.md`
+  - `plan/web/features/01_explorer_shell_and_hierarchy_tree.md`
+  - `plan/web/features/02_detail_tabs.md`
+  - `plan/web/features/03_prompts_and_regeneration_flow.md`
+  - `plan/web/features/05_repo_backed_project_start_and_top_level_bootstrap.md`
+  - `plan/future_plans/frontend_website_ui/2026-03-11_v1_scope_freeze.md`
+  - `plan/future_plans/frontend_website_ui/2026-03-11_top_level_node_creation_flow.md`
+  - `plan/future_plans/frontend_website_ui/2026-03-11_top_level_creation_contract.md`
+  - `plan/future_plans/frontend_website_ui/2026-03-11_review_and_expansion.md`
+  - `plan/future_plans/frontend_website_ui/2026-03-11_v1_action_table.md`
+  - `notes/planning/implementation/live_rebuild_cutover_coordination_decisions.md`
+  - `AGENTS.md`
+- Commands and tests run:
+  - `rg --files plan/web plan/future_plans/frontend_website_ui frontend/src src/aicoding/daemon tests | rg "website|web|tree|detail|regenerate|project|subtask"`
+  - `rg -n "top-level-nodes|root_node_id|subtask-attempts|subtasks/current|regenerate_node|prompt-live-candidate|detail-tab-workflow|tree-sidebar|root-node auto-selection" frontend/src src/aicoding/daemon tests plan/web plan/future_plans/frontend_website_ui`
+  - `sed -n '1,220p' plan/web/features/01_explorer_shell_and_hierarchy_tree.md`
+  - `sed -n '1,220p' plan/web/features/02_detail_tabs.md`
+  - `sed -n '1,260p' plan/web/features/03_prompts_and_regeneration_flow.md`
+  - `sed -n '1,240p' plan/web/features/05_repo_backed_project_start_and_top_level_bootstrap.md`
+  - `sed -n '1,260p' plan/future_plans/frontend_website_ui/2026-03-11_expanded_tree_contract.md`
+  - `sed -n '1,260p' plan/future_plans/frontend_website_ui/2026-03-11_top_level_node_creation_flow.md`
+  - `sed -n '1,260p' plan/future_plans/frontend_website_ui/2026-03-11_top_level_creation_contract.md`
+  - `sed -n '1,260p' plan/future_plans/frontend_website_ui/2026-03-11_v1_scope_freeze.md`
+  - `sed -n '1,260p' plan/future_plans/frontend_website_ui/2026-03-11_phase_2_feature_implementation.md`
+  - `sed -n '1,260p' plan/web/verification/03_v1_action_and_shared_state_browser_closure.md`
+  - `nl -ba frontend/src/components/shell/HierarchyTree.js | sed -n '1,260p'`
+  - `nl -ba frontend/src/components/detail/NodeDetailTabs.js | sed -n '1,760p'`
+  - `nl -ba frontend/src/routes/pages.js | sed -n '1,620p'`
+  - `nl -ba frontend/src/components/shell/AppShell.js | sed -n '1,320p'`
+  - `nl -ba frontend/src/lib/api/actions.js | sed -n '1,260p'`
+  - `nl -ba frontend/src/lib/api/prompts.js | sed -n '1,240p'`
+  - `nl -ba src/aicoding/daemon/app.py | sed -n '1134,1238p'`
+  - `nl -ba src/aicoding/daemon/app.py | sed -n '1718,1778p'`
+  - `nl -ba src/aicoding/daemon/app.py | sed -n '1903,1918p'`
+  - `nl -ba src/aicoding/daemon/app.py | sed -n '2283,2300p'`
+  - `nl -ba src/aicoding/daemon/app.py | sed -n '2563,2590p'`
+  - `nl -ba src/aicoding/daemon/projects.py | sed -n '1,320p'`
+  - `nl -ba src/aicoding/daemon/operator_views.py | sed -n '72,320p'`
+  - `nl -ba src/aicoding/daemon/actions.py | sed -n '1,320p'`
+  - `nl -ba src/aicoding/daemon/regeneration.py | sed -n '91,203p'`
+  - `nl -ba src/aicoding/daemon/rebuild_coordination.py | sed -n '104,340p'`
+  - `nl -ba frontend/tests/e2e/project-selector-context.spec.js | sed -n '1,180p'`
+  - `nl -ba frontend/tests/e2e/coverage-gaps.spec.js | sed -n '1,220p'`
+  - `nl -ba frontend/tests/e2e/residual-gaps.spec.js | sed -n '1,180p'`
+- Result: The review found several material mismatches between the current website and the planned/frozen website behavior: the shipped tree is a flattened filtered list rather than an expandable tree, project pages hard-redirect away from top-level creation once any root exists, workflow/detail surfaces do not expose subtask/stage detail despite existing daemon APIs, and regeneration remains blocked by active or paused runtime state with no cancel-and-regenerate orchestration path.
+- Next step: Convert the findings into corrective implementation tasks that update the website routes, action semantics, and browser proof to match the published website plans before making stronger v1 claims.

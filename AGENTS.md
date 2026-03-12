@@ -4,10 +4,10 @@
 
 This repository is being built as a spec-driven orchestration system.
 
-Work in this repo must stay aligned with the design notes in `notes/`.
+Work in this repo must stay aligned with the design notes and authoritative note assets in `notes/`.
 Implementation is not allowed to drift away from the notes silently.
 
-If coding reveals a limitation, contradiction, missing behavior, needed elaboration, verification gap, runtime mismatch, command inconsistency, or checklist/status mismatch, the relevant note in `notes/` must be updated as part of the same change or in an immediately adjacent follow-up change.
+If coding reveals a limitation, contradiction, missing behavior, needed elaboration, verification gap, runtime mismatch, command inconsistency, or checklist/status mismatch, the relevant note or authoritative note asset in `notes/` must be updated as part of the same change or in an immediately adjacent follow-up change.
 
 This repository does not permit undocumented behavior, undocumented verification steps, undocumented operational assumptions, silent narrowing of behavior to a more convenient implementation path, or completion claims that exceed the actual proving level.
 
@@ -231,6 +231,50 @@ A feature is not E2E-covered if its strongest test still relies on:
 - staged or durable placeholders instead of real git/session/provider behavior where the feature depends on those boundaries
 
 If a feature depends on another feature, both may share one E2E narrative, but both must be explicitly tracked as covered by that E2E suite.
+
+### Live-Run Equivalence Rule
+
+Any test claimed as E2E must test every claimed workflow component as if it were being used in a real live run.
+
+This rule is absolute.
+
+For repository claim purposes, a test is not E2E unless:
+
+- every claimed workflow step happens through the same runtime boundary used in real operation
+- every claimed component is exercised through its real role in that workflow
+- the test waits for the real system to perform the work being claimed
+- the asserted outcome is the result of that real runtime path rather than a shortcut or injected state
+
+There is no acceptable “mostly real” interpretation.
+
+If even one claimed workflow step is skipped, forced, injected, mocked, manually advanced, or satisfied through a lower-layer shortcut, the test must not be treated as E2E coverage for that workflow.
+
+### Forbidden In E2E Rule
+
+The following are forbidden in any test that is claimed as E2E coverage for a workflow:
+
+- fake session backends
+- direct DB mutation to force the workflow into a later state
+- in-process daemon bridges as the strongest proof
+- synthetic prompt, summary, result, or session-pop injection
+- direct API completion shortcuts such as `/api/subtasks/complete`
+- test-side `subtask start`, `subtask complete`, or `subtask fail` when those actions are supposed to come from live runtime behavior
+- test-side `summary register` when the summary is supposed to be produced by the live runtime
+- test-side `workflow advance` when the runtime is supposed to advance the workflow itself
+- test-side lifecycle transition forcing used to stand in for real runtime progression
+- manual child materialization in a test that claims the AI/runtime created descendants itself
+- hidden helper behavior that performs the workflow step off-screen and then exposes only the end result
+- using a lower-layer proof to stand in for a higher-layer E2E claim
+
+If any of those are present, the test must be moved to the correct lower layer or explicitly treated as a non-canonical bring-up target rather than passing E2E proof.
+
+### E2E Naming And Claim Rule
+
+No test, note, checklist, command catalog, plan, review, or assistant response may describe a workflow as E2E-covered, real-E2E-passing, `flow_complete`, or equivalent unless the exact live-run-equivalent workflow has actually been rerun and passed.
+
+The fact that a harness uses a real daemon, real DB, real tmux, or real provider does not make the test E2E if any claimed workflow step is still synthetic.
+
+If a file under `tests/e2e/` is only a bring-up target, partially simulated narrative, or bounded/operator-assisted proof, that status must be stated explicitly and it must be excluded from canonical passing E2E command sets.
 
 ---
 
@@ -549,6 +593,7 @@ Authoritative document families include, where applicable:
 - checklist documents
 - flow documents
 - flow asset documents
+- structured flow inventory documents
 - traceability documents
 - audit checklist documents
 - E2E planning and feature-mapping documents
@@ -645,7 +690,7 @@ If an authoritative document can drift silently in a meaningful way, that is a s
 
 ## Notes Maintenance Rule
 
-The notes in `notes/` are part of the implementation surface.
+The notes and authoritative note assets in `notes/` are part of the implementation surface.
 
 They must be updated whenever coding reveals:
 
@@ -669,7 +714,25 @@ They must be updated whenever coding reveals:
 
 Do not leave discovered design limitations undocumented.
 
-If the program needs to change or the design needs to be elaborated because of implementation reality, update the relevant note or add a new note.
+If the program needs to change or the design needs to be elaborated because of implementation reality, update the relevant note or authoritative note asset or add a new one.
+
+### Relevant User Flow Inventory Rule
+
+Relevant user and operator flows must be tracked through both:
+
+- the canonical narrative flow docs in `flows/*.md`
+- the structured relevant-user-flow inventory YAML under `notes/`
+
+When implementation work creates, removes, splits, merges, materially re-scopes, or newly reveals a relevant user/operator flow, the same change or an immediately adjacent follow-up change must update:
+
+- the canonical `flows/*.md` contract if the runtime narrative changed
+- the structured flow inventory YAML if relevance, scope, invariants, proof surfaces, or maintenance triggers changed
+
+Do not:
+
+- create a second prose-only canonical flow registry inside `notes/`
+- leave a newly relevant flow implicit inside feature notes or checklists
+- update a flow checklist or E2E target without reconciling the structured relevant-flow inventory when that flow is affected
 
 ---
 
@@ -858,6 +921,15 @@ Use end-to-end tests for:
 - full setup-to-outcome flows with no fake skipping of critical boundaries
 
 Critical end-to-end flows must not simulate away the core behavior being claimed.
+
+For avoidance of doubt:
+
+- an E2E test must execute the workflow as a live run would execute it
+- every component named by the workflow must be exercised in that live-run-equivalent path
+- if the runtime is supposed to create, advance, summarize, merge, recover, or finalize something, the E2E must wait for the runtime to do exactly that
+- if the operator surface is the thing being tested, the E2E may use that real operator surface, but it may not use hidden lower-layer shortcuts to fake the rest of the workflow
+
+An E2E test that mixes real boundaries with synthetic workflow progression is defective and must not be counted as E2E proof.
 
 E2E is the final required proving layer for any feature that is supposed to exist in real runtime behavior.
 

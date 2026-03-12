@@ -69,6 +69,7 @@ class RealDaemonHarness:
         self.workspace_root = workspace_root
         self.stdout_log = stdout_log
         self.stderr_log = stderr_log
+        self._restart_count = 0
 
     def wait_until_ready(self, *, timeout_seconds: float = 45.0) -> None:
         deadline = time.time() + timeout_seconds
@@ -141,6 +142,30 @@ class RealDaemonHarness:
             self.process.kill()
             self.process.wait(timeout=5.0)
 
+    def restart(self, *, extra_env: dict[str, str] | None = None) -> None:
+        self.terminate()
+        self._restart_count += 1
+        listener = reserve_local_listener()
+        port = int(listener.getsockname()[1])
+        next_env = dict(self.env)
+        next_env["AICODING_DAEMON_PORT"] = str(port)
+        if extra_env:
+            next_env.update(extra_env)
+        next_stdout_log = self.stdout_log.with_name(f"{self.stdout_log.stem}.restart-{self._restart_count}{self.stdout_log.suffix}")
+        next_stderr_log = self.stderr_log.with_name(f"{self.stderr_log.stem}.restart-{self._restart_count}{self.stderr_log.suffix}")
+        process = launch_real_daemon_process(
+            env=next_env,
+            listener=listener,
+            stdout_log=next_stdout_log,
+            stderr_log=next_stderr_log,
+        )
+        self.env = next_env
+        self.base_url = f"http://127.0.0.1:{port}"
+        self.process = process
+        self.stdout_log = next_stdout_log
+        self.stderr_log = next_stderr_log
+        self.wait_until_ready()
+
 
 def build_real_daemon_env(
     *,
@@ -174,6 +199,39 @@ def build_real_daemon_env(
     if extra_env:
         env.update(extra_env)
     return env
+
+
+def launch_real_daemon_process(
+    *,
+    env: dict[str, str],
+    listener: socket.socket,
+    stdout_log: Path,
+    stderr_log: Path,
+) -> subprocess.Popen[str]:
+    try:
+        with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
+            "w", encoding="utf-8"
+        ) as stderr_handle:
+            process = subprocess.Popen(
+                [
+                    "python3",
+                    "-m",
+                    "uvicorn",
+                    "aicoding.daemon.app:create_app",
+                    "--factory",
+                    "--fd",
+                    str(listener.fileno()),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                pass_fds=(listener.fileno(),),
+            )
+    finally:
+        listener.close()
+    return process
 
 
 def build_e2e_database_name(*, prefix: str = "aicoding_e2e") -> str:

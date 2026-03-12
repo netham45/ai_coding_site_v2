@@ -152,7 +152,7 @@ def test_execution_prompt_includes_original_node_request() -> None:
     assert "summary register --node node-123 --file summaries/implementation.md --type subtask" not in rendered.rendered_text
     assert 'subtask complete --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary "Implemented the leaf task."' not in rendered.rendered_text
     assert "workflow advance --node node-123" not in rendered.rendered_text
-    assert "subtask prompt --node node-123" in rendered.rendered_text
+    assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123" in rendered.rendered_text
     assert "continue in the same session" in rendered.rendered_text
     assert "stop and do not probe the closed run" in rendered.rendered_text
 
@@ -182,7 +182,7 @@ def test_layout_generation_prompts_require_explicit_layout_registration() -> Non
         assert "summary register --node node-123 --file summaries/layout_generation.md --type subtask" not in rendered.rendered_text
         assert "subtask complete --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID" not in rendered.rendered_text
         assert "workflow advance --node node-123" not in rendered.rendered_text
-        assert "subtask prompt --node node-123" in rendered.rendered_text
+        assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123" in rendered.rendered_text
         assert "stop and do not probe the closed parent run" in rendered.rendered_text
 
 

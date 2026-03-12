@@ -26,9 +26,10 @@ from aicoding.daemon.live_git import (
 from aicoding.daemon.manual_tree import create_manual_node
 from aicoding.daemon.run_orchestration import register_summary, start_subtask_attempt
 from aicoding.daemon.session_records import inspect_primary_session_screen_state, nudge_primary_session
+from aicoding.errors import ConfigurationError
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
-from aicoding.db.models import CompiledSubtask, NodeRunState, Session as DurableSession
+from aicoding.db.models import CompiledSubtask, NodeRun, NodeRunState, Session as DurableSession
 from aicoding.db.session import create_session_factory, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -328,7 +329,7 @@ def test_db_schema_compatibility_reports_revision_state(app_client, clean_public
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["expected_revision"] == "0029_incr_parent_merge_state"
+    assert payload["expected_revision"] == "0030_live_runtime_binding"
     assert payload["status"] == "up_to_date"
     assert payload["compatible"] is True
 
@@ -341,7 +342,7 @@ def test_daemon_status_reports_background_tasks(app_client) -> None:
     assert payload["authority"] == "daemon"
     assert "session_recovery" in payload["background_tasks"]
     assert payload["write_probe"]["write_path"] == "available"
-    assert payload["schema_compatibility"]["expected_revision"] == "0029_incr_parent_merge_state"
+    assert payload["schema_compatibility"]["expected_revision"] == "0030_live_runtime_binding"
 
 
 def test_background_loops_skip_cleanly_until_runtime_tables_exist(clean_public_schema, daemon_token: str, caplog, monkeypatch) -> None:
@@ -355,6 +356,7 @@ def test_background_loops_skip_cleanly_until_runtime_tables_exist(clean_public_s
 
     assert response.status_code == 200
     assert "Idle nudge background loop iteration failed." not in caplog.text
+    assert "Session supervision background loop iteration failed." not in caplog.text
     assert "Child auto-start background loop iteration failed." not in caplog.text
 
 
@@ -2089,6 +2091,44 @@ def test_recovery_status_reports_missing_session_and_non_resumable(monkeypatch, 
     assert rejected_response.json()["recovery_status"]["recovery_classification"] == "non_resumable"
 
 
+def test_recovery_status_and_session_show_distinguish_preserved_dead_tmux_process(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Dead Process Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        bind_response = client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        assert bind_response.status_code == 200
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+
+        client.app.state.session_adapter.terminate_process(session_name, exit_status=31)
+
+        show_response = client.get(f"/api/nodes/{node_id}/sessions/current", headers={"Authorization": "Bearer change-me"})
+        recovery_response = client.get(f"/api/nodes/{node_id}/recovery-status", headers={"Authorization": "Bearer change-me"})
+
+    assert show_response.status_code == 200
+    assert show_response.json()["tmux_session_exists"] is True
+    assert show_response.json()["tmux_process_alive"] is False
+    assert show_response.json()["tmux_exit_status"] == 31
+    assert show_response.json()["recovery_classification"] == "lost"
+    assert recovery_response.status_code == 200
+    assert recovery_response.json()["tmux_session_exists"] is True
+    assert recovery_response.json()["tmux_process_alive"] is False
+    assert recovery_response.json()["tmux_exit_status"] == 31
+    assert recovery_response.json()["recovery_classification"] == "lost"
+    assert recovery_response.json()["reason"] == "tmux_process_exited"
+
+
 def test_provider_recovery_status_and_provider_resume_rebind_restorable_session(monkeypatch, migrated_public_schema) -> None:
     monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
     factory = create_session_factory(engine=migrated_public_schema)
@@ -2245,6 +2285,162 @@ def test_session_nudge_endpoint_can_nudge_idle_alt_screen_session(monkeypatch, m
         "unchanged_screen_past_idle_threshold",
     }
     assert nudge_response.json()["in_alt_screen"] is True
+
+
+def test_background_session_supervision_replaces_missing_tracked_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Supervised Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = UUID(bind_response.json()["session_id"])
+        session_name = bind_response.json()["session_name"]
+        client.app.state.session_adapter.kill_session(session_name)
+
+        deadline = time.time() + 5.0
+        latest_statuses: list[str] = []
+        replacement_session_id: UUID | None = None
+        while time.time() < deadline:
+            with session_scope(client.app.state.db_session_factory) as session:
+                sessions = (
+                    session.query(DurableSession)
+                    .filter(DurableSession.session_role == "primary")
+                    .order_by(DurableSession.started_at)
+                    .all()
+                )
+                latest_statuses = [item.status for item in sessions]
+                if len(sessions) >= 2 and latest_statuses[-2:] == ["LOST", "RESUMED"]:
+                    replacement_session_id = sessions[-1].id
+                    break
+            time.sleep(0.1)
+
+        assert replacement_session_id is not None
+        events_response = client.get(f"/api/sessions/{replacement_session_id}/events", headers={"Authorization": "Bearer change-me"})
+        assert events_response.status_code == 200
+        assert any(item["event_type"] == "supervision_recovery_succeeded" for item in events_response.json()["events"])
+
+
+def test_background_session_supervision_fails_unrecoverable_missing_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Broken Replacement Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter.kill_session(session_name)
+
+        def broken_create_session(session_name: str, command: str, working_directory: str, environment=None):
+            raise ConfigurationError(message="forced replacement failure", code="forced_replacement_failure")
+
+        adapter.create_session = broken_create_session  # type: ignore[method-assign]
+
+        deadline = time.time() + 5.0
+        failed_run: NodeRun | None = None
+        failed_state: NodeRunState | None = None
+        while time.time() < deadline:
+            with session_scope(client.app.state.db_session_factory) as session:
+                failed_run = session.query(NodeRun).one()
+                failed_state = session.query(NodeRunState).one()
+                if failed_run.run_status == "FAILED" and failed_state.lifecycle_state == "FAILED_TO_PARENT":
+                    break
+            time.sleep(0.1)
+
+        assert failed_run is not None
+        assert failed_state is not None
+        assert failed_run.run_status == "FAILED"
+        assert failed_state.lifecycle_state == "FAILED_TO_PARENT"
+        events_response = client.get(f"/api/sessions/{session_id}/events", headers={"Authorization": "Bearer change-me"})
+        assert events_response.status_code == 200
+        assert any(item["event_type"] == "supervision_recovery_failed" for item in events_response.json()["events"])
+
+
+def test_failed_supervision_run_remains_visible_through_session_run_and_recovery_endpoints(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_POLL_INTERVAL_SECONDS", "0.05")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Inspectable Failed Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter.kill_session(session_name)
+
+        def broken_create_session(session_name: str, command: str, working_directory: str, environment=None):
+            raise ConfigurationError(message="forced replacement failure", code="forced_replacement_failure")
+
+        adapter.create_session = broken_create_session  # type: ignore[method-assign]
+
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            with session_scope(client.app.state.db_session_factory) as session:
+                run = session.query(NodeRun).one()
+                state = session.query(NodeRunState).one()
+                if run.run_status == "FAILED" and state.lifecycle_state == "FAILED_TO_PARENT":
+                    break
+            time.sleep(0.1)
+
+        session_response = client.get(f"/api/nodes/{node_id}/sessions/current", headers={"Authorization": "Bearer change-me"})
+        run_response = client.get(f"/api/node-runs/{node_id}", headers={"Authorization": "Bearer change-me"})
+        subtask_current_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"})
+        recovery_response = client.get(f"/api/nodes/{node_id}/recovery-status", headers={"Authorization": "Bearer change-me"})
+        resume_response = client.post("/api/sessions/resume", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        prompt_response = client.get(f"/api/nodes/{node_id}/subtasks/current/prompt", headers={"Authorization": "Bearer change-me"})
+
+        assert session_response.status_code == 200
+        assert session_response.json()["session_id"] == session_id
+        assert session_response.json()["run_status"] == "FAILED"
+        assert session_response.json()["recommended_action"] == "inspect_failed_run"
+        assert session_response.json()["terminal_failure"]["failure_reason"] == "restart_launch_failed"
+        assert run_response.status_code == 200
+        assert run_response.json()["run"]["run_status"] == "FAILED"
+        assert run_response.json()["terminal_failure"]["failure_origin"] == "session_supervision"
+        assert subtask_current_response.status_code == 200
+        assert subtask_current_response.json()["terminal_failure"]["failure_origin"] == "session_supervision"
+        assert recovery_response.status_code == 200
+        assert recovery_response.json()["recovery_classification"] == "non_resumable"
+        assert recovery_response.json()["recommended_action"] == "inspect_failed_run"
+        assert resume_response.status_code == 200
+        assert resume_response.json()["status"] == "recovery_rejected"
+        assert prompt_response.status_code == 409
+        assert "latest run failed after session supervision recovery failure" in prompt_response.json()["detail"]
 
 
 def test_session_nudge_endpoint_skips_when_current_subtask_summary_is_already_registered(monkeypatch, migrated_public_schema) -> None:

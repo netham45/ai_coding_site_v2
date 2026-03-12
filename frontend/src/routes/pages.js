@@ -140,6 +140,53 @@ function ProjectCatalogList({ projects }) {
   );
 }
 
+function ExistingTopLevelNodes({ nodes }) {
+  return createElement(
+    "section",
+    { className: "project-panel", "data-testid": "project-top-level-nodes-panel" },
+    [
+      createElement("h3", { key: "title", className: "project-panel__title" }, "Existing Top-Level Nodes"),
+      nodes.length
+        ? createElement(
+            "div",
+            { key: "list", className: "project-catalog", "data-testid": "project-top-level-node-list" },
+            nodes.map((node) =>
+              createElement(
+                Link,
+                {
+                  key: node.node_id,
+                  to: node.route_hint?.url ?? `/projects/${node.route_hint?.project_id ?? ""}/nodes/${node.node_id}/overview`,
+                  className: "project-card",
+                  "data-testid": `project-top-level-node-${node.node_id}`,
+                },
+                [
+                  createElement(
+                    "div",
+                    { key: "header", className: "project-card__header" },
+                    [
+                      createElement("strong", { key: "title" }, node.title),
+                      createElement(StatusBadge, {
+                        key: "status",
+                        label: node.run_status ?? node.lifecycle_state?.toLowerCase?.() ?? "ready",
+                        tone: node.run_status === "RUNNING" ? "info" : node.lifecycle_state === "COMPLETE" ? "success" : "neutral",
+                      }),
+                    ],
+                  ),
+                  createElement("span", { key: "kind", className: "project-card__subtle" }, `${node.kind} • ${node.tier}`),
+                  createElement("span", { key: "node", className: "project-card__subtle" }, node.node_id),
+                ],
+              ),
+            ),
+          )
+        : createElement(EmptyState, {
+            key: "empty",
+            title: "No top-level nodes yet",
+            body: "Create the first top-level node for this project.",
+          }),
+    ],
+  );
+}
+
 export function ProjectsIndexPage() {
   const projectQuery = useQuery({
     queryKey: queryKeys.projects(),
@@ -454,13 +501,7 @@ export function ProjectPage() {
     );
   }
 
-  const rootNodeId = projectBootstrapQuery.data?.root_node_id ?? null;
-  if (rootNodeId) {
-    return createElement(Navigate, {
-      to: `/projects/${projectId}/nodes/${rootNodeId}/overview`,
-      replace: true,
-    });
-  }
+  const topLevelNodes = projectBootstrapQuery.data?.top_level_nodes ?? [];
 
   return createElement(
     PageFrame,
@@ -491,6 +532,7 @@ export function ProjectPage() {
               body: project.readiness_message ?? "This project cannot be used for top-level workflow start yet.",
             }),
       ),
+      createElement(ExistingTopLevelNodes, { key: "roots", nodes: topLevelNodes }),
     ]),
   );
 }

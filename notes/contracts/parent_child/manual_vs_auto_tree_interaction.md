@@ -117,6 +117,7 @@ Implementation staging note:
 - manual child insertion under a `layout_authoritative` parent flips the parent to `hybrid` and clears the authoritative layout hash so later layout rematerialization cannot proceed silently
 - `node child-reconciliation --node <id>` now exposes whether a hybrid tree can take the currently supported `preserve_manual` decision
 - `node reconcile-children --node <id> --decision preserve_manual` now converts the current hybrid child set into a fully manual child set by rewriting child-edge origin metadata and clearing layout authority
+- dependency-invalidated fresh restarts with prior `manual` or `hybrid` authority now also reuse that same explicit surface: even when the fresh version has an empty child tree, `preserve_manual` can mark the fresh version as the new manual structural baseline so the rebuild gate is cleared only by an explicit operator choice
 - manual remove/reorder/replace flows and structural layout replacement are still deferred
 
 ---

@@ -30,6 +30,14 @@ function conflict(res, message = "conflict") {
   json(res, 409, { detail: message });
 }
 
+function respondJson(res, statusCode, payload, delayMs = 0) {
+  if (delayMs > 0) {
+    setTimeout(() => json(res, statusCode, payload), delayMs);
+    return;
+  }
+  json(res, statusCode, payload);
+}
+
 function parseBearerToken(req) {
   const header = req.headers.authorization ?? "";
   const [scheme, token] = header.split(" ");
@@ -47,6 +55,51 @@ function updateTreeVersionPointers(scenario, nodeId, versionId) {
       row.last_updated_at = "2026-03-11T00:10:00Z";
     }
   }
+}
+
+function buildRouteHint(projectId, nodeId) {
+  return {
+    project_id: projectId,
+    node_id: nodeId,
+    tab: "overview",
+    url: `/projects/${projectId}/nodes/${nodeId}/overview`,
+  };
+}
+
+function locateNodeInTrees(scenario, nodeId) {
+  for (const tree of Object.values(scenario.treeByNodeId ?? {})) {
+    const row = tree.nodes?.find((entry) => entry.node_id === nodeId);
+    if (row) {
+      return { tree, row };
+    }
+  }
+  return null;
+}
+
+function ancestorsForNode(scenario, nodeId) {
+  const located = locateNodeInTrees(scenario, nodeId);
+  if (!located) {
+    return null;
+  }
+  const nodesById = new Map((located.tree.nodes ?? []).map((entry) => [entry.node_id, entry]));
+  const ancestors = [];
+  let current = located.row;
+  while (current.parent_node_id) {
+    current = nodesById.get(current.parent_node_id);
+    if (!current) {
+      break;
+    }
+    ancestors.push({
+      node_id: current.node_id,
+      parent_node_id: current.parent_node_id,
+      kind: current.kind,
+      tier: current.tier,
+      title: current.title,
+      prompt: "",
+      created_via: "manual",
+    });
+  }
+  return ancestors;
 }
 
 function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
@@ -74,6 +127,11 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
+    const routeOverride = scenario.routeOverrides?.[`${req.method} ${path}`];
+    if (routeOverride) {
+      respondJson(res, routeOverride.status ?? 200, routeOverride.payload ?? {}, routeOverride.delay_ms ?? 0);
+      return;
+    }
 
     if (path === "/bootstrap") {
       json(res, 200, {
@@ -84,7 +142,7 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
     }
 
     if (path === "/api/projects") {
-      json(res, 200, scenario.projectCatalog);
+      respondJson(res, 200, scenario.projectCatalog, scenario.routeDelayMs?.["GET /api/projects"] ?? 0);
       return;
     }
 
@@ -96,7 +154,7 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
         notFound(res, `project '${projectId}' not found`);
         return;
       }
-      json(res, 200, payload);
+      respondJson(res, 200, payload, scenario.routeDelayMs?.[`GET ${path}`] ?? 0);
       return;
     }
 
@@ -129,10 +187,23 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
             return;
           }
           if (scenario.projectBootstrapByProjectId?.[projectId] && payload.route_hint) {
+            const existingRoots = scenario.projectBootstrapByProjectId[projectId].top_level_nodes ?? [];
+            const nextRoot = {
+              node_id: payload.node.node_id,
+              kind: payload.node.kind,
+              tier: payload.node.tier,
+              title: payload.node.title,
+              lifecycle_state: payload.lifecycle?.lifecycle_state ?? null,
+              run_status: payload.lifecycle?.run_status ?? null,
+              authoritative_node_version_id: payload.node_version_id,
+              latest_created_node_version_id: payload.node_version_id,
+              route_hint: buildRouteHint(projectId, payload.node.node_id),
+            };
             scenario.projectBootstrapByProjectId[projectId] = {
               ...scenario.projectBootstrapByProjectId[projectId],
               root_node_id: payload.route_hint.node_id,
               route_hint: payload.route_hint,
+              top_level_nodes: [nextRoot, ...existingRoots],
             };
           }
           json(res, 200, payload);
@@ -149,6 +220,18 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
       const payload = scenario.treeByNodeId[nodeId];
       if (!payload) {
         notFound(res, `tree scenario not found for node '${nodeId}'`);
+        return;
+      }
+      respondJson(res, 200, payload, scenario.routeDelayMs?.[`GET ${path}`] ?? 0);
+      return;
+    }
+
+    const ancestorMatch = path.match(/^\/api\/nodes\/([^/]+)\/ancestors$/);
+    if (ancestorMatch && req.method === "GET") {
+      const nodeId = ancestorMatch[1];
+      const payload = ancestorsForNode(scenario, nodeId);
+      if (!payload) {
+        notFound(res, `ancestor scenario not found for node '${nodeId}'`);
         return;
       }
       json(res, 200, payload);
@@ -282,6 +365,66 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
       return;
     }
 
+    const currentSubtaskMatch = path.match(/^\/api\/nodes\/([^/]+)\/subtasks\/current$/);
+    if (currentSubtaskMatch) {
+      const nodeId = currentSubtaskMatch[1];
+      const payload = scenario.currentSubtaskByNodeId?.[nodeId];
+      if (!payload) {
+        notFound(res, `current-subtask scenario not found for node '${nodeId}'`);
+        return;
+      }
+      json(res, 200, payload);
+      return;
+    }
+
+    const currentSubtaskPromptMatch = path.match(/^\/api\/nodes\/([^/]+)\/subtasks\/current\/prompt$/);
+    if (currentSubtaskPromptMatch) {
+      const nodeId = currentSubtaskPromptMatch[1];
+      const payload = scenario.currentSubtaskPromptByNodeId?.[nodeId];
+      if (!payload) {
+        notFound(res, `current-subtask prompt scenario not found for node '${nodeId}'`);
+        return;
+      }
+      json(res, 200, payload);
+      return;
+    }
+
+    const currentSubtaskContextMatch = path.match(/^\/api\/nodes\/([^/]+)\/subtasks\/current\/context$/);
+    if (currentSubtaskContextMatch) {
+      const nodeId = currentSubtaskContextMatch[1];
+      const payload = scenario.currentSubtaskContextByNodeId?.[nodeId];
+      if (!payload) {
+        notFound(res, `current-subtask context scenario not found for node '${nodeId}'`);
+        return;
+      }
+      json(res, 200, payload);
+      return;
+    }
+
+    const subtaskAttemptsMatch = path.match(/^\/api\/nodes\/([^/]+)\/subtask-attempts$/);
+    if (subtaskAttemptsMatch) {
+      const nodeId = subtaskAttemptsMatch[1];
+      const payload = scenario.subtaskAttemptsByNodeId?.[nodeId];
+      if (!payload) {
+        notFound(res, `subtask-attempt catalog scenario not found for node '${nodeId}'`);
+        return;
+      }
+      json(res, 200, payload);
+      return;
+    }
+
+    const subtaskAttemptMatch = path.match(/^\/api\/subtask-attempts\/([^/]+)$/);
+    if (subtaskAttemptMatch) {
+      const attemptId = subtaskAttemptMatch[1];
+      const payload = scenario.subtaskAttemptById?.[attemptId];
+      if (!payload) {
+        notFound(res, `subtask-attempt scenario not found for attempt '${attemptId}'`);
+        return;
+      }
+      json(res, 200, payload);
+      return;
+    }
+
     const runsMatch = path.match(/^\/api\/nodes\/([^/]+)\/runs$/);
     if (runsMatch) {
       const payload = scenario.runsByNodeId?.[runsMatch[1]];
@@ -345,7 +488,7 @@ function buildServer({ scenarioId, token = DEFAULT_TOKEN }) {
         notFound(res, `action scenario not found for node '${nodeId}'`);
         return;
       }
-      json(res, 200, payload);
+      respondJson(res, 200, payload, scenario.routeDelayMs?.[`GET ${path}`] ?? 0);
       return;
     }
 

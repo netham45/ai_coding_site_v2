@@ -18,7 +18,7 @@ from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle, 
 from aicoding.daemon.workflow_events import record_workflow_event
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
-from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeVersion, ParentChildAuthority, WorkflowEvent
+from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeVersion, ParentChildAuthority, RebuildEvent, WorkflowEvent
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import HierarchyRegistry
 from aicoding.resources import ResourceCatalog
@@ -587,15 +587,22 @@ def inspect_child_reconciliation(
     manual_child_count = sum(1 for child in materialization.children if child.layout_child_id.startswith("manual-"))
     layout_generated_child_count = materialization.child_count - manual_child_count
     available_decisions: list[str] = []
+    with query_session_scope(session_factory) as session:
+        parent_version = session.get(NodeVersion, materialization.parent_node_version_id)
+        assert parent_version is not None
+        rebuild_required = _manual_or_hybrid_rebuild_required(session, parent_version=parent_version)
+        prior_authority_mode = _prior_manual_or_hybrid_authority_mode(session, parent_version=parent_version)
     if materialization.authority_mode == "hybrid":
         available_decisions.append("preserve_manual")
     elif materialization.authority_mode == "manual" and materialization.status == "manual":
         available_decisions.append("preserve_manual")
+    elif rebuild_required:
+        available_decisions.append("preserve_manual")
     return ChildReconciliationInspectionSnapshot(
         parent_node_id=materialization.parent_node_id,
         parent_node_version_id=materialization.parent_node_version_id,
-        authority_mode=materialization.authority_mode,
-        materialization_status=materialization.status,
+        authority_mode=materialization.authority_mode if not rebuild_required else (prior_authority_mode or materialization.authority_mode),
+        materialization_status="reconciliation_required" if rebuild_required else materialization.status,
         available_decisions=available_decisions,
         manual_child_count=manual_child_count,
         layout_generated_child_count=layout_generated_child_count,
@@ -625,25 +632,88 @@ def reconcile_child_authority(
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
         authority = session.get(ParentChildAuthority, parent_version.id)
-        if authority is None:
+        rebuild_required = _manual_or_hybrid_rebuild_required(session, parent_version=parent_version)
+        if authority is None and not rebuild_required:
             raise DaemonConflictError("parent has no child authority record to reconcile")
         edges = session.execute(
             select(NodeChild).where(NodeChild.parent_node_version_id == parent_version.id).order_by(NodeChild.ordinal)
         ).scalars().all()
-        if not edges:
+        if not edges and rebuild_required:
+            if authority is None:
+                authority = ParentChildAuthority(
+                    parent_node_version_id=parent_version.id,
+                    authority_mode="manual",
+                    authoritative_layout_hash=None,
+                )
+                session.add(authority)
+            authority.authority_mode = "manual"
+            authority.authoritative_layout_hash = None
+            authority.last_reconciled_at = datetime.now(timezone.utc)
+            session.flush()
+            return_after_commit = True
+        else:
+            return_after_commit = False
+        if not edges and not return_after_commit:
             raise DaemonConflictError("parent has no child structure to reconcile")
-        if authority.authority_mode not in {"hybrid", "manual"}:
+        if return_after_commit:
+            pass
+        elif authority.authority_mode not in {"hybrid", "manual"}:
             raise DaemonConflictError("preserve_manual is only valid for manual or hybrid child authority")
-
-        for edge in edges:
-            edge.origin_type = "manual"
-            edge.layout_child_id = f"manual-{edge.child_node_version_id}"
-        authority.authority_mode = "manual"
-        authority.authoritative_layout_hash = None
-        authority.last_reconciled_at = datetime.now(timezone.utc)
-        session.flush()
+        else:
+            for edge in edges:
+                edge.origin_type = "manual"
+                edge.layout_child_id = f"manual-{edge.child_node_version_id}"
+            authority.authority_mode = "manual"
+            authority.authoritative_layout_hash = None
+            authority.last_reconciled_at = datetime.now(timezone.utc)
+            session.flush()
 
     return inspect_child_reconciliation(session_factory, resources, logical_node_id=logical_node_id)
+
+
+def _manual_or_hybrid_rebuild_required(session: Session, *, parent_version: NodeVersion) -> bool:
+    prior_authority_mode = _prior_manual_or_hybrid_authority_mode(session, parent_version=parent_version)
+    if prior_authority_mode not in {"manual", "hybrid"}:
+        return False
+    return not _manual_or_hybrid_rebuild_satisfied(session, parent_version=parent_version)
+
+
+def _manual_or_hybrid_rebuild_satisfied(session: Session, *, parent_version: NodeVersion) -> bool:
+    authority = session.get(ParentChildAuthority, parent_version.id)
+    if authority is None or authority.authority_mode not in {"manual", "hybrid"}:
+        return False
+    current_child_edge = session.execute(
+        select(NodeChild.child_node_version_id).where(NodeChild.parent_node_version_id == parent_version.id).limit(1)
+    ).first()
+    if current_child_edge is not None:
+        return True
+    return authority.authority_mode == "manual" and authority.last_reconciled_at is not None
+
+
+def _prior_manual_or_hybrid_authority_mode(session: Session, *, parent_version: NodeVersion) -> str | None:
+    if parent_version.supersedes_node_version_id is None:
+        return None
+    if not _is_dependency_invalidated_fresh_restart(session, node_version_id=parent_version.id):
+        return None
+    authority = session.get(ParentChildAuthority, parent_version.supersedes_node_version_id)
+    if authority is None:
+        return None
+    return authority.authority_mode
+
+
+def _is_dependency_invalidated_fresh_restart(session: Session, *, node_version_id: UUID) -> bool:
+    events = session.execute(
+        select(RebuildEvent)
+        .where(
+            RebuildEvent.target_node_version_id == node_version_id,
+            RebuildEvent.event_kind == "candidate_created",
+        )
+        .order_by(RebuildEvent.created_at.desc(), RebuildEvent.id.desc())
+    ).scalars().all()
+    for event in events:
+        if bool((event.details_json or {}).get("fresh_dependency_restart")):
+            return True
+    return False
 
 
 def _ensure_acyclic_dependencies(adjacency: dict[str, list[str]]) -> None:

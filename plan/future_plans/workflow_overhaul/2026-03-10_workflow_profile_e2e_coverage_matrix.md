@@ -75,7 +75,12 @@ Any future profile-aware E2E suite defined from this plan should:
 - exercise compile/materialize/runtime paths through the actual daemon and CLI
 - inspect `workflow brief`, `node types`, and `node profiles` through the real inspection surfaces
 - prove that selected profiles affect layout choice, child role/profile mapping, and completion restrictions in durable runtime-visible ways
+- prove that illegal step skipping returns concrete blocked mutations rather than permissive advancement
 - avoid direct database setup or post-hoc state mutation shortcuts that bypass the intended runtime path
+
+Those future suites must also preserve the existing hierarchy doctrine that top-ness is structural, not semantic.
+
+If the shipped hierarchy allows more than one parentless kind, the future profile-aware proving surface must include non-epic parentless startup narratives rather than proving only epic-rooted flows.
 
 ## Test Strategy
 
@@ -93,7 +98,53 @@ Each suite should usually cover one dominant epic profile and the lower-tier pro
 
 Additional focused suites should exist only when a profile has behavior that would otherwise remain unproven.
 
+Every decomposition-required narrative should include at least one adversarial assertion that:
+
+- attempts merge or completion before required child spawn
+- expects a concrete `4xx` blocked response
+- verifies the blocked reason is inspectable through runtime surfaces
+
+That includes the structural-top-level policy itself.
+
+If future workflow-profile support ships while multiple kinds are allowed to start parentless, the proving plan must include:
+
+- bounded tests for profile selection and startup legality across the allowed parentless kind set
+- integration coverage for daemon and CLI startup using at least one non-epic parentless kind
+- real E2E coverage showing that non-epic parentless startup remains legal and inspectable without forcing an epic wrapper
+- explicit coverage that draft profiles remain startable at the top level through their own `applies_to_kind` when that kind is part of the shipped parentless set
+
 ## Proposed Future Suite Families
+
+### Suite 0: Structural Top-Level Policy
+
+Proposed future files:
+
+- `tests/unit/test_workflow_profile_top_level_policy.py`
+- `tests/integration/test_workflow_profile_top_level_start_flow.py`
+
+Purpose:
+
+- prove that profile-aware startup does not regress the repository rule that any hierarchy-allowed kind may be top-level
+- prevent the workflow-overhaul implementation from silently reintroducing epic-only startup semantics while adding profile-aware routes and inspection surfaces
+
+Main surfaces to exercise:
+
+- `workflow start --kind <kind> --workflow-profile <id>`
+- `node create --kind <kind> --workflow-profile <id> --compile`
+- node-kind and node-profile inspection surfaces for the selected top-level node
+
+Minimum assertions:
+
+- top-level legality is decided by hierarchy YAML plus daemon validation, not by an epic-only special case
+- profile applicability is validated against the chosen node kind without requiring an epic wrapper
+- durable runtime inspection still shows the created parentless node, selected profile, compiled workflow context, and resulting run state clearly
+- if multiple built-in kinds ship with `allow_parentless: true`, each shipped parentless kind family has explicit proof coverage
+- draft profiles are proven startable at the top level for their own `applies_to_kind` rather than only as descendants under an epic-rooted narrative
+
+Relationship to existing repo planning:
+
+- this suite family should remain aligned with `plan/reconcilliation/01_top_level_node_hierarchy_reconciliation.md`
+- it exists so the workflow-overhaul proving story inherits that reconciliation requirement instead of bypassing it
 
 ### Suite 1: Planning Profile Ladder
 

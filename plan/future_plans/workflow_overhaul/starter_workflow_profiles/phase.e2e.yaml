@@ -36,6 +36,8 @@ required_verification:
   - real_e2e
 completion_restrictions:
   forbidden_statuses_until_requirements_met:
+    - complete
+    - flow_complete
     - release_ready
 brief_generation:
   require_compiler_generated_brief: true

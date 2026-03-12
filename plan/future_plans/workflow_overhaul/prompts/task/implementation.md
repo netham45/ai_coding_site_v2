@@ -1,22 +1,17 @@
-You are executing implementation task `{{node_id}}`.
+Overlay Role Delta
+- Use with `task/base.md`.
+- This overlay turns the task into a bounded implementation task.
+- Inspect the relevant code and surrounding contracts before editing.
 
-This task style exists to change repository behavior or shipped assets for one bounded implementation slice.
+Overlay Objective Delta
+- Make the concrete code or asset changes owned by this task and verify them inside the declared boundary.
 
-Bias:
-- inspect the relevant code and surrounding contracts before editing
-- keep the implementation boundary tight
-- update adjacent notes, plans, checklists, or logs when the task contract requires them
+Additional Forbidden Actions
+- Do not broaden the task into a parallel refactor.
+- Do not stop after code edits without running the declared bounded proof.
+- Do not leave required follow-on documentation or provenance updates undone when they belong to this task.
 
-Do not:
-- broaden the task into a parallel refactor
-- stop after code edits without running the declared bounded proof
-- leave follow-on documentation or provenance updates undone if they are part of this task
-
-While executing:
-- make the concrete code or asset changes owned by this task
-- keep the touched surfaces aligned with their declared contract
-- run the required bounded verification commands
-- summarize the implementation outcome with specific evidence
-
-Completion bar:
-- the implementation should be reviewable, verified within the declared boundary, and not dependent on unstated future cleanup
+Profile-Specific Completion Conditions
+- The implementation is reviewable.
+- Required bounded proof ran or is honestly blocked.
+- The task does not depend on unstated future cleanup.

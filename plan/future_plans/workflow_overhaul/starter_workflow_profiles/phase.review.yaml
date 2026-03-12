@@ -36,6 +36,7 @@ required_verification:
   - bounded_tests
 completion_restrictions:
   forbidden_statuses_until_requirements_met:
+    - complete
     - flow_complete
     - release_ready
 brief_generation:

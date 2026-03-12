@@ -7,7 +7,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.db.models import LogicalNodeCurrentVersion, MergeConflict, MergeEvent, NodeLifecycleState, NodeRun, NodeRunState, NodeVersion
+from aicoding.db.models import (
+    IncrementalChildMergeState,
+    LogicalNodeCurrentVersion,
+    MergeConflict,
+    MergeEvent,
+    NodeLifecycleState,
+    NodeRun,
+    NodeRunState,
+    NodeVersion,
+    ParentIncrementalMergeLane,
+)
 from aicoding.db.session import query_session_scope, session_scope
 
 RESOLUTION_STATUSES = {"unresolved", "resolved", "abandoned"}
@@ -180,6 +190,18 @@ def resolve_merge_conflict(
             raise DaemonNotFoundError("merge event not found")
         conflict.resolution_summary = resolution_summary
         conflict.resolution_status = resolution_status
+        if resolution_status == "resolved":
+            _resume_incremental_merge_resolution_in_session(
+                session,
+                conflict=conflict,
+                event=event,
+            )
+        else:
+            _mark_abandoned_incremental_merge_conflict_in_session(
+                session,
+                conflict=conflict,
+                event=event,
+            )
         _persist_resolved_merge_conflict_context_in_session(
             session,
             conflict=conflict,
@@ -337,8 +359,19 @@ def _persist_resolved_merge_conflict_context_in_session(
             "files_json": list(conflict.files_json),
             "resolution_status": conflict.resolution_status,
             "resolution_summary": conflict.resolution_summary,
+            "lane_status": None,
+            "lane_blocked_reason": None,
         },
     }
+    row = session.execute(
+        select(IncrementalChildMergeState).where(IncrementalChildMergeState.conflict_id == conflict.id)
+    ).scalar_one_or_none()
+    if row is not None:
+        lane = session.get(ParentIncrementalMergeLane, row.parent_node_version_id)
+        payload = context_json["incremental_merge_conflict"]
+        assert isinstance(payload, dict)
+        payload["lane_status"] = None if lane is None else lane.status
+        payload["lane_blocked_reason"] = None if lane is None else lane.blocked_reason
     active_run = session.execute(
         select(NodeRun)
         .where(NodeRun.node_version_id == parent_version.id, NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")))
@@ -355,3 +388,89 @@ def _persist_resolved_merge_conflict_context_in_session(
     lifecycle = session.get(NodeLifecycleState, str(parent_version.logical_node_id))
     if lifecycle is not None:
         lifecycle.execution_cursor_json = dict(cursor)
+
+
+def _resume_incremental_merge_resolution_in_session(
+    session: Session,
+    *,
+    conflict: MergeConflict,
+    event: MergeEvent,
+) -> None:
+    row = session.execute(
+        select(IncrementalChildMergeState).where(IncrementalChildMergeState.conflict_id == conflict.id)
+    ).scalar_one_or_none()
+    if row is None:
+        return
+    parent_version = session.get(NodeVersion, event.parent_node_version_id)
+    if parent_version is None:
+        return
+    lane = session.get(ParentIncrementalMergeLane, row.parent_node_version_id)
+    if lane is None:
+        lane = ParentIncrementalMergeLane(
+            parent_node_version_id=row.parent_node_version_id,
+            status="pending",
+            current_parent_head_commit_sha=event.parent_commit_before,
+            blocked_reason=None,
+        )
+        session.add(lane)
+        session.flush()
+    resolved_head = _require_incremental_merge_resolution_commit(parent_version.id, event.parent_commit_before)
+    event.parent_commit_after = resolved_head
+    row.status = "merged"
+    row.applied_merge_order = event.merge_order
+    row.parent_commit_before = event.parent_commit_before
+    row.parent_commit_after = resolved_head
+    lane.current_parent_head_commit_sha = resolved_head
+    lane.last_successful_merge_at = event.created_at
+    lane.blocked_reason = None
+    lane.status = "pending" if _has_remaining_completed_unmerged(session, parent_node_version_id=row.parent_node_version_id) else "idle"
+    lifecycle = session.get(NodeLifecycleState, str(parent_version.logical_node_id))
+    if lifecycle is not None:
+        lifecycle.working_tree_state = "merged_children"
+
+
+def _mark_abandoned_incremental_merge_conflict_in_session(
+    session: Session,
+    *,
+    conflict: MergeConflict,
+    event: MergeEvent,
+) -> None:
+    row = session.execute(
+        select(IncrementalChildMergeState).where(IncrementalChildMergeState.conflict_id == conflict.id)
+    ).scalar_one_or_none()
+    if row is None:
+        return
+    lane = session.get(ParentIncrementalMergeLane, row.parent_node_version_id)
+    if lane is not None:
+        lane.status = "blocked"
+        lane.blocked_reason = "merge_conflict_abandoned"
+
+
+def _require_incremental_merge_resolution_commit(parent_node_version_id: UUID, parent_commit_before: str) -> str:
+    from aicoding.daemon.live_git import _git_output, _repo_path
+
+    repo_path = _repo_path(parent_node_version_id)
+    if not repo_path.exists() or not (repo_path / ".git").exists():
+        raise DaemonConflictError("incremental merge conflict resolution requires an existing parent live git repo")
+    unresolved_files = _git_output(repo_path, "diff", "--name-only", "--diff-filter=U").splitlines()
+    if unresolved_files:
+        raise DaemonConflictError("cannot mark incremental merge conflict resolved while unmerged files remain")
+    working_tree_status = _git_output(repo_path, "status", "--porcelain")
+    if working_tree_status:
+        raise DaemonConflictError("cannot mark incremental merge conflict resolved until the parent repo is clean and committed")
+    resolved_head = _git_output(repo_path, "rev-parse", "HEAD")
+    if resolved_head == parent_commit_before:
+        raise DaemonConflictError("cannot mark incremental merge conflict resolved until the parent repo advances past the pre-conflict head")
+    return resolved_head
+
+
+def _has_remaining_completed_unmerged(session: Session, *, parent_node_version_id: UUID) -> bool:
+    return (
+        session.execute(
+            select(IncrementalChildMergeState.id).where(
+                IncrementalChildMergeState.parent_node_version_id == parent_node_version_id,
+                IncrementalChildMergeState.status == "completed_unmerged",
+            )
+        ).first()
+        is not None
+    )

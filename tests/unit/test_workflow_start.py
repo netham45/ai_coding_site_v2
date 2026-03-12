@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aicoding.daemon.errors import DaemonConflictError
+from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
 from aicoding.daemon.workflow_start import start_top_level_workflow
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -9,6 +10,8 @@ from aicoding.resources import load_resource_catalog
 def test_start_top_level_workflow_creates_compiles_and_starts_run(db_session_factory, migrated_public_schema) -> None:
     catalog = load_resource_catalog()
     registry = load_hierarchy_registry(catalog)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=30.0, now=adapter.now)
 
     started = start_top_level_workflow(
         db_session_factory,
@@ -18,6 +21,8 @@ def test_start_top_level_workflow_creates_compiles_and_starts_run(db_session_fac
         title=None,
         prompt="Create a top level epic for workflow start coverage.",
         start_run=True,
+        adapter=adapter,
+        poller=poller,
     )
 
     assert started.status == "started"
@@ -28,11 +33,16 @@ def test_start_top_level_workflow_creates_compiles_and_starts_run(db_session_fac
     assert started.run_admission["status"] == "admitted"
     assert started.run_progress is not None
     assert started.run_progress["run"]["trigger_reason"] == "workflow_start"
+    assert started.session is not None
+    assert started.session["status"] == "bound"
+    assert started.session["backend"] == "fake"
 
 
 def test_start_top_level_workflow_can_compile_without_starting_run(db_session_factory, migrated_public_schema) -> None:
     catalog = load_resource_catalog()
     registry = load_hierarchy_registry(catalog)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=30.0, now=adapter.now)
 
     started = start_top_level_workflow(
         db_session_factory,
@@ -42,6 +52,8 @@ def test_start_top_level_workflow_can_compile_without_starting_run(db_session_fa
         title="Compile Only Epic",
         prompt="Compile only workflow startup coverage.",
         start_run=False,
+        adapter=adapter,
+        poller=poller,
     )
 
     assert started.status == "compiled"
@@ -49,6 +61,7 @@ def test_start_top_level_workflow_can_compile_without_starting_run(db_session_fa
     assert started.lifecycle["lifecycle_state"] == "READY"
     assert started.run_admission is None
     assert started.run_progress is None
+    assert started.session is None
 
 
 def test_start_top_level_workflow_rejects_non_top_level_kinds(db_session_factory, migrated_public_schema) -> None:
@@ -74,6 +87,8 @@ def test_start_top_level_workflow_rejects_non_top_level_kinds(db_session_factory
 def test_start_top_level_workflow_returns_compile_failure_without_run(db_session_factory, migrated_public_schema) -> None:
     base_catalog = load_resource_catalog()
     registry = load_hierarchy_registry(base_catalog)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=30.0, now=adapter.now)
 
     class BrokenCatalog:
         yaml_project_policies_dir = base_catalog.yaml_project_policies_dir
@@ -97,6 +112,8 @@ def test_start_top_level_workflow_returns_compile_failure_without_run(db_session
         title="Broken Start",
         prompt="This compile should fail.",
         start_run=True,
+        adapter=adapter,
+        poller=poller,
     )
 
     assert started.status == "compile_failed"
@@ -105,3 +122,4 @@ def test_start_top_level_workflow_returns_compile_failure_without_run(db_session
     assert started.lifecycle["lifecycle_state"] == "COMPILE_FAILED"
     assert started.run_admission is None
     assert started.run_progress is None
+    assert started.session is None

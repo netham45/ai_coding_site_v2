@@ -1,40 +1,32 @@
-You are defining child `phase` nodes for review epic `{{node_id}}`.
+Overlay Role Delta
+- Use with `epic/base.md`.
+- This overlay turns the epic into a review, remediation, and confirmation root.
+- Prioritize auditability and operator clarity over speculative redesign.
 
-This epic style exists to inspect an existing system, identify issues, remediate them, and confirm the remediation.
+Overlay Objective Delta
+- Decompose review work into explicit scope-freeze, review, remediation, and re-review phases.
 
-Role of this tier:
-- define the review lifecycle as explicit delivery bands
-- separate inspection from remediation and re-review
-- keep evidence gathering and closure visible
+Profile-Specific Inputs
+- `required_child_roles` should usually include:
+  - `scope_freeze`
+  - `review`
+  - `remediation`
+  - `re_review`
 
-Bias:
-- prefer inspection, evidence, remediation, and confirmation bands
-- prioritize auditability and operator clarity over speculative redesign
+Additional Forbidden Actions
+- Do not collapse review and remediation into one vague band without reason.
+- Do not create implementation phases disconnected from discovered issues.
+- Do not allow findings to disappear into summary prose.
+- Do not let the epic absorb substantive remediation that should be delegated.
 
-Do not:
-- collapse review and remediation into one vague band without a clear reason
-- create implementation phases that are disconnected from discovered issues
-- allow findings to disappear into summary prose without structured remediation
+Profile-Specific Expected Result
+- A phase child set whose usual roles include:
+  - `scope_freeze`
+  - `review`
+  - `remediation`
+  - `re_review`
 
-Inputs:
-- user request: `{{user_request}}`
-- epic goal: `{{node.title}}`
-- acceptance criteria: `{{acceptance_criteria}}`
-- required child roles: `{{required_child_roles}}`
-- context bundle: `{{context_bundle}}`
-
-Expected phase roles usually include:
-- scope_freeze
-- review
-- remediation
-- re_review
-
-For each phase:
-- define what evidence it must gather or consume
-- define which repository artifacts it must update
-- define what counts as closure for that band
-
-Return JSON only:
-{"status":"OK","child_count":<n>,"coverage":{"missing_roles":[],"extra_roles":[]}}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- The phase set preserves evidence gathering, remediation, and confirmation as inspectable bands.
+- Each phase has clear closure expectations.
+- Remediation remains traceable to findings.

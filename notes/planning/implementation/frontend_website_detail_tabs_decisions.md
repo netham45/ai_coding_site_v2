@@ -15,6 +15,11 @@ Current tab-to-route mapping:
   - `GET /api/nodes/{node_id}/lineage`
 - workflow:
   - `GET /api/nodes/{node_id}/workflow/current`
+  - `GET /api/nodes/{node_id}/subtasks/current`
+  - `GET /api/nodes/{node_id}/subtasks/current/prompt`
+  - `GET /api/nodes/{node_id}/subtasks/current/context`
+  - `GET /api/nodes/{node_id}/subtask-attempts`
+  - `GET /api/subtask-attempts/{attempt_id}`
 - runs:
   - `GET /api/node-runs/{node_id}`
   - `GET /api/nodes/{node_id}/runs`
@@ -39,7 +44,20 @@ Current tab-to-route mapping:
 - the default presentation remains summarized cards and lists
 - this keeps the browser flow inspectable without collapsing into CLI-style JSON by default
 
-### 4. Prompts remain the next feature phase
+### 4. Workflow detail now owns the execution-inspection surface
+
+- the workflow tab is no longer just a task-count summary
+- it now renders:
+  - expandable workflow tasks
+  - selectable compiled subtasks
+  - current execution detail for the active subtask
+  - current prompt and current context associations when the daemon exposes them
+  - subtask attempt history
+  - on-demand selected-attempt detail
+- selected attempt detail stays lazy so the workflow tab does not eagerly fetch every attempt payload on first paint
+- nodes with no active subtask or run now render empty execution states rather than browser errors
+
+### 5. Prompts remain a separate authoring surface
 
 - the detail-tab slice does not implement prompt history or prompt editing yet
 - the current tab bar intentionally covers:
@@ -57,9 +75,13 @@ Prompt history and the regenerate flow remain in the next planned website featur
 This slice was verified with:
 
 - bounded frontend checks for overview-tab rendering
-- mock-daemon route coverage for overview and workflow payloads
+- bounded frontend checks for workflow-tab execution detail rendering
 - production build proof
-- Playwright browser proof for multi-tab navigation after tree selection
+- Playwright browser proof for:
+  - workflow task expansion
+  - current subtask inspection
+  - selected attempt inspection
+  - multi-tab navigation after tree selection
 
 ## Remaining Gaps
 

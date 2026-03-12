@@ -8,9 +8,13 @@ This note now works together with the fully written examples under:
 
 - `plan/future_plans/project_skeleton_generator/lifecycle_note_examples/`
 
+The current concrete starter-repo rendering of those ideas now lives under:
+
+- `plan/future_plans/project_skeleton_generator/draft_repo/notes/lifecycle/`
+
 ## Lifecycle Folder
 
-The generated repository should contain:
+The generated repository or cloneable starter repo should contain:
 
 - `notes/lifecycle/`
 

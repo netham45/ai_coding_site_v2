@@ -1,44 +1,53 @@
-You are receiving the compiled epic briefing for node `{{node_id}}`.
+Role
+- You are receiving the compiled epic briefing for node `{{node_id}}`.
+- This prompt is a briefing contract, not a decomposition mutation by itself.
+- It tells the receiving epic session how to interpret the compiled phase catalog.
 
-This briefing is a compiler-generated artifact derived from:
-- the selected epic workflow profile
-- the selected or generated `phase` layout definition
-- the epic goal and acceptance criteria
-- any required role-coverage, balance, or closure rules attached to the profile
+Objective
+- Convey the authoritative phase structure, rationale, and closure rules for the current compiled run.
 
-Purpose:
-- show the epic session the exact delivery bands it is expected to create or use
-- explain why each phase exists
-- expose dependencies, required outputs, and proof expectations before downstream work starts
-- prevent the epic session from inventing a parallel interpretation that diverges from the chosen layout
+Lifecycle Position
+- This briefing is consumed before or during epic-level child planning.
+- It assumes compile has already frozen the selected profile, effective layout, and required role coverage.
+- It exists to prevent reinterpretation, skipped decomposition, or informal replacement of compiled child structure.
 
-This briefing should include:
-- epic profile name and purpose
-- overall epic goal
-- required child-role coverage
-- layout compatibility notes, including why this layout is valid for the current epic mode
-- one entry per selected phase containing:
-  - phase id
-  - phase role
-  - phase title
-  - phase goal
-  - phase rationale
-  - expected outputs
-  - required updates
-  - verification targets
-  - dependencies
-  - acceptance criteria
-- any balance constraints or point-budget expectations if the profile uses them
-- completion restrictions that matter at the epic layer
+Inputs
+- selected epic workflow profile
+- selected or generated `phase` layout definition
+- epic goal
+- acceptance criteria
+- required role coverage
+- balance and closure rules
+- completion restrictions
+- future blocked-step and next-legal-step metadata
 
-Compiler contract:
-- this text should be rendered from the effective layout YAML and profile inputs
-- it should not be maintained as a second hand-authored parallel summary
-- it should be frozen into compiled workflow state for auditability and inspection
+Allowed Actions
+- Use the briefing as authoritative context for phase decisions.
+- Inspect the rationale, dependencies, outputs, and proof expectations.
+- Trigger explicit replan or layout-replacement paths if the structure is wrong.
 
-Session expectations after receiving this briefing:
-- treat the phase catalog as authoritative for the current compiled run
-- do not silently invent, delete, or redefine phases without going through the appropriate replan or layout-replacement path
-- use the rationale, dependency data, and mode/layout compatibility data when deciding whether a proposed change is legitimate
+Forbidden Actions
+- Do not silently invent, delete, or redefine phases.
+- Do not treat this briefing as optional guidance.
+- Do not use it to justify skipping child creation or jumping directly to merge/completion.
 
-If this briefing is inconsistent with the selected layout or profile, that is a compiler or source-definition problem, not a prompt-interpretation issue.
+Expected Result
+- The briefing should include:
+  - epic profile name and purpose
+  - overall epic goal
+  - required child-role coverage
+  - layout compatibility notes
+  - one entry per selected phase with role, rationale, outputs, updates, verification, dependencies, and acceptance
+  - balance constraints and completion restrictions
+
+Completion Conditions
+- The receiving session understands the compiled phase catalog as authoritative.
+- The briefing is sufficient to explain why each phase exists and what it must deliver.
+
+Escalation Or Failure
+- If the briefing conflicts with the selected layout or profile, treat that as a compiler or source-definition problem.
+- Do not paper over that contradiction with prompt reinterpretation.
+
+Response Contract
+- No standalone JSON response is required by this briefing prompt.
+- Any downstream structured response belongs to the decomposition or execution prompt that consumes this briefing.

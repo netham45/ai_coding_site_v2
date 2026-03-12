@@ -178,6 +178,11 @@ Implementation extension note:
   - `blocked_on_parent_refresh`
 - non-sibling dependency edges and sibling edges without a shared parent lineage remain on the existing lifecycle-based `required_state` rule in the current implementation slice
 - if a dependent child was already bootstrapped from an older parent head before the prerequisite sibling merged upward, admission must block that child on `blocked_on_parent_refresh` until the child bootstrap is refreshed against the current parent merge-lane head
+- if a sibling dependency invalidates a dependent node deeply enough that its own decomposition assumptions are stale, the dependent node must restart from a fresh node version with no reused child tree and remain blocked in the sibling-dependency wait state until parent refresh plus fresh child rematerialization complete
+- current implementation note: once that fresh dependency-invalidated version becomes authoritative, the background incremental-merge/refresh loop now refreshes it from the updated parent head and, for layout-authoritative prior child trees, rematerializes its children from an empty tree before transitioning it out of the sibling wait state
+- current implementation note: if a placeholder `manual` authority row was carried onto that fresh version during rebuild remap, the authoritative follow-on path must reset it back to `layout_authoritative` before rematerialization so stale child lineage is not silently reused
+- current implementation note: if the superseded version's child authority was `manual` or `hybrid`, the fresh dependency-invalidated version must remain blocked with `child_tree_rebuild_required` after parent refresh; the daemon must not auto-transition it to `READY` because no safe automatic child-tree rebuild path exists yet for those modes
+- current implementation note: that manual/hybrid rebuild gate is now cleared only by explicit fresh-version structural work, not by refresh alone; either new manual child creation on the fresh authoritative version or `node reconcile-children --node <id> --decision preserve_manual` on the empty fresh version can satisfy the rebuild requirement
 
 ---
 
@@ -436,6 +441,7 @@ This means materialization and scheduling must stay aware of:
 - authoritative children
 - candidate rebuilt children
 - authoritative versus candidate lineage selectors
+- active child inspection surfaces must read the authoritative parent version's `NodeChild` edges, not only the logical `HierarchyNode.parent_node_id` relationship
 
 ---
 

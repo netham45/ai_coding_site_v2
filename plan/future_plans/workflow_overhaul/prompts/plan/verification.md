@@ -1,27 +1,21 @@
-You are defining child `task` nodes for verification plan `{{node_id}}`.
+Overlay Role Delta
+- Use with `plan/base.md`.
+- This overlay turns the plan into a verification plan.
+- Separate defect discovery from later remediation unless the plan contract combines them.
 
-This plan style exists to prove that previously authored or implemented work satisfies its declared contract.
+Overlay Objective Delta
+- Produce verification tasks that prove a declared behavior or artifact surface through explicit commands and evidence.
 
-Bias:
-- tie each task to a specific proving surface
-- keep commands, evidence, and pass/fail interpretation explicit
-- separate defect discovery from later remediation work unless the plan contract combines them
+Additional Forbidden Actions
+- Do not write tasks that say only "run tests."
+- Do not leave canonical commands or expected evidence implicit.
+- Do not claim completion without naming contradiction or failure posture.
+- Do not repair substantive implementation at the plan layer.
 
-Do not:
-- write tasks that say only "run tests"
-- leave the canonical commands or expected evidence implicit
-- claim completion without naming the contradiction or failure path if verification breaks
+Profile-Specific Expected Result
+- A task child set for verification work.
 
-Each task should make explicit:
-- which behavior, artifact family, or invariant it proves
-- which commands, diagnostics, or inspections it runs
-- what evidence or outputs it leaves behind
-- what failure classification it can produce if proof does not hold
-
-Closure bar:
-- downstream operators should be able to see exactly what was proven, what was not, and what needs remediation if a task fails
-
-Return JSON only:
-{"status":"OK","child_count":<n>}
-or
-{"status":"FAIL","message":"<reason>"}
+Profile-Specific Completion Conditions
+- Each task names the behavior, artifact family, or invariant it proves.
+- Commands and evidence expectations are explicit.
+- Failure classifications are clear enough for downstream remediation.

@@ -276,6 +276,7 @@ Implementation staging note:
   - `child_reconciliation -> preserve_manual`
   - `merge_conflict -> abort_merge|resolve_conflict`
   - `session_recovery -> resume_session`
+- for incremental parent-merge conflicts, `resolve_conflict` now requires the operator or parent AI to resolve and commit the conflicted parent repo first; once applied, the daemon advances the affected merge row and lane so blocked dependents can refresh/unblock
 - blocked cutover is currently read-only on this surface and rebuild-specific intervention actions remain deferred
 
 ### Show decision history
@@ -534,6 +535,8 @@ Implementation staging note:
 - current stage metadata includes the compiled task/subtask identity, source subtask key, subtask type, and frozen environment request metadata for the active compiled subtask
 - `subtask environment` now returns the current compiled subtask's frozen `environment_policy_ref` and `environment_request`
 - `prompts history --node <id>` and `prompts delivered-show --prompt <id>` now expose durable prompt-delivery history without changing the packaged-asset `prompts show` command
+- after a supervision-caused terminal run failure, `subtask current --node <id>` now degrades to the latest failed run snapshot and carries a bounded `terminal_failure` payload instead of returning a generic active-run error
+- after that same terminal failure, `subtask prompt --node <id>` and `subtask context --node <id>` remain rejected because the run is closed, but the daemon now returns an explicit conflict message telling the caller to inspect `node run show`, `session show`, or `node recovery-status`
 
 ### Environment policy inspection
 
@@ -783,6 +786,7 @@ Implementation staging note:
 
 - the current implementation exposes these surfaces under the existing `git` namespace as `git merge-events show --node <id>` and `git merge-conflicts show --node|--version ...`
 - `git merge-conflicts record ...` and `git merge-conflicts resolve ...` are now the explicit operator paths for durable conflict halt/resume handling ahead of automated merge execution
+- when the conflict belongs to the incremental parent-merge lane, `git merge-conflicts resolve ...` also advances the merge-backed lane after the parent repo has been manually resolved and committed
 
 ### Merge gating
 
@@ -842,7 +846,7 @@ Implementation staging note:
 Implementation staging note:
 
 - `session show --node <id>`, `session show --session <id>`, and `session list --node <id>` are now implemented as daemon-backed reads over the durable `sessions` table plus current harness state
-- those responses now include the persisted provider session id, working directory, tmux-existence flag, and tmux attach command when the backend is concrete `tmux`
+- those responses now include the persisted provider session id, working directory, tmux-existence flag, tmux live-process flag, tmux exit status when known, and tmux attach command when the backend is concrete `tmux`
 
 ### Heartbeats and events
 
@@ -873,7 +877,9 @@ Implementation staging note:
 - `session nudge --node <id>` now performs daemon-owned idle inspection and returns a structured nudge/escalation result
 - `node recovery-status --node <id>` now shows the daemon's current recovery classification and recommended action
 - `session show --node <id>`, `session show --session <id>`, and `session show-current` now also include the daemon's `recommended_action` whenever the row represents a primary session bound to an active run, so the control surface is directly actionable without forcing a separate recovery-status lookup
+- if the latest run failed because session supervision could not recover a lost tmux session, `session show --node <id>` and `node recovery-status --node <id>` now degrade to the latest failed run/session snapshot with `recommended_action=inspect_failed_run` and a bounded `terminal_failure` payload
 - if the durable primary session exists but the harness session is gone, recovery preserves the old session row as `LOST` and creates a replacement durable primary session
+- if tmux preserves the pane after process exit, `session show --node <id>`, `session show-current`, and `node recovery-status --node <id>` must report `tmux_session_exists=true` together with `tmux_process_alive=false` and any known `tmux_exit_status`; recovery must classify that state as `lost` rather than healthy or detached
 - if the durable tmux pointer is stale but the persisted provider session still exists on the current backend, provider-aware recovery now rebinds the existing durable session instead of creating a replacement
 - if the run is marked non-resumable, recovery is rejected without creating a new session
 - if duplicate active primary sessions are detected, recovery pauses for user instead of guessing ownership

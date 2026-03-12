@@ -107,3 +107,46 @@ test("live candidate prompt block and browser back-forward behavior are proven",
     await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-task-1\/runs$/);
   });
 });
+
+test("representative loading, empty, and error states are browser-proven across shared surfaces", async ({ page }) => {
+  await withScenario({ outputPath: () => "" }, "shared_state_matrix", 7802, async ({ baseURL, token }) => {
+    await seedApi(page, baseURL, token);
+
+    await page.goto("/projects");
+    await expect(page.getByText("Loading project catalog.")).toBeVisible();
+    await expect(page.getByTestId("project-link-repo_alpha")).toBeVisible();
+
+    await page.goto("/projects/repo_alpha/nodes/node-root/overview");
+    await expect(page.getByText("Loading project bootstrap.")).toBeVisible();
+    await expect(page.getByTestId("tree-sidebar")).toBeVisible();
+
+    await page.goto("/projects/repo_alpha/nodes/node-loading-actions/actions");
+    await expect(page.getByText("Loading actions.")).toBeVisible();
+    await expect(page.getByTestId("action-card-pause-run")).toBeVisible();
+
+    await page.goto("/projects/repo_alpha/nodes/node-empty-actions/actions");
+    await expect(page.getByTestId("empty-state")).toContainText("No actions");
+
+    await page.goto("/projects/repo_alpha/nodes/node-error-actions/actions");
+    await expect(page.getByTestId("error-state")).toContainText("Could not load actions");
+    await expect(page.getByText("mock action catalog failure")).toBeVisible();
+
+    await page.goto("/projects/repo_alpha/nodes/node-empty-prompts/prompts");
+    await expect(page.getByText("Loading prompts.")).toBeVisible();
+    await expect(page.getByTestId("empty-state")).toContainText("No prompt history");
+
+    await page.goto("/projects/repo_alpha/nodes/node-error-prompts/prompts");
+    await expect(page.getByTestId("error-state")).toContainText("Could not load prompt history");
+    await expect(page.getByText("mock prompt history failure")).toBeVisible();
+  });
+});
+
+test("tree error state is browser-proven", async ({ page }) => {
+  await withScenario({ outputPath: () => "" }, "tree_error_matrix", 7803, async ({ baseURL, token }) => {
+    await seedApi(page, baseURL, token);
+    await page.goto("/projects/repo_alpha/nodes/node-root/overview");
+
+    await expect(page.getByTestId("error-state")).toContainText("Unable to load hierarchy tree");
+    await expect(page.getByText("mock tree load failure")).toBeVisible();
+  });
+});

@@ -39,13 +39,19 @@ def test_project_bootstrap_returns_null_root_when_project_has_no_created_root(mo
             "project_id": "repo_alpha",
             "label": "repo_alpha",
             "source_path": "repos/repo_alpha",
+            "bootstrap_ready": False,
+            "readiness_code": "not_git_repo",
+            "readiness_message": "Directory is not a git repository.",
+            "default_branch": None,
+            "head_commit_sha": None,
         },
         "root_node_id": None,
         "route_hint": None,
+        "top_level_nodes": [],
     }
 
 
-def test_project_bootstrap_returns_latest_root_for_project(monkeypatch, tmp_path, migrated_public_schema) -> None:
+def test_project_bootstrap_returns_top_level_node_catalog_for_project(monkeypatch, tmp_path, migrated_public_schema) -> None:
     workspace_root = tmp_path / "workspace"
     _write_repo_catalog(workspace_root, "repo_alpha", "repo_beta")
     _init_git_repo(workspace_root / "repos" / "repo_alpha")
@@ -92,3 +98,9 @@ def test_project_bootstrap_returns_latest_root_for_project(monkeypatch, tmp_path
     assert payload["root_node_id"] == latest.json()["node"]["node_id"]
     assert payload["route_hint"]["node_id"] == latest.json()["node"]["node_id"]
     assert payload["route_hint"]["url"] == f"/projects/repo_alpha/nodes/{latest.json()['node']['node_id']}/overview"
+    assert [item["node_id"] for item in payload["top_level_nodes"]] == [
+        latest.json()["node"]["node_id"],
+        first.json()["node"]["node_id"],
+    ]
+    assert payload["top_level_nodes"][0]["route_hint"]["url"] == payload["route_hint"]["url"]
+    assert payload["top_level_nodes"][1]["route_hint"]["url"] == f"/projects/repo_alpha/nodes/{first.json()['node']['node_id']}/overview"

@@ -22,7 +22,7 @@ def test_db_upgrade_and_status_report_revision(clean_public_schema, cli_runner) 
     payload = result.json()
 
     assert result.exit_code == 0
-    assert payload["alembic_revision"] == "0029_incr_parent_merge_state"
+    assert payload["alembic_revision"] == "0030_live_runtime_binding"
     assert "bootstrap_metadata" in payload["tables"]
     assert "daemon_node_states" in payload["tables"]
     assert "node_hierarchy_definitions" in payload["tables"]
@@ -64,14 +64,14 @@ def test_db_current_revision_command(clean_public_schema, cli_runner) -> None:
     payload = result.json()
 
     assert result.exit_code == 0
-    assert payload["alembic_revision"] == "0029_incr_parent_merge_state"
+    assert payload["alembic_revision"] == "0030_live_runtime_binding"
 
 
 def test_db_heads_history_and_schema_check_commands(clean_public_schema, cli_runner) -> None:
     heads_result = cli_runner(["admin", "db", "heads"])
     heads_payload = heads_result.json()
     assert heads_result.exit_code == 0
-    assert heads_payload == {"heads": ["0029_incr_parent_merge_state"]}
+    assert heads_payload == {"heads": ["0030_live_runtime_binding"]}
 
     history_result = cli_runner(["admin", "db", "history"])
     history_payload = history_result.json()
@@ -105,7 +105,7 @@ def test_db_heads_history_and_schema_check_commands(clean_public_schema, cli_run
             "0025_runtime_state_views",
             "0026_session_history_views",
             "0027_provenance_docs_audit_views",
-            "0029_incr_parent_merge_state",
+            "0030_live_runtime_binding",
         ]
     }
 

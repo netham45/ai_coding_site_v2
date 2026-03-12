@@ -154,6 +154,12 @@ Suggested fields:
 
 - `forbidden_statuses_until_requirements_met`
 
+Runtime interpretation:
+
+- this section declares obligation inputs for the compiler and daemon
+- it does not make YAML the sole enforcement layer
+- for non-leaf profiles with required child generation, the daemon should treat missing child materialization or missing required child-role coverage as a hard legality failure for the forbidden statuses
+
 ### `brief_generation`
 
 Purpose:
@@ -313,6 +319,58 @@ The compiler should:
 - validate profile/layout compatibility
 - validate required child-role coverage
 - freeze selected profile and derived obligations into compiled workflow context
+
+## Recommended Enforcement Interpretation
+
+The future workflow-overhaul model should interpret the profile schema through a code-owned enforcement ladder.
+
+### Decomposition-required tiers
+
+If a profile declares `child_generation.required_child_roles`, the future runtime should normally treat that profile as decomposition-required rather than leaf-executable.
+
+That means the node is expected to:
+
+- materialize children that cover the required roles
+- delegate substantive implementation or proof work to those children
+- use parent-local work only for narrow reconciliation operations
+
+### Hard completion gate
+
+For decomposition-required profiles, the daemon should reject any status listed in `completion_restrictions.forbidden_statuses_until_requirements_met` while any of the following are true:
+
+- no children have been materialized
+- required child roles are not covered
+- required child outputs are not yet merged or otherwise accepted by the parent's closure rules
+- required repository updates or verification categories are still unsatisfied
+
+The intended operator-facing behavior is a concrete blocked mutation, not a soft hint.
+
+Example future API posture:
+
+- `4xx` response
+- code such as `children_required_before_completion`
+- message such as `you did not spawn children before attempting merge or completion`
+- structured detail fields listing the unsatisfied conditions
+
+### Step-order rigidity
+
+The future runtime should treat compiled workflow steps and subtasks as rigidly ordered when the compiled workflow says they are ordered.
+
+That means:
+
+- step skipping is illegal
+- merge or finalize steps should remain blocked until decomposition and required child progress steps are satisfied
+- subtask completion should require the concrete durable records or command results declared by the compiled workflow contract
+
+### Narrow reconciliation exception
+
+Non-leaf tiers may still perform small parent-local operations when needed to reconcile child results, but the allowed scope should stay narrow:
+
+- basic merge-conflict resolution
+- basic integration bug checks exposed by combining child outputs
+- documentation or checklist alignment that reflects the merged child results
+
+Substantive new feature work discovered at a non-leaf tier should be pushed back into child remediation or explicit replan rather than silently completed at the parent.
 
 ## Suggested First Adoption Scope
 

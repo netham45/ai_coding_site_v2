@@ -32,10 +32,28 @@ Read these note files before implementing or revising this phase:
 ## Scope
 
 - Database: persist any additional live-conflict, cutover-block, or rebuild-coordination records required to explain why cutover is blocked or allowed.
-- CLI: expose explicit reads and control surfaces for rebuild-versus-live-run coordination and cutover readiness.
+- CLI: extend the existing rebuild, cutover-readiness, and rebuild-coordination reads with replay-specific blockers, required-scope detail, and authoritative-baseline drift rather than inventing parallel surfaces.
 - Daemon: implement live rebuild coordination rules for active runs, active sessions, and cutover safety.
 - YAML: keep rebuild coordination and cutover safety code-owned rather than declarative.
 - Prompts: update rebuild, rectification, and intervention prompts if live coordination introduces new operator choices.
 - Tests: exhaustively cover rebuild while runs are active, rebuild while sessions are attached, blocked cutover, resumed cutover, and audit reconstruction.
 - Performance: benchmark rebuild-history and cutover-read paths under larger lineages and repeated rebuild attempts.
 - Notes: update regeneration, cutover, recovery, and audit notes to reflect the live coordination rules.
+
+## Canonical CLI Surfaces
+
+- `node rectify-upstream --node <id>`
+- `node rebuild-history --node <id>`
+- `rebuild show --node <id>`
+- `node rebuild-coordination --node <id> --scope upstream`
+- `node version cutover-readiness --version <candidate_version_id>`
+- `node version cutover --version <candidate_version_id>`
+- `git merge-events show --node <id>` or candidate-version scoped equivalent
+- `git merge-conflicts show --version <candidate_version_id>`
+
+## Required Live Coordination Decisions
+
+- Cutover readiness must expose an explicit blocker vocabulary rather than a generic blocked/not-blocked answer.
+- The live blocker set must include active authoritative runs, active authoritative primary sessions, candidate replay incompleteness, candidate merge conflicts, required-scope instability, approval gates, candidate supersession, and authoritative-baseline drift.
+- Candidate cutover must not auto-proceed if the authoritative lineage changed after candidate rebuild started unless a later explicit override policy is documented.
+- The proving path for this phase should use the canonical CLI surfaces above rather than daemon-only internal inspection.

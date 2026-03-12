@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import subprocess
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
+
+from sqlalchemy import select
 
 from aicoding.daemon.admission import admit_node_run
 from aicoding.daemon.branches import record_final_commit, record_seed_commit
@@ -19,8 +23,23 @@ from aicoding.daemon.live_git import bootstrap_live_git_repo, show_live_git_stat
 from aicoding.daemon.run_orchestration import advance_workflow, load_current_subtask_context
 from aicoding.daemon.versioning import create_superseding_node_version, cutover_candidate_version, initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
+from aicoding.db.models import NodeRun
+from aicoding.db.session import session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
+
+
+def _git(repo_path: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr or result.stdout)
+    return result.stdout.strip()
 
 
 def test_record_completed_child_for_incremental_merge_creates_lane_and_state(
@@ -94,6 +113,53 @@ def test_record_completed_child_for_incremental_merge_is_idempotent(
     assert second is not None
     assert len(states) == 1
     assert states[0].child_node_version_id == child_version.id
+
+
+def test_transition_to_complete_records_incremental_merge_state_for_finalized_child(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    child = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Child",
+        prompt="c",
+        parent_node_id=parent.node_id,
+    )
+    child_version = initialize_node_version(db_session_factory, logical_node_id=child.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(child.node_id), initial_state="DRAFT")
+    compile_node_workflow(db_session_factory, logical_node_id=child.node_id, catalog=catalog)
+
+    record_seed_commit(db_session_factory, version_id=parent_version.id, commit_sha="abc1234")
+    record_seed_commit(db_session_factory, version_id=child_version.id, commit_sha="def1234")
+    record_final_commit(db_session_factory, version_id=child_version.id, commit_sha="def5678")
+
+    transition_node_lifecycle(db_session_factory, node_id=str(child.node_id), target_state="COMPILED")
+    transition_node_lifecycle(db_session_factory, node_id=str(child.node_id), target_state="READY")
+    admit_node_run(db_session_factory, node_id=child.node_id)
+    transition_node_lifecycle(db_session_factory, node_id=str(child.node_id), target_state="COMPLETE")
+
+    states = list_incremental_child_merge_states_for_parent(db_session_factory, parent_node_version_id=parent_version.id)
+    lane = get_parent_incremental_merge_lane(db_session_factory, parent_node_version_id=parent_version.id)
+    with session_scope(db_session_factory) as session:
+        latest_run = session.execute(
+            select(NodeRun).where(NodeRun.node_version_id == child_version.id).order_by(NodeRun.run_number.desc())
+        ).scalar_one()
+
+    assert len(states) == 1
+    assert states[0].child_node_version_id == child_version.id
+    assert states[0].child_final_commit_sha == "def5678"
+    assert states[0].status == "completed_unmerged"
+    assert lane is not None
+    assert lane.status == "pending"
+    assert latest_run.run_status == "COMPLETE"
+    assert latest_run.ended_at is not None
 
 
 def test_record_completed_child_for_incremental_merge_ignores_non_authoritative_child(
@@ -417,6 +483,12 @@ def test_incremental_merge_conflict_persists_parent_reconcile_context_and_resolu
     assert payload["incremental_merge_conflict"]["resolution_status"] == "unresolved"
     assert payload["incremental_merge_conflict"]["files_json"] == ["shared.txt"]
 
+    parent_status = show_live_git_status(db_session_factory, version_id=parent_version.id)
+    parent_repo = Path(parent_status.repo_path)
+    (parent_repo / "shared.txt").write_text("base\nchild a\nchild b\n", encoding="utf-8")
+    _git(parent_repo, "add", "shared.txt")
+    _git(parent_repo, "commit", "-m", "Resolve incremental merge conflict")
+
     resolve_merge_conflict(
         db_session_factory,
         conflict_id=conflicted.conflict_id,
@@ -427,3 +499,105 @@ def test_incremental_merge_conflict_persists_parent_reconcile_context_and_resolu
     assert resolved_payload["status"] == "conflict_resolution_recorded"
     assert resolved_payload["incremental_merge_conflict"]["resolution_status"] == "resolved"
     assert resolved_payload["incremental_merge_conflict"]["resolution_summary"] == "Resolved by parent session."
+    assert resolved_payload["incremental_merge_conflict"]["lane_status"] == "idle"
+    assert resolved_payload["incremental_merge_conflict"]["lane_blocked_reason"] is None
+
+
+def test_resolving_incremental_merge_conflict_advances_lane_and_merge_state(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    child_a = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Child A",
+        prompt="a",
+        parent_node_id=parent.node_id,
+    )
+    child_b = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Child B",
+        prompt="b",
+        parent_node_id=parent.node_id,
+    )
+    child_a_version = initialize_node_version(db_session_factory, logical_node_id=child_a.node_id)
+    child_b_version = initialize_node_version(db_session_factory, logical_node_id=child_b.node_id)
+
+    bootstrap_live_git_repo(
+        db_session_factory,
+        version_id=parent_version.id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    bootstrap_live_git_repo(
+        db_session_factory,
+        version_id=child_a_version.id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    bootstrap_live_git_repo(
+        db_session_factory,
+        version_id=child_b_version.id,
+        files={"shared.txt": "base\n"},
+        replace_existing=True,
+    )
+    stage_live_git_change(
+        db_session_factory,
+        version_id=child_a_version.id,
+        files={"shared.txt": "base\nchild a\n"},
+        message="Child A final",
+        record_as_final=True,
+    )
+    stage_live_git_change(
+        db_session_factory,
+        version_id=child_b_version.id,
+        files={"shared.txt": "base\nchild b\n"},
+        message="Child B final",
+        record_as_final=True,
+    )
+
+    record_completed_child_for_incremental_merge(db_session_factory, child_node_version_id=child_a_version.id)
+    first = process_next_incremental_child_merge(db_session_factory, parent_node_version_id=parent_version.id)
+    assert first is not None
+    assert first.status == "merged"
+
+    record_completed_child_for_incremental_merge(db_session_factory, child_node_version_id=child_b_version.id)
+    conflicted = process_next_incremental_child_merge(db_session_factory, parent_node_version_id=parent_version.id)
+    assert conflicted is not None
+    assert conflicted.status == "conflicted"
+    assert conflicted.conflict_id is not None
+
+    parent_status = show_live_git_status(db_session_factory, version_id=parent_version.id)
+    parent_repo = Path(parent_status.repo_path)
+    (parent_repo / "shared.txt").write_text("base\nchild a\nchild b\n", encoding="utf-8")
+    _git(parent_repo, "add", "shared.txt")
+    _git(parent_repo, "commit", "-m", "Resolve conflict for child B")
+    resolved_head = _git(parent_repo, "rev-parse", "HEAD")
+
+    resolve_merge_conflict(
+        db_session_factory,
+        conflict_id=conflicted.conflict_id,
+        resolution_summary="Resolved and committed in the parent repo.",
+    )
+
+    lane = get_parent_incremental_merge_lane(db_session_factory, parent_node_version_id=parent_version.id)
+    states = list_incremental_child_merge_states_for_parent(db_session_factory, parent_node_version_id=parent_version.id)
+    events = list_merge_events_for_node(db_session_factory, logical_node_id=parent.node_id)
+
+    assert lane is not None
+    assert lane.status == "idle"
+    assert lane.blocked_reason is None
+    assert lane.current_parent_head_commit_sha == resolved_head
+    assert [item.status for item in states] == ["merged", "merged"]
+    assert states[1].applied_merge_order == 2
+    assert states[1].parent_commit_after == resolved_head
+    assert events[1].had_conflict is True
+    assert events[1].parent_commit_after == resolved_head

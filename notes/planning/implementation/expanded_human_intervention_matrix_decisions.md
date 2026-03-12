@@ -22,6 +22,9 @@ Feature `72_F13_expanded_human_intervention_matrix` now adds a bounded unified i
    - `resolve_conflict`
    - `resume_session`
 
+   Incremental parent-merge note:
+   - `resolve_conflict` is now a real progression path for incremental merge conflicts, not only a metadata annotation. The operator or parent AI resolves the conflicted parent repo, commits the merge, then applies `resolve_conflict` so the daemon can advance the affected merge row and parent lane.
+
 3. This slice does not add a new `interventions` table.
    The current bounded decision is to reuse existing durable source-of-truth tables plus `workflow_events` for intervention audit. This keeps the intervention layer narrow while the runtime still relies on existing pause, reconciliation, merge-conflict, and recovery state families.
 

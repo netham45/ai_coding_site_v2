@@ -26,3 +26,4 @@ Current working-note bundles:
 - `collaborative_design_workflow/`
 - `node_tree_copy_paste/`
 - `sibling_dependency_incremental_parent_merge/`
+- `multi_provider_cli_sessions/`

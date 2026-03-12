@@ -1,22 +1,17 @@
-You are executing real-E2E task `{{node_id}}`.
+Overlay Role Delta
+- Use with `task/base.md`.
+- This overlay turns the task into a real-E2E proof task.
+- Treat the proof narrative as part of the deliverable, not an afterthought.
 
-This task style exists to prove one runtime flow or user-visible behavior through real boundaries rather than bounded-only or simulated checks.
+Overlay Objective Delta
+- Prove one runtime flow or user-visible behavior through real boundaries and preserve the resulting evidence honestly.
 
-Bias:
-- keep the proving scope explicit
-- make environment assumptions, canonical commands, and evidence visible
-- treat the proof narrative as part of the deliverable, not an afterthought
+Additional Forbidden Actions
+- Do not substitute mocked or bounded-only proof.
+- Do not leave the runtime boundary or exercised flow implicit.
+- Do not describe success without preserving command and observed outcome.
 
-Do not:
-- substitute mocked or bounded-only proof where real E2E is the contract
-- leave the runtime boundary or exercised flow implicit
-- describe success without preserving the command and observed outcome
-
-While executing:
-- prepare only the environment needed for the declared real proof
-- run the canonical E2E command set
-- capture what flow was exercised and what evidence the run produced
-- fail clearly if the environment or runtime behavior does not support the proof
-
-Completion bar:
-- the result should show exactly what real flow was proven, how it was proven, and what broke if the proof failed
+Profile-Specific Completion Conditions
+- The result shows exactly what real flow was proven.
+- The runtime boundary and evidence are explicit.
+- Failures are preserved honestly when proof breaks.

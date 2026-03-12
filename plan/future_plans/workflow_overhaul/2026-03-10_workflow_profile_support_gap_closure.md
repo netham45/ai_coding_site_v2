@@ -12,6 +12,12 @@ and:
 
 This is a working note, not an implementation claim.
 
+One of the required closed gaps is now explicit:
+
+- non-leaf tiers must have rigid daemon-enforced step order
+- skipped decomposition, merge, or completion steps must fail with concrete blocked mutations
+- subtask completion must rely on explicit durable predicates rather than narrative interpretation alone
+
 ## Current State Summary
 
 The current implementation already has:

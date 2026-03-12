@@ -1,0 +1,507 @@
+schema_version: 1
+inventory_id: relevant_user_flow_inventory
+purpose: >-
+  Track the currently relevant canonical user and operator runtime flows in a
+  machine-validated note asset so implementation work updates flow relevance,
+  affected systems, and proof surfaces without creating a second prose-only
+  flow registry.
+interpretation_rules:
+  - flows/*.md remain the canonical narrative runtime flow contracts
+  - this YAML inventory is the authoritative structured tracking surface under notes/
+  - simulation-derived flows and blueprint assets belong in flows/*.yaml and related traceability notes unless explicitly promoted into this inventory
+  - bounded proof status and real E2E completion must remain distinct
+flows:
+  - flow_id: 01_create_top_level_node_flow
+    title: Create Top-Level Node
+    canonical_md: flows/01_create_top_level_node_flow.md
+    summary: Create durable top-level work from a prompt and compile its first workflow.
+    relevance:
+      status: active
+      rationale: Primary product entrypoint and the root of most runtime narratives.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/planning/implementation/scenario_and_flow_pytest_plan.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - created nodes, prompts, and compiled workflows must be durably inspectable
+      - top-level creation must not rely on hidden session state
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[01] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_01_create_top_level_node_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/planning/implementation/scenario_and_flow_pytest_plan.md
+    change_triggers:
+      - top-level node-kind policy changes
+      - workflow start entrypoint changes
+      - initial compile or prompt lineage changes
+  - flow_id: 02_compile_or_recompile_workflow_flow
+    title: Compile Or Recompile Workflow
+    canonical_md: flows/02_compile_or_recompile_workflow_flow.md
+    summary: Compile immutable workflow state, inspect compile outputs, and recompile after source changes.
+    relevance:
+      status: active
+      rationale: Workflow compilation is the contract boundary between declarative YAML and runtime orchestration.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/planning/implementation/scenario_and_flow_pytest_plan.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - execution must run from immutable compiled workflow snapshots
+      - compile lineage and source discovery must remain inspectable
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[02] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/specs/yaml/yaml_schemas_spec_v2.md
+    change_triggers:
+      - compile-stage contract changes
+      - source-lineage or override-resolution changes
+      - hook or policy expansion changes
+  - flow_id: 03_materialize_and_schedule_children_flow
+    title: Materialize And Schedule Children
+    canonical_md: flows/03_materialize_and_schedule_children_flow.md
+    summary: Materialize child nodes, persist dependency relationships, and classify scheduling state.
+    relevance:
+      status: active
+      rationale: Parent-driven decomposition and child scheduling are core orchestration behavior.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: not_applicable
+    invariants:
+      - child materialization must be durable and idempotent for the same authoritative layout
+      - blockers and readiness must be inspectable from durable state
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[03] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_03_materialize_and_schedule_children_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_03_materialize_and_schedule_children_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/parent_child/child_materialization_and_scheduling.md
+    change_triggers:
+      - child materialization behavior changes
+      - dependency graph semantics change
+      - auto-start or scheduling policy changes
+  - flow_id: 04_manual_tree_edit_and_reconcile_flow
+    title: Manual Tree Edit And Reconcile
+    canonical_md: flows/04_manual_tree_edit_and_reconcile_flow.md
+    summary: Apply manual tree edits and reconcile them against layout-managed authority.
+    relevance:
+      status: active
+      rationale: Manual control over tree shape is a core operator requirement rather than a fallback.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: not_applicable
+    invariants:
+      - manual edits must not be silently overwritten by later regeneration
+      - structural authority state must remain explicit and inspectable
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[04] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/parent_child/manual_vs_auto_tree_interaction.md
+    change_triggers:
+      - manual child-edit commands change
+      - reconciliation decision surface changes
+      - hybrid authority semantics change
+  - flow_id: 05_admit_and_execute_node_run_flow
+    title: Admit And Execute Node Run
+    canonical_md: flows/05_admit_and_execute_node_run_flow.md
+    summary: Admit a runnable node, bind its primary session, and progress the durable command loop.
+    relevance:
+      status: active
+      rationale: This is the main runtime execution loop for AI-driven work.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/planning/implementation/scenario_and_flow_pytest_plan.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - current subtask and attempt state must be reconstructable after restart
+      - workflow advancement must not depend on hidden in-memory state
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[05] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_05_admit_and_execute_node_run_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_05_admit_and_execute_node_run_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/specs/runtime/runtime_command_loop_spec_v2.md
+    change_triggers:
+      - run admission semantics change
+      - session binding or stage-context behavior changes
+      - subtask lifecycle or summary registration changes
+  - flow_id: 06_inspect_state_and_blockers_flow
+    title: Inspect State And Blockers
+    canonical_md: flows/06_inspect_state_and_blockers_flow.md
+    summary: Inspect tree state, blockers, workflow position, and related runtime context.
+    relevance:
+      status: active
+      rationale: Operators and AI sessions both need reliable read surfaces to understand runtime state.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - inspect surfaces must agree on node, run, and workflow identity
+      - blocker reasons must be explainable through intended read surfaces
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[06] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_06_inspect_state_and_blockers_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_06_inspect_state_and_blockers_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/persistence/pause_workflow_event_persistence.md
+    change_triggers:
+      - blocker semantics change
+      - state inspection endpoints change
+      - workflow/source inspection surfaces change
+  - flow_id: 07_pause_resume_and_recover_flow
+    title: Pause Resume And Recover
+    canonical_md: flows/07_pause_resume_and_recover_flow.md
+    summary: Pause active work, inspect recovery posture, and resume through the intended authority surfaces.
+    relevance:
+      status: active
+      rationale: Recovery and interruption handling are core correctness behavior, not optional hardening.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: not_applicable
+      prompts: affected
+    invariants:
+      - recovery classification must survive interruption and restart
+      - pause and resume history must be durably inspectable
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[07] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_07_pause_resume_and_recover_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_07_pause_resume_and_recover_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/runtime/session_recovery_appendix.md
+    change_triggers:
+      - pause or resume semantics change
+      - session recovery classification changes
+      - provider-aware recovery behavior changes
+  - flow_id: 08_handle_failure_and_escalate_flow
+    title: Handle Failure And Escalate
+    canonical_md: flows/08_handle_failure_and_escalate_flow.md
+    summary: Capture failures durably, classify escalation, and route parent or operator decisions.
+    relevance:
+      status: active
+      rationale: Failure handling is a primary runtime path, not an edge condition.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - failure cause and parent-decision history must be durably reconstructable
+      - impossible waits and blocked states must route to explicit outcomes
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[08] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_08_handle_failure_and_escalate_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_08_handle_failure_and_escalate_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/parent_child/parent_failure_decision_spec.md
+    change_triggers:
+      - failure taxonomy changes
+      - parent decision matrix changes
+      - compile-failure or impossible-wait behavior changes
+  - flow_id: 09_run_quality_gates_flow
+    title: Run Quality Gates
+    canonical_md: flows/09_run_quality_gates_flow.md
+    summary: Run validation, review, testing, provenance, and docs gates and persist their outcomes.
+    relevance:
+      status: active
+      rationale: Completion and merge-readiness depend on explicit quality-gate outcomes.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - gate results must persist with enough detail to explain pass or fail outcomes
+      - finalization readiness must not skip required quality gates silently
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[09] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_09_run_quality_gates_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_09_run_quality_gates_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/planning/implementation/turnkey_quality_gate_finalize_chain_decisions.md
+    change_triggers:
+      - quality-chain command changes
+      - gate ordering or required-gate policy changes
+      - docs or provenance gate behavior changes
+  - flow_id: 10_regenerate_and_rectify_flow
+    title: Regenerate And Rectify
+    canonical_md: flows/10_regenerate_and_rectify_flow.md
+    summary: Regenerate work after changes, rectify upstream effects, and track rebuild history.
+    relevance:
+      status: active
+      rationale: The product explicitly supports iterative rebuild and rectification after new information arrives.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - rectification and rebuild history must be durably queryable
+      - supersession and authoritative-version movement must remain reconstructable
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[10] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_10_regenerate_and_rectify_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_10_regenerate_and_rectify_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/runtime/cutover_policy_note.md
+    change_triggers:
+      - regenerate or rectify command behavior changes
+      - rebuild-history schema changes
+      - cutover coordination changes
+  - flow_id: 11_finalize_and_merge_flow
+    title: Finalize And Merge
+    canonical_md: flows/11_finalize_and_merge_flow.md
+    summary: Merge completed outputs, handle conflicts, and finalize authoritative lineage.
+    relevance:
+      status: active
+      rationale: Finalization and merge are required to convert staged work into authoritative output.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: not_applicable
+    invariants:
+      - merge events and conflict decisions must be durably inspectable
+      - authoritative lineage movement must remain reconstructable after finalize
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[11] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_11_finalize_and_merge_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_11_finalize_and_merge_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/contracts/parent_child/child_session_mergeback_contract.md
+    change_triggers:
+      - live merge or finalize command changes
+      - conflict persistence semantics change
+      - authoritative cutover behavior changes
+  - flow_id: 12_query_provenance_and_docs_flow
+    title: Query Provenance And Docs
+    canonical_md: flows/12_query_provenance_and_docs_flow.md
+    summary: Query provenance, rationale, entity history, and generated docs as an operator read flow.
+    relevance:
+      status: active
+      rationale: Operators need an explicit read flow for rationale, provenance, and docs rather than only embedded pipeline stages.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: not_applicable
+    invariants:
+      - provenance entities and relations must be queryable from durable state
+      - docs outputs must remain addressable through operator surfaces
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[12] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_12_query_provenance_and_docs_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: flow_complete
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_12_query_provenance_and_docs_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/planning/implementation/documentation_generation_decisions.md
+    change_triggers:
+      - provenance extraction model changes
+      - rationale query surfaces change
+      - docs build/list/show surfaces change
+  - flow_id: 13_human_gate_and_intervention_flow
+    title: Human Gate And Intervention
+    canonical_md: flows/13_human_gate_and_intervention_flow.md
+    summary: Pause for human approval or intervention, capture the decision, and continue through bounded authority surfaces.
+    relevance:
+      status: active
+      rationale: Human intervention is an explicit product requirement for approvals and blocked-runtime decisions.
+      discovered_from:
+        - notes/scenarios/journeys/common_user_journeys_analysis.md
+        - notes/catalogs/traceability/simulation_flow_union_inventory.md
+    scope:
+      database: affected
+      cli: affected
+      daemon: affected
+      website_ui: affected
+      yaml: affected
+      prompts: affected
+    invariants:
+      - approval and intervention history must be durably auditable
+      - blocked resume must not bypass the required human decision path
+    canonical_commands:
+      bounded:
+        - python3 -m pytest tests/integration/test_flow_contract_suite.py::test_flow_contract_cases[13] -q
+      e2e:
+        - python3 -m pytest tests/e2e/test_flow_13_human_gate_and_intervention_real.py -q
+      docs:
+        - python3 -m pytest tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py -q
+    proof:
+      bounded_status: partial
+      real_e2e_status: partial
+      primary_e2e_target: tests/e2e/test_flow_13_human_gate_and_intervention_real.py
+    related_notes:
+      - notes/catalogs/audit/flow_coverage_checklist.md
+      - notes/planning/implementation/expanded_human_intervention_matrix_decisions.md
+    change_triggers:
+      - pause gate behavior changes
+      - intervention catalog/apply surface changes
+      - approval persistence semantics change

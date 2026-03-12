@@ -30,7 +30,7 @@ test.beforeAll(async () => {
     cwd: new URL("../../", import.meta.url),
     env: {
       ...process.env,
-      MOCK_DAEMON_SCENARIO: "healthy_tree_small",
+      MOCK_DAEMON_SCENARIO: "project_catalog_single",
       MOCK_DAEMON_TOKEN: mockDaemonToken,
       MOCK_DAEMON_PORT: String(mockDaemonPort),
     },
@@ -60,10 +60,27 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("workflow, summaries, sessions, and blocked action routes are browser-proven", async ({ page }) => {
-  await page.goto("/projects/repo_alpha/nodes/node-task-1/workflow");
+  await page.goto("/projects/repo_alpha/nodes/node-root/workflow");
   await expect(page.getByTestId("tree-sidebar")).toBeVisible();
   await expect(page.getByTestId("detail-tab-workflow")).toBeVisible();
   await expect(page.getByTestId("workflow-summary-card")).toBeVisible();
+  await expect(page.getByTestId("workflow-current-subtask-card")).toBeVisible();
+  await expect(page.getByTestId("workflow-subtask-subtask-b1")).toBeVisible();
+  await expect(page.getByTestId("workflow-subtask-subtask-a1")).toBeVisible();
+  await page.getByTestId("workflow-task-toggle-task-a").click();
+  await expect(page.getByTestId("workflow-subtask-subtask-a1")).toHaveCount(0);
+  await page.getByTestId("workflow-task-toggle-task-a").click();
+  await expect(page.getByTestId("workflow-subtask-subtask-a1")).toBeVisible();
+  await page.getByTestId("workflow-subtask-subtask-b1").click();
+  await expect(page.getByTestId("workflow-selected-subtask-card")).toBeVisible();
+  await expect(page.getByTestId("workflow-current-prompt-card")).toBeVisible();
+  await expect(page.getByTestId("workflow-current-context-card")).toBeVisible();
+  await expect(page.getByTestId("workflow-attempt-history-card")).toBeVisible();
+  await page.getByTestId("workflow-attempt-attempt-root-1").click();
+  await expect(page.getByTestId("workflow-selected-attempt-card")).toBeVisible();
+
+  await page.goto("/projects/repo_alpha/nodes/node-task-1/workflow");
+  await expect(page.getByTestId("detail-tab-workflow")).toBeVisible();
 
   await page.getByTestId("detail-tab-link-summaries").click();
   await expect(page).toHaveURL(/\/projects\/repo_alpha\/nodes\/node-task-1\/summaries$/);

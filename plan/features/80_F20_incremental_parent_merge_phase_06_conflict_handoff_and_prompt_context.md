@@ -46,10 +46,11 @@ Read these note files before implementing or revising this phase:
   - blocked dependents remain blocked during conflict
   - resume-after-resolution transitions lane back to active processing
 - Real proof:
-  - real conflicted incremental merge routes to parent AI handling and later resumes correctly
+  - `tests/e2e/test_e2e_incremental_parent_merge_real.py` now proves a real conflicted incremental merge, parent-repo manual resolution, durable `resolve_conflict`, and dependent-child unblock on the existing intervention surface
 
 ## Exit Criteria
 
 - conflict path is daemon-owned until human/AI semantic intervention is actually required
 - conflict context is daemon-assembled rather than reconstructed ad hoc by the AI
+- the existing conflict-resolution CLI/intervention path actually advances the incremental merge lane once the parent repo is clean and committed
 - this phase is an authoritative feature plan and not an implementation claim by itself

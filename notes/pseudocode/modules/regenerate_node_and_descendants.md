@@ -66,6 +66,7 @@ function regenerate_node_and_descendants(changed_node_version_id):
 
   new_version = create_superseding_node_version(changed_node_version_id)
   mark_lineage_scope(new_version.id, scope = "candidate")
+  authoritative_baseline = get_authoritative_baseline(changed_node_version_id)
 
   compile_result = compile_workflow(new_version.id)
   if compile_result.status != "ok":
@@ -73,6 +74,8 @@ function regenerate_node_and_descendants(changed_node_version_id):
 
   descendants = determine_required_descendant_regeneration_scope(new_version.id)
   generated_descendants = []
+  reused_children = []
+  blocked_children = []
 
   for descendant in descendants:
     descendant_version = create_superseding_descendant_version(descendant)
@@ -83,17 +86,51 @@ function regenerate_node_and_descendants(changed_node_version_id):
       return RegenerationResult(status = "descendant_compile_failed", node_version_id = new_version.id)
     generated_descendants.append(descendant_version.id)
 
-  persist_candidate_lineage_summary(new_version.id, generated_descendants)
+  for child in enumerate_replay_children(new_version.id):
+    classification = classify_candidate_child_reuse(child, new_version.id)
+    if classification == "reuse":
+      reused_children.append(child.authoritative_version_id)
+    elif classification == "blocked_pending_parent_refresh":
+      blocked_children.append(child.logical_node_id)
+    else:
+      child_version = create_superseding_descendant_version(child.logical_node_id)
+      mark_lineage_scope(child_version.id, scope = "candidate")
+      child_compile = compile_workflow(child_version.id)
+      if child_compile.status != "ok":
+        record_descendant_regeneration_failure(new_version.id, child_version.id)
+        return RegenerationResult(status = "descendant_compile_failed", node_version_id = new_version.id)
+      generated_descendants.append(child_version.id)
+
+  persist_candidate_lineage_summary(
+    new_version.id,
+    generated_descendants,
+    reused_children = reused_children,
+    blocked_children = blocked_children,
+    authoritative_baseline = authoritative_baseline,
+  )
   return RegenerationResult(status = "candidate_lineage_created", node_version_id = new_version.id)
 ```
+
+The candidate lineage summary should be rich enough to support later replay and cutover-readiness inspection without rediscovering reuse decisions from scratch.
 
 ---
 
 ## Scope rules
 
 - regenerate only the changed node and descendants whose structure or inputs are affected
-- reuse unaffected siblings by current authoritative final commit
+- reuse unaffected siblings only after explicit replay classification against the candidate lineage
+- do not reuse a sibling's existing child tree when that sibling is invalidated by dependency on regenerated prerequisite sibling output; create a fresh sibling candidate and leave it blocked until refresh/rematerialization
 - do not mark the new lineage authoritative during candidate rebuild
+
+Recommended conceptual helper:
+
+`classify_candidate_child_reuse(edge, candidate_parent_version_id) -> reuse | regenerate | blocked_pending_parent_refresh`
+
+Suggested classification criteria:
+
+- `reuse` only if the authoritative child final remains valid and no dependency-visible or compile-visible candidate input changed
+- `regenerate` if the child itself or its effective inputs changed
+- `blocked_pending_parent_refresh` if the child may still participate but must first be rematerialized against the candidate parent baseline
 
 ---
 
@@ -144,6 +181,9 @@ Operators should be able to inspect:
 - latest candidate version
 - rebuild scope
 - whether active-run conflicts were paused, canceled, or deferred
+- which children were regenerated versus reused
+- which children remain blocked pending candidate-parent refresh
+- which authoritative baseline the candidate lineage was built from
 
 ---
 
@@ -151,6 +191,7 @@ Operators should be able to inspect:
 
 - how narrowly descendant regeneration scope can be computed in first implementation without risking hidden omissions
 - whether candidate lineage summaries need dedicated tables or can live in rebuild-event history
+- whether first implementation allows anything narrower than upstream cutover by default
 
 ---
 

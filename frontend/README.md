@@ -56,6 +56,22 @@ If the daemon-served website returns a compiled-asset error, rebuild the fronten
 
 ```bash
 cd frontend && npm run build
+./scripts/rebuild.sh
+```
+
+Root-shell wrappers for the current frontend/runtime workflows:
+
+```bash
+./scripts/upgrade-db.sh
+./scripts/downgrade-db.sh
+./scripts/rebuild.sh
+./scripts/reset-db.sh --yes
+./scripts/run-node-dev.sh
+./scripts/run-server.sh
+./scripts/test-unit.sh
+./scripts/test-integration.sh
+./scripts/test-e2e.sh
+./scripts/test-all.sh
 ```
 
 
@@ -71,6 +87,16 @@ cd frontend && npm run test:unit
 cd frontend && npm run build
 cd frontend && npx playwright install chromium
 cd frontend && npm run test:e2e
+./scripts/rebuild.sh
+./scripts/upgrade-db.sh
+./scripts/downgrade-db.sh
+./scripts/reset-db.sh --yes
+./scripts/run-node-dev.sh
+./scripts/run-server.sh
+./scripts/test-unit.sh
+./scripts/test-integration.sh
+./scripts/test-e2e.sh
+./scripts/test-all.sh
 ```
 
 ## Current Workspace Contract

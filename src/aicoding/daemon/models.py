@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import AliasChoices, ConfigDict, Field
 
 from aicoding.models.base import AICodingModel
 
@@ -92,8 +92,10 @@ class InterventionApplyRequest(MutationEnvelope):
 
 
 class SessionStateResponse(AICodingModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
     backend: str
-    session_name: str | None
+    session_name: str | None = Field(default=None, validation_alias=AliasChoices("session_name", "tmux_session_name"))
     status: str
     session_id: str | None = None
     logical_node_id: str | None = None
@@ -107,6 +109,8 @@ class SessionStateResponse(AICodingModel):
     provider_session_id: str | None = None
     cwd: str | None = None
     tmux_session_exists: bool | None = None
+    tmux_process_alive: bool | None = None
+    tmux_exit_status: int | None = None
     attach_command: str | None = None
     last_heartbeat_at: str | None = None
     event_count: int | None = None
@@ -117,6 +121,7 @@ class SessionStateResponse(AICodingModel):
     in_alt_screen: bool | None = None
     screen_state: dict[str, object] | None = None
     recommended_action: str | None = None
+    terminal_failure: dict[str, object] | None = None
 
 
 class SessionCatalogResponse(AICodingModel):
@@ -149,10 +154,13 @@ class SessionRecoveryStatusResponse(AICodingModel):
     pause_flag_name: str | None = None
     tmux_session_name: str | None = None
     tmux_session_exists: bool | None = None
+    tmux_process_alive: bool | None = None
+    tmux_exit_status: int | None = None
     provider: str | None = None
     provider_session_id_present: bool
     heartbeat_age_seconds: float | None = None
     duplicate_active_primary_sessions: int
+    terminal_failure: dict[str, object] | None = None
 
 
 class ProviderSessionRecoveryStatusResponse(AICodingModel):
@@ -166,6 +174,8 @@ class ProviderSessionRecoveryStatusResponse(AICodingModel):
     provider_session_exists: bool | None = None
     tmux_session_name: str | None = None
     tmux_session_exists: bool | None = None
+    tmux_process_alive: bool | None = None
+    tmux_exit_status: int | None = None
     provider_rebind_possible: bool
     provider_recommended_action: str
     provider_reason: str | None = None
@@ -271,6 +281,7 @@ class AuthContextResponse(AICodingModel):
 
 class NodeAuthorityStateResponse(AICodingModel):
     node_id: str
+    node_version_id: str | None
     authority: str
     current_state: str
     current_run_id: str
@@ -282,6 +293,7 @@ class NodeAuthorityStateResponse(AICodingModel):
 
 class NodeLifecycleStateResponse(AICodingModel):
     node_id: str
+    node_version_id: str | None
     lifecycle_state: str
     run_status: str | None
     current_run_id: str | None
@@ -342,6 +354,7 @@ class ProjectBootstrapResponse(AICodingModel):
     project: ProjectCatalogEntryResponse
     root_node_id: str | None = None
     route_hint: ProjectRouteHintResponse | None = None
+    top_level_nodes: list["ProjectTopLevelNodeSummaryResponse"] = Field(default_factory=list)
 
 
 class ProjectTopLevelNodeCreateRequest(AICodingModel):
@@ -363,6 +376,7 @@ class ProjectRepoBootstrapResponse(AICodingModel):
 class NodeSupersedeRequest(AICodingModel):
     title: str | None = None
     prompt: str | None = None
+    cancel_active_subtree: bool = False
 
 
 class CommitRecordRequest(AICodingModel):
@@ -493,6 +507,18 @@ class ProjectRouteHintResponse(AICodingModel):
     node_id: str
     tab: str
     url: str
+
+
+class ProjectTopLevelNodeSummaryResponse(AICodingModel):
+    node_id: str
+    kind: str
+    tier: str
+    title: str
+    lifecycle_state: str | None = None
+    run_status: str | None = None
+    authoritative_node_version_id: str | None = None
+    latest_created_node_version_id: str | None = None
+    route_hint: ProjectRouteHintResponse
 
 
 class NodePauseStateResponse(AICodingModel):
@@ -1024,6 +1050,7 @@ class RunProgressResponse(AICodingModel):
     state: NodeRunStateResponse
     current_subtask: dict[str, object] | None = None
     latest_attempt: SubtaskAttemptResponse | None = None
+    terminal_failure: dict[str, object] | None = None
 
 
 class CompositeStageOutcomeResponse(AICodingModel):
@@ -1389,10 +1416,13 @@ class HistoricalSessionResponse(AICodingModel):
     idle_seconds: float | None = None
     in_alt_screen: bool | None = None
     tmux_session_exists: bool | None = None
+    tmux_process_alive: bool | None = None
+    tmux_exit_status: int | None = None
     attach_command: str | None = None
     screen_state: dict[str, object] | None = None
     recovery_classification: str | None = None
     recommended_action: str | None = None
+    terminal_failure: dict[str, object] | None = None
 
 
 class SessionAuditResponse(AICodingModel):
@@ -1550,6 +1580,7 @@ class WorkflowStartResponse(AICodingModel):
     lifecycle: NodeLifecycleStateResponse
     run_admission: NodeRunAdmissionResponse | None = None
     run_progress: RunProgressResponse | None = None
+    session: SessionStateResponse | None = None
 
 
 class ProjectTopLevelNodeCreateResponse(AICodingModel):
@@ -1565,6 +1596,7 @@ class ProjectTopLevelNodeCreateResponse(AICodingModel):
     lifecycle: NodeLifecycleStateResponse
     run_admission: NodeRunAdmissionResponse | None = None
     run_progress: RunProgressResponse | None = None
+    session: SessionStateResponse | None = None
     route_hint: ProjectRouteHintResponse
 
 

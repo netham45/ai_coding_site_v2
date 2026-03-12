@@ -98,6 +98,7 @@ from aicoding.daemon.validation_runtime import (
     load_validation_summary_for_run,
 )
 from aicoding.daemon.session_records import auto_nudge_idle_primary_sessions
+from aicoding.daemon.session_records import auto_supervise_primary_sessions
 from aicoding.daemon.models import (
     ApiErrorResponse,
     AuthContextResponse,
@@ -389,6 +390,8 @@ def _session_state_response(snapshot) -> SessionStateResponse:
             "provider_session_id": snapshot.provider_session_id,
             "cwd": snapshot.cwd,
             "tmux_session_exists": snapshot.tmux_session_exists,
+            "tmux_process_alive": snapshot.tmux_process_alive,
+            "tmux_exit_status": snapshot.tmux_exit_status,
             "attach_command": snapshot.attach_command,
             "last_heartbeat_at": snapshot.last_heartbeat_at,
             "event_count": snapshot.event_count,
@@ -399,6 +402,7 @@ def _session_state_response(snapshot) -> SessionStateResponse:
             "in_alt_screen": snapshot.in_alt_screen,
             "screen_state": snapshot.screen_state,
             "recommended_action": snapshot.recommended_action,
+            "terminal_failure": snapshot.terminal_failure,
         }
     )
 
@@ -426,6 +430,22 @@ async def _run_idle_nudge_background_loop(app: FastAPI) -> None:
                 )
         except Exception:
             logger.exception("Idle nudge background loop iteration failed.")
+        await asyncio.sleep(settings.session.poll_interval_seconds)
+
+
+async def _run_session_supervision_background_loop(app: FastAPI) -> None:
+    settings = app.state.settings
+    required_tables = ("node_versions", "sessions", "node_runs", "node_lifecycle_states")
+    while True:
+        try:
+            if _database_has_required_tables(app.state.db_engine, required_tables):
+                auto_supervise_primary_sessions(
+                    app.state.db_session_factory,
+                    adapter=app.state.session_adapter,
+                    poller=app.state.session_poller,
+                )
+        except Exception:
+            logger.exception("Session supervision background loop iteration failed.")
         await asyncio.sleep(settings.session.poll_interval_seconds)
 
 
@@ -478,12 +498,17 @@ async def lifespan(app: FastAPI):
         now=app.state.session_adapter.now if getattr(app.state.session_adapter, "backend_name", "") == "fake" else (lambda: datetime.now(timezone.utc)),
     )
     app.state.background_registry.register_placeholder("session_recovery")
+    app.state.background_registry.register_placeholder("session_supervision")
     app.state.background_registry.register_placeholder("idle_screen_polling")
     app.state.background_registry.register_placeholder("idle_nudge")
     app.state.background_registry.register_placeholder("child_auto_run")
     schema_status = migration_status(engine)
     if schema_status["compatible"] and inspect(engine).has_table("node_hierarchy_definitions"):
         sync_hierarchy_definitions(app.state.db_session_factory, app.state.hierarchy_registry)
+    session_supervision_task = asyncio.create_task(
+        _run_session_supervision_background_loop(app),
+        name="aicoding-session-supervision-loop",
+    )
     idle_nudge_task = asyncio.create_task(_run_idle_nudge_background_loop(app), name="aicoding-idle-nudge-loop")
     child_auto_start_task = asyncio.create_task(_run_child_auto_start_background_loop(app), name="aicoding-child-auto-start-loop")
     try:
@@ -492,6 +517,9 @@ async def lifespan(app: FastAPI):
         child_auto_start_task.cancel()
         with suppress(asyncio.CancelledError):
             await child_auto_start_task
+        session_supervision_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await session_supervision_task
         idle_nudge_task.cancel()
         with suppress(asyncio.CancelledError):
             await idle_nudge_task
@@ -1751,6 +1779,8 @@ def create_app() -> FastAPI:
         session_factory=Depends(get_db_session_factory),
         hierarchy_registry=Depends(get_hierarchy_registry),
         resource_catalog=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
         settings=Depends(get_settings_dependency),
     ) -> ProjectTopLevelNodeCreateResponse:
         return ProjectTopLevelNodeCreateResponse.model_validate(
@@ -1763,6 +1793,8 @@ def create_app() -> FastAPI:
                 title=payload.title,
                 prompt=payload.prompt,
                 start_run=payload.start_run,
+                adapter=adapter,
+                poller=poller,
                 settings=settings,
             ).to_payload()
         )
@@ -1777,6 +1809,8 @@ def create_app() -> FastAPI:
         session_factory=Depends(get_db_session_factory),
         hierarchy_registry=Depends(get_hierarchy_registry),
         resource_catalog=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
     ) -> WorkflowStartResponse:
         return WorkflowStartResponse.model_validate(
             start_top_level_workflow(
@@ -1787,6 +1821,8 @@ def create_app() -> FastAPI:
                 title=payload.title,
                 prompt=payload.prompt,
                 start_run=payload.start_run,
+                adapter=adapter,
+                poller=poller,
             ).to_payload()
         )
 
@@ -1915,6 +1951,7 @@ def create_app() -> FastAPI:
             logical_node_id=UUID(node_id),
             title=payload.title,
             prompt=payload.prompt,
+            cancel_active_subtree=payload.cancel_active_subtree,
         )
         capture_node_version_source_lineage(session_factory, node_version_id=snapshot.id)
         return NodeVersionResponse.model_validate(snapshot.to_payload())
@@ -2291,6 +2328,7 @@ def create_app() -> FastAPI:
                 session_factory,
                 logical_node_id=UUID(node_id),
                 catalog=resources,
+                cancel_conflicting_live_state=True,
             ).to_payload()
         )
 

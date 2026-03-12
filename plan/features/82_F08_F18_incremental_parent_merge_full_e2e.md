@@ -157,13 +157,37 @@ Required observations:
 - the recorded applied incremental merge order is visible through existing inspection surfaces
 - final reconcile acts as post-merge synthesis rather than first merge point
 
+## Current Implemented Checkpoint
+
+The first real-runtime checkpoint now exists in:
+
+- `tests/e2e/test_e2e_incremental_parent_merge_real.py`
+
+Current implemented scope:
+
+- real git-backed sibling unblock only after daemon-applied incremental merge
+- real stale-child refresh onto the merged parent head
+- real daemon auto-start of the dependent child on the happy path
+- real incremental merge conflict handoff, parent-repo manual resolution, durable conflict resolution, and dependent-child unblock on the existing intervention path
+- real daemon restart against the same DB/workspace with post-restart resumption of the completed-unmerged merge lane and exactly-once dependent unblock
+- real parent `node child-results` and `node reconcile` inspection after incremental merges are already applied
+- real full-tree task -> plan -> phase -> epic git propagation through the daemon-owned incremental merge lane, including manual/no-run finalized children that explicitly transition to `COMPLETE`
+- real hierarchy-wide parent reconcile/finalize inspection after daemon-owned incremental propagation, without falling back to manual ancestor `git merge-children`
+
+Still deferred in this feature plan:
+
+- candidate-lineage rectification/rebuild replay narratives that are outside the authoritative live incremental merge lane
+
 ## Suggested Real E2E File Layout
 
-The exact filenames can change, but the bundle should likely end with a small family of explicit tests such as:
+The exact filenames can change, but the bundle should likely end with either:
+
+- one consolidated file such as `tests/e2e/test_e2e_incremental_parent_merge_real.py`
+
+or a small family of explicit tests such as:
 
 - `tests/e2e/test_e2e_incremental_parent_merge_basic_real.py`
 - `tests/e2e/test_e2e_incremental_parent_merge_refresh_real.py`
-- `tests/e2e/test_e2e_incremental_parent_merge_conflict_real.py`
 - `tests/e2e/test_e2e_incremental_parent_merge_recovery_real.py`
 - `tests/e2e/test_e2e_incremental_parent_merge_final_reconcile_real.py`
 
@@ -171,12 +195,17 @@ Grouping some of these into fewer files is acceptable if the narrative boundarie
 
 ## Canonical Future Verification Commands
 
-These are draft commands for the eventual implementation slice.
+Current implemented command:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q
+```
+
+Future expansion commands:
 
 ```bash
 python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_basic_real.py -q
 python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_refresh_real.py -q
-python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_conflict_real.py -q
 python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_recovery_real.py -q
 python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_final_reconcile_real.py -q
 ```
@@ -187,7 +216,6 @@ Combined future proving command:
 python3 -m pytest \
   tests/e2e/test_e2e_incremental_parent_merge_basic_real.py \
   tests/e2e/test_e2e_incremental_parent_merge_refresh_real.py \
-  tests/e2e/test_e2e_incremental_parent_merge_conflict_real.py \
   tests/e2e/test_e2e_incremental_parent_merge_recovery_real.py \
   tests/e2e/test_e2e_incremental_parent_merge_final_reconcile_real.py -q
 ```

@@ -98,7 +98,11 @@ def bootstrap_live_git_repo(
         repo_path = _repo_path(version.id)
         branch_name = _require_branch_name(version)
         node_id = version.logical_node_id
-        base_version = _resolve_bootstrap_base_version(session, version, explicit_base_version_id=base_version_id)
+        base_version = None if source_repo_path is not None else _resolve_bootstrap_base_version(
+            session,
+            version,
+            explicit_base_version_id=base_version_id,
+        )
         target_seed_commit = version.seed_commit_sha
     if source_repo_path is not None and base_version is not None:
         raise DaemonConflictError("live git bootstrap may not use both base_version_id and source_repo_path")
@@ -119,7 +123,8 @@ def bootstrap_live_git_repo(
         else:
             _git(repo_path, "commit", "-m", "Bootstrap seed")
     elif source_repo_path is not None:
-        checkout_commit = _require_source_repo_head(source_repo_path)
+        source_repo_head = _require_source_repo_head(source_repo_path)
+        checkout_commit = target_seed_commit or source_repo_head
         repo_path.parent.mkdir(parents=True, exist_ok=True)
         clone_result = subprocess.run(
             ["git", "clone", "--no-hardlinks", str(source_repo_path), str(repo_path)],
@@ -191,6 +196,8 @@ def refresh_child_live_git_from_parent_head(
         if child_version.parent_node_version_id is None:
             raise DaemonConflictError("child refresh requires a parent node version")
         lifecycle = session.get(NodeLifecycleState, str(child_version.logical_node_id))
+        if lifecycle is not None and lifecycle.node_version_id not in {None, child_version.id}:
+            lifecycle = None
         if lifecycle is not None and lifecycle.run_status in {"PENDING", "RUNNING", "PAUSED"}:
             raise DaemonConflictError("child refresh requires the child to be inactive")
         if child_version.final_commit_sha is not None:
@@ -233,6 +240,7 @@ def stage_live_git_change(
     _git(repo_path, "commit", "-m", message)
     head = _git_output(repo_path, "rev-parse", "HEAD")
     if record_as_final:
+        _clear_unreachable_recorded_final_commit(session_factory, version_id=version_id, repo_path=repo_path)
         record_final_commit(session_factory, version_id=version_id, commit_sha=head)
         _set_working_tree_state(session_factory, logical_node_id=node_id, state="finalized_clean")
     else:
@@ -335,6 +343,81 @@ def execute_live_merge_children(
     )
 
 
+def execute_live_merge_children_for_version(
+    session_factory: sessionmaker[Session],
+    *,
+    node_version_id: UUID,
+    ordered_child_versions: list[tuple[UUID, str, int]],
+) -> LiveMergeResultSnapshot:
+    if not ordered_child_versions:
+        raise DaemonConflictError("live child merge requires at least one mergeable child version")
+    with query_session_scope(session_factory) as session:
+        parent_version = _require_version(session, node_version_id)
+        repo_path = _repo_path(parent_version.id)
+        branch_name = _require_branch_name(parent_version)
+        if not repo_path.exists():
+            raise DaemonConflictError("parent live git repo has not been bootstrapped")
+        if parent_version.seed_commit_sha is None:
+            raise DaemonConflictError("parent live git repo requires a recorded seed commit")
+    _git(repo_path, "checkout", branch_name)
+    _git(repo_path, "reset", "--hard", parent_version.seed_commit_sha)
+    merge_events: list[MergeEventSnapshot] = []
+    conflicts: list[MergeConflictSnapshot] = []
+    parent_before = _git_output(repo_path, "rev-parse", "HEAD")
+    for child_version_id, child_final_commit_sha, merge_order in ordered_child_versions:
+        child_repo = _repo_path(child_version_id)
+        if not child_repo.exists():
+            raise DaemonConflictError("child live git repo has not been bootstrapped")
+        fetch_result = _git_try(repo_path, "fetch", str(child_repo), child_final_commit_sha)
+        if not fetch_result.ok:
+            raise DaemonConflictError(fetch_result.message)
+        merge_result = _git_try(repo_path, "merge", "--no-ff", "--no-edit", "FETCH_HEAD")
+        if not merge_result.ok:
+            conflicted_files = _git_output(repo_path, "diff", "--name-only", "--diff-filter=U").splitlines()
+            conflict = record_merge_conflict(
+                session_factory,
+                parent_node_version_id=node_version_id,
+                child_node_version_id=child_version_id,
+                child_final_commit_sha=child_final_commit_sha,
+                parent_commit_before=parent_before,
+                parent_commit_after=parent_before,
+                merge_order=merge_order,
+                files_json=conflicted_files or ["unknown_conflict"],
+            )
+            return LiveMergeResultSnapshot(
+                node_id=parent_version.logical_node_id,
+                node_version_id=node_version_id,
+                status="conflicted",
+                repo_path=str(repo_path),
+                merge_events=merge_events,
+                conflicts=[conflict],
+                head_commit_sha=parent_before,
+                working_tree_state="merge_conflict",
+            )
+        parent_after = _git_output(repo_path, "rev-parse", "HEAD")
+        event = record_merge_event(
+            session_factory,
+            parent_node_version_id=node_version_id,
+            child_node_version_id=child_version_id,
+            child_final_commit_sha=child_final_commit_sha,
+            parent_commit_before=parent_before,
+            parent_commit_after=parent_after,
+            merge_order=merge_order,
+        )
+        merge_events.append(event)
+        parent_before = parent_after
+    return LiveMergeResultSnapshot(
+        node_id=parent_version.logical_node_id,
+        node_version_id=node_version_id,
+        status="merged",
+        repo_path=str(repo_path),
+        merge_events=merge_events,
+        conflicts=conflicts,
+        head_commit_sha=parent_before,
+        working_tree_state="merged_children",
+    )
+
+
 def abort_live_merge(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> LiveGitStatusSnapshot:
     with query_session_scope(session_factory) as session:
         selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
@@ -381,6 +464,7 @@ def finalize_live_git_state(session_factory: sessionmaker[Session], *, logical_n
             raise DaemonConflictError("live git finalize requires a clean working tree")
     _git(repo_path, "commit", "--allow-empty", "-m", f"Finalize {logical_node_id}")
     final_commit_sha = _git_output(repo_path, "rev-parse", "HEAD")
+    _clear_unreachable_recorded_final_commit(session_factory, version_id=version.id, repo_path=repo_path)
     record_final_commit(session_factory, version_id=version.id, commit_sha=final_commit_sha)
     _set_working_tree_state(session_factory, logical_node_id=logical_node_id, state="finalized_clean")
     _record_live_git_event(
@@ -393,6 +477,32 @@ def finalize_live_git_state(session_factory: sessionmaker[Session], *, logical_n
     return LiveFinalizeResultSnapshot(
         node_id=logical_node_id,
         node_version_id=version.id,
+        status="finalized",
+        repo_path=str(repo_path),
+        final_commit_sha=final_commit_sha,
+        working_tree_state="finalized_clean",
+    )
+
+
+def finalize_live_git_state_for_version(
+    session_factory: sessionmaker[Session],
+    *,
+    node_version_id: UUID,
+) -> LiveFinalizeResultSnapshot:
+    with query_session_scope(session_factory) as session:
+        version = _require_version(session, node_version_id)
+        repo_path = _repo_path(version.id)
+        if not repo_path.exists():
+            raise DaemonConflictError("live git repo has not been bootstrapped")
+        if _git_output(repo_path, "status", "--porcelain"):
+            raise DaemonConflictError("live git finalize requires a clean working tree")
+    _git(repo_path, "commit", "--allow-empty", "-m", f"Finalize {version.logical_node_id}")
+    final_commit_sha = _git_output(repo_path, "rev-parse", "HEAD")
+    _clear_unreachable_recorded_final_commit(session_factory, version_id=node_version_id, repo_path=repo_path)
+    record_final_commit(session_factory, version_id=node_version_id, commit_sha=final_commit_sha)
+    return LiveFinalizeResultSnapshot(
+        node_id=version.logical_node_id,
+        node_version_id=node_version_id,
         status="finalized",
         repo_path=str(repo_path),
         final_commit_sha=final_commit_sha,
@@ -422,8 +532,28 @@ def show_live_git_status(session_factory: sessionmaker[Session], *, version_id: 
     )
 
 
-def _repo_path(version_id: UUID) -> Path:
+def repo_path_for_version(version_id: UUID) -> Path:
     return Path.cwd() / ".runtime" / "git" / "node_versions" / str(version_id)
+
+
+def _repo_path(version_id: UUID) -> Path:
+    return repo_path_for_version(version_id)
+
+
+def _clear_unreachable_recorded_final_commit(
+    session_factory: sessionmaker[Session],
+    *,
+    version_id: UUID,
+    repo_path: Path,
+) -> None:
+    with session_scope(session_factory) as session:
+        version = _require_version(session, version_id)
+        if version.final_commit_sha is None:
+            return
+        if _git_try(repo_path, "cat-file", "-e", f"{version.final_commit_sha}^{{commit}}").ok:
+            return
+        version.final_commit_sha = None
+        session.flush()
 
 
 def _require_source_repo_head(source_repo_path: Path) -> str:
@@ -517,11 +647,19 @@ def _load_authoritative_version_id(session_factory: sessionmaker[Session], logic
 
 def _set_working_tree_state(session_factory: sessionmaker[Session], *, logical_node_id: UUID, state: str) -> None:
     with session_scope(session_factory) as session:
+        selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
         lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
         if lifecycle is None:
-            lifecycle = NodeLifecycleState(node_id=str(logical_node_id), lifecycle_state="DRAFT", working_tree_state=state)
+            lifecycle = NodeLifecycleState(
+                node_id=str(logical_node_id),
+                node_version_id=None if selector is None else selector.authoritative_node_version_id,
+                lifecycle_state="DRAFT",
+                working_tree_state=state,
+            )
             session.add(lifecycle)
         else:
+            if selector is not None:
+                lifecycle.node_version_id = selector.authoritative_node_version_id
             lifecycle.working_tree_state = state
         session.flush()
 

@@ -439,7 +439,7 @@ def test_compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_
         assert first_subtask_prompt is not None
         assert "subtask succeed --node" in first_subtask_prompt
         assert "workflow advance --node" not in first_subtask_prompt
-        assert "subtask prompt --node" in first_subtask_prompt
+        assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node" in first_subtask_prompt
         assert "follow the routed daemon outcome" in first_subtask_prompt
         assert "stop and do not probe the closed run" in first_subtask_prompt
         review_subtask_prompt = result.compiled_workflow.tasks[1].subtasks[0].prompt_text

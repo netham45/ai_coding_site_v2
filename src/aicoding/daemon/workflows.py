@@ -51,6 +51,7 @@ from aicoding.resources import ResourceCatalog, load_resource_catalog
 from aicoding.source_lineage import capture_node_version_source_lineage
 from aicoding.structural_library import ensure_builtin_structural_library
 from aicoding.daemon.environments import normalize_environment_relative_path
+from aicoding.daemon.session_manager import current_stage_prompt_cli_command
 from aicoding.yaml_schemas import (
     EnvironmentPolicyDefinitionDocument,
     FAMILY_MODELS,
@@ -2602,6 +2603,12 @@ def _require_selector(session: Session, logical_node_id: UUID) -> LogicalNodeCur
 def _ensure_no_live_run(session: Session, logical_node_id: UUID) -> None:
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     daemon_state = session.get(DaemonNodeState, str(logical_node_id))
+    selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
+    target_version_id = None if selector is None else selector.authoritative_node_version_id
+    if lifecycle is not None and target_version_id is not None and lifecycle.node_version_id not in {None, target_version_id}:
+        lifecycle = None
+    if daemon_state is not None and target_version_id is not None and daemon_state.node_version_id not in {None, target_version_id}:
+        daemon_state = None
     if lifecycle is not None and lifecycle.current_run_id is not None:
         raise DaemonConflictError("cannot compile a node with an active lifecycle run")
     if daemon_state is not None and daemon_state.current_run_id is not None:
@@ -2609,9 +2616,12 @@ def _ensure_no_live_run(session: Session, logical_node_id: UUID) -> None:
 
 
 def _update_lifecycle_after_compile(session: Session, logical_node_id: UUID, *, compiled: bool) -> None:
+    selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     if lifecycle is None:
         return
+    if selector is not None:
+        lifecycle.node_version_id = selector.authoritative_node_version_id
     lifecycle.lifecycle_state = "COMPILED" if compiled else "COMPILE_FAILED"
     lifecycle.run_status = None
     lifecycle.current_run_id = None
@@ -2660,6 +2670,7 @@ def _wrap_parent_workflow_subtask_prompt(
     prompt_text: str | None,
     command_text: str | None,
 ) -> str:
+    prompt_command = current_stage_prompt_cli_command(logical_node_id=version.logical_node_id)
     body = "" if prompt_text is None else prompt_text.strip()
     if command_text is not None:
         command_block = (
@@ -2675,7 +2686,7 @@ def _wrap_parent_workflow_subtask_prompt(
     continuation_block = (
         "7. After a successful completion, do not stop while the parent node still has pending workflow stages.\n"
         "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
-        f"   - if the routed outcome is `next_stage`, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+        f"   - if the routed outcome is `next_stage`, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
         "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
     )
     if command_text is not None:
@@ -2688,7 +2699,7 @@ def _wrap_parent_workflow_subtask_prompt(
         continuation_block = (
             "7. After reporting the command result, do not stop while the parent node still has pending workflow stages.\n"
             "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
-            f"   - if the routed outcome is `next_stage`, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+            f"   - if the routed outcome is `next_stage`, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
             "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
         )
     if subtask_type == "review":
@@ -2704,7 +2715,7 @@ def _wrap_parent_workflow_subtask_prompt(
         continuation_block = (
             "7. After a successful review submission, do not stop while the parent node still has pending workflow stages.\n"
             f"   - run `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}`\n"
-            f"   - if the node still has a current compiled subtask, fetch the next prompt with `python3 -m aicoding.cli.main subtask prompt --node {version.logical_node_id}` and continue in the same session\n"
+            f"   - if the node still has a current compiled subtask, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
             f"   - repeat until `python3 -m aicoding.cli.main node child-materialization --node {version.logical_node_id}` shows created or materialized children, or the node run is no longer active\n\n"
         )
     return (

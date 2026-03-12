@@ -73,6 +73,8 @@ Proposed additions:
 - profile/layout compatibility is checked during compile or materialization
 - required child-role coverage is a compiler-visible invariant
 - completion restrictions derived from selected profile are inspectable at runtime
+- step-order legality and subtask completion predicates are inspectable at runtime
+- blocked mutation responses for skipped required steps use concrete `4xx` errors rather than soft warnings
 - compiler-generated epic brief is a persisted and inspectable artifact
 - the brief context should include node-tier prompt, selected profile prompt, recommended child profiles with descriptions, and a CLI discovery note for the broader available child-profile set
 
@@ -195,6 +197,7 @@ Proposed changes:
 - validate profile applicability to the node kind
 - validate layout compatibility with selected profile
 - validate required child-role coverage
+- compile explicit step-order and subtask-completion predicates into workflow state
 - freeze selected profile, required updates, verification targets, and related profile metadata into compiled workflow context
 - generate and freeze the compiler-generated epic brief
 - assemble the brief from:
@@ -206,6 +209,20 @@ Proposed changes:
 Reason:
 
 - the workflow-overhaul note expects the compiler to be authoritative for these checks
+
+### Daemon mutation enforcement layer
+
+Add hard enforcement for skipped steps and unsatisfied completion predicates.
+
+Proposed changes:
+
+- reject merge/finalize/complete mutations when required child-spawn or prior-step predicates are unsatisfied
+- reject `subtask_complete` when the compiled workflow's declared durable predicates are missing
+- return concrete `4xx` responses with machine-readable blocked codes such as `children_required_before_completion`
+
+Reason:
+
+- the workflow-overhaul direction now expects rigid workflows rather than best-effort advancement
 
 ### `src/aicoding/daemon/materialization.py`
 

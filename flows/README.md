@@ -42,6 +42,8 @@ Current rule:
 - new simulation-gap closure work may add `.yaml` flow assets alongside them
 - `.yaml` assets must validate through the repository flow-asset loader and tests
 - `.yaml` assets must not silently contradict the stronger design notes or the canonical `.md` flow contracts
+- relevant user/operator flow tracking under `notes/` belongs in the structured inventory `notes/catalogs/traceability/relevant_user_flow_inventory.yaml`
+- that inventory does not replace these canonical narrative flow specs
 
 ## Flow index
 

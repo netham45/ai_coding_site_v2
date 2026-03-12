@@ -63,6 +63,17 @@ Keep the brief operator-facing and compact.
 
 The `node types` and `node profiles` surfaces can be fuller and more catalog-like.
 
+### Rule 5
+
+Inspection surfaces must expose enforcement state, not only recommendations.
+
+The future responses should make it possible to see:
+
+- whether the current profile is decomposition-required
+- which step is currently legal
+- which completion restrictions remain active
+- why merge, finalize, or completion would currently be blocked
+
 ## Draft `workflow brief` Response
 
 ### Purpose
@@ -129,6 +140,23 @@ Tell the caller:
     "bounded_tests",
     "real_e2e"
   ],
+  "enforcement": {
+    "decomposition_required": true,
+    "required_step_sequence": [
+      "compile",
+      "spawn_children",
+      "wait_for_children",
+      "merge_children",
+      "complete"
+    ],
+    "blocked_actions": [
+      {
+        "action": "complete",
+        "code": "children_required_before_completion",
+        "message": "you did not spawn children before attempting merge or completion"
+      }
+    ]
+  },
   "cli_discovery_note": {
     "summary": "Use node types or node profiles to inspect the full available child-profile set beyond the recommended defaults.",
     "commands": [
@@ -153,6 +181,7 @@ Tell the caller:
 
 - `objective` should be a concise generated statement, not only a raw prompt ref
 - `recommended_children` should be the recommended subset, not the full legal catalog
+- the brief should expose blocked-step reasons compactly when the current node is not yet legally completable
 
 ## Draft `node types` Response
 

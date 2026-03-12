@@ -484,7 +484,11 @@ def _build_child_results(
             version,
             lifecycle,
             latest_run,
-            is_incrementally_merged=(version.final_commit_sha is not None and (version.id, version.final_commit_sha) in merged_child_finals),
+            is_incrementally_merged=(
+                True
+                if not resolve_authoritative
+                else (version.final_commit_sha is not None and (version.id, version.final_commit_sha) in merged_child_finals)
+            ),
         )
         reconcile_status = _classify_reconcile_status(
             version=version,

@@ -48,12 +48,12 @@ Set up the orchestrator repo and database first:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-python3 -m aicoding.cli.main admin doctor
-python3 -m aicoding.cli.main admin print-settings
-python3 -m aicoding.cli.main admin auth-token
-python3 -m aicoding.cli.main admin db ping
-python3 -m aicoding.cli.main admin db upgrade
-python3 -m aicoding.cli.main admin db check-schema
+PYTHONPATH=src python3 -m aicoding.cli.main admin doctor
+PYTHONPATH=src python3 -m aicoding.cli.main admin print-settings
+PYTHONPATH=src python3 -m aicoding.cli.main admin auth-token
+PYTHONPATH=src python3 -m aicoding.cli.main admin db ping
+PYTHONPATH=src python3 -m aicoding.cli.main admin db upgrade
+PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema
 ```
 
 Important current constraint:
@@ -74,7 +74,7 @@ Required local environment posture:
 All commands below use the current CLI entrypoint:
 
 ```bash
-python3 -m aicoding.cli.main ...
+PYTHONPATH=src python3 -m aicoding.cli.main ...
 ```
 
 ## Current verification status
@@ -96,7 +96,7 @@ The guide still needs to distinguish that from broader write-path claims:
 Run the daemon in a separate shell after the database checks pass:
 
 ```bash
-python3 -m aicoding.daemon.main
+PYTHONPATH=src python3 -m aicoding.daemon.main
 ```
 
 Equivalent development command:
@@ -115,9 +115,9 @@ What happens on startup:
 Useful first inspections once it is running:
 
 ```bash
-python3 -m aicoding.cli.main admin daemon-boundary
-python3 -m aicoding.cli.main debug daemon ping
-python3 -m aicoding.cli.main debug daemon boundary
+PYTHONPATH=src python3 -m aicoding.cli.main admin daemon-boundary
+PYTHONPATH=src python3 -m aicoding.cli.main debug daemon ping
+PYTHONPATH=src python3 -m aicoding.cli.main debug daemon boundary
 ```
 
 What you should expect:
@@ -131,7 +131,7 @@ What you should expect:
 The real top-level hello-world entrypoint is:
 
 ```bash
-python3 -m aicoding.cli.main workflow start \
+PYTHONPATH=src python3 -m aicoding.cli.main workflow start \
   --kind epic \
   --title "Hello World Epic" \
   --prompt "Create a tiny greeting feature. Add a config file, generate a greeting artifact, add one repeatable verification command, and write a short summary."
@@ -178,7 +178,7 @@ python3 -m aicoding.cli.main workflow sources --node <node_id>
 python3 -m aicoding.cli.main workflow hook-policy --node <node_id>
 python3 -m aicoding.cli.main task current --node <node_id>
 python3 -m aicoding.cli.main subtask current --node <node_id>
-python3 -m aicoding.cli.main subtask prompt --node <node_id>
+PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>
 python3 -m aicoding.cli.main subtask context --node <node_id>
 python3 -m aicoding.cli.main prompts history --node <node_id>
 python3 -m aicoding.cli.main summary history --node <node_id>
@@ -268,7 +268,7 @@ Read current work:
 
 ```bash
 python3 -m aicoding.cli.main subtask current --node <node_id>
-python3 -m aicoding.cli.main subtask prompt --node <node_id>
+PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>
 python3 -m aicoding.cli.main subtask context --node <node_id>
 ```
 

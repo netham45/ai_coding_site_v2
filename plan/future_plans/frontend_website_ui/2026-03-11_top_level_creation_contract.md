@@ -125,12 +125,13 @@ Rules:
 
 Meaning:
 
-- whether the daemon should admit and start the first run immediately after successful compile
+- whether the daemon should admit the first run and bind the authoritative primary session immediately after successful compile
 
 Rules:
 
 - optional
 - defaults to `true`
+- when `true`, success should not leave the node in `RUNNING` without a primary session; the daemon should either return a bound session in the response or fail the request loudly
 
 ## Proposed Success Response
 
@@ -201,6 +202,16 @@ Rules:
   "run_progress": {
     "node_id": "node_100",
     "node_run_id": "run_100"
+  },
+  "session": {
+    "status": "bound",
+    "backend": "tmux",
+    "session_id": "session_100",
+    "logical_node_id": "node_100",
+    "node_run_id": "run_100",
+    "run_status": "RUNNING",
+    "provider": "tmux",
+    "session_name": "aicoding-pri-r1-run_100-sess_100"
   },
   "route_hint": {
     "node_id": "node_100",
