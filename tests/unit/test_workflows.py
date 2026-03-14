@@ -14,6 +14,7 @@ from aicoding.daemon.workflows import (
     list_compile_failures_for_node,
     load_node_version_workflow,
     load_current_workflow,
+    load_workflow_source_discovery_for_node,
     load_workflow_hooks_for_node,
     load_workflow_chain_for_node,
 )
@@ -112,8 +113,13 @@ def test_compile_node_workflow_persists_linear_snapshot(db_session_factory, migr
     assert current.id == result.compiled_workflow.id
     assert current.task_count == 4
     assert current.subtask_count == 5
-    assert [task.task_key for task in current.tasks] == ["research_context", "execute_node", "validate_node", "review_node"]
-    assert current.tasks[0].subtasks[0].source_subtask_key == "research_context.hook.default_hooks.1"
+    assert [task.task_key for task in current.tasks] == [
+        "generate_child_layout",
+        "review_child_layout",
+        "spawn_children",
+        "wait_for_children",
+    ]
+    assert current.tasks[0].subtasks[0].source_subtask_key == "generate_child_layout.hook.default_hooks.1"
     assert str(node.node_id) in current.tasks[0].subtasks[0].prompt_text
     assert "<node_id>" not in current.tasks[0].subtasks[0].prompt_text
     assert chain.chain[1].depends_on_compiled_subtask_ids == [chain.chain[0].compiled_subtask_id]
@@ -203,6 +209,39 @@ def test_compile_node_workflow_records_failure_and_clears_binding(db_session_fac
     with query_session_scope(db_session_factory) as session:
         rows = session.execute(select(CompileFailure).where(CompileFailure.node_version_id == version.id)).scalars().all()
     assert len(rows) == 1
+
+
+def test_source_discovery_remains_available_after_compile_failure(db_session_factory, migrated_public_schema) -> None:
+    base_catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(base_catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Broken Compile Discovery", prompt="ship it")
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+
+    class BrokenCatalog:
+        yaml_project_policies_dir = base_catalog.yaml_project_policies_dir
+        yaml_project_dir = base_catalog.yaml_project_dir
+        yaml_builtin_system_dir = base_catalog.yaml_builtin_system_dir
+
+        def read_text(self, group: str, relative_path: str) -> str:
+            if group == "yaml_builtin_system" and relative_path == "tasks/execute_node.yaml":
+                return "kind: task_definition\nid: execute_node\n"
+            return base_catalog.read_text(group, relative_path)
+
+        def __getattr__(self, name: str):
+            return getattr(base_catalog, name)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=BrokenCatalog())
+    source_discovery = load_workflow_source_discovery_for_node(db_session_factory, logical_node_id=node.node_id)
+
+    assert result.status == "failed"
+    assert result.compile_failure is not None
+    assert source_discovery["compiled_workflow_id"] is None
+    assert source_discovery["compile_failure"]["failure_class"] == "invalid_structural_library"
+    assert source_discovery["compile_context"] == result.compile_failure.compile_context
+    assert source_discovery["discovery_order"]
+    assert any(item["relative_path"] == "nodes/epic.yaml" for item in source_discovery["resolved_documents"])
 
 
 def test_compile_node_workflow_rejects_invalid_quality_library(db_session_factory, migrated_public_schema) -> None:
@@ -376,12 +415,12 @@ def test_override_resolution_supports_scoped_parent_decomposition_without_changi
     )
 
     default_epic = base_documents[("node_definition", "epic")].document
-    assert default_epic["entry_task"] == "research_context"
+    assert default_epic["entry_task"] == "generate_child_layout"
     assert default_epic["available_tasks"] == [
-        "research_context",
-        "execute_node",
-        "validate_node",
-        "review_node",
+        "generate_child_layout",
+        "review_child_layout",
+        "spawn_children",
+        "wait_for_children",
     ]
 
     for node_kind in ("epic", "phase", "plan"):
@@ -392,6 +431,7 @@ def test_override_resolution_supports_scoped_parent_decomposition_without_changi
             "generate_child_layout",
             "review_child_layout",
             "spawn_children",
+            "wait_for_children",
         ]
 
 
@@ -437,22 +477,254 @@ def test_compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_
         ]
         first_subtask_prompt = result.compiled_workflow.tasks[0].subtasks[0].prompt_text
         assert first_subtask_prompt is not None
+        assert "Run the daemon CLI commands below directly in the foreground, one at a time." in first_subtask_prompt
         assert "subtask succeed --node" in first_subtask_prompt
+        assert "after writing the summary, your next response must be an `exec_command` tool call" in first_subtask_prompt
         assert "workflow advance --node" not in first_subtask_prompt
-        assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node" in first_subtask_prompt
+        assert "subtask prompt --node" in first_subtask_prompt
         assert "follow the routed daemon outcome" in first_subtask_prompt
         assert "stop and do not probe the closed run" in first_subtask_prompt
         review_subtask_prompt = result.compiled_workflow.tasks[1].subtasks[0].prompt_text
         assert review_subtask_prompt is not None
         assert "review run --node" in review_subtask_prompt
+        assert "your next response must be an `exec_command` tool call" in review_subtask_prompt
+        assert f"inspect `layouts/generated/{node.node_id}.yaml` directly" in review_subtask_prompt
+        assert "default to the pass command below immediately" in review_subtask_prompt
+        assert "do not ask the operator to run `/review`" in review_subtask_prompt
         assert "do not call `subtask complete` or `workflow advance` after `review run`" in review_subtask_prompt
         spawn_subtask_prompt = result.compiled_workflow.tasks[2].subtasks[0].prompt_text
         assert spawn_subtask_prompt is not None
         assert "node materialize-children --node" in spawn_subtask_prompt
-        assert "subtask report-command --node" in spawn_subtask_prompt
-        assert "command_result.json" in spawn_subtask_prompt
+        assert "your next response must be an `exec_command` tool call" in spawn_subtask_prompt
+        assert "This stage does not complete from inspection alone." in spawn_subtask_prompt
+        assert "immediately verify the result with `python3 -m aicoding.cli.main node child-materialization --node" in spawn_subtask_prompt
+        assert "`node materialize-children` writes the command result and routes this stage for you" in spawn_subtask_prompt
+        assert "subtask report-command --node" not in spawn_subtask_prompt
         assert "workflow advance --node" not in spawn_subtask_prompt
         assert "stop and do not probe the closed run" in spawn_subtask_prompt
+
+
+def test_compile_phase_layout_prompt_uses_real_stage_contract(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Epic", prompt="boot")
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Child Phase",
+        prompt="boot",
+        parent_node_id=epic.node_id,
+    )
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=phase.node_id, catalog=catalog)
+
+    assert result.status == "compiled"
+    assert result.compiled_workflow is not None
+    layout_prompt = None
+    for subtask in result.compiled_workflow.tasks[0].subtasks:
+        if subtask.source_subtask_key == "generate_child_layout.render_layout_prompt":
+            layout_prompt = subtask.prompt_text
+            break
+    assert layout_prompt is not None
+    assert "Current subtask key: `generate_child_layout.render_layout_prompt`" in layout_prompt
+    assert f"layouts/generated/{phase.node_id}.yaml" in layout_prompt
+    assert "node register-layout --node" in layout_prompt
+    assert "summaries/layout_generation.md" in layout_prompt
+
+
+def test_compile_phase_wait_for_children_prompt_requires_complete_child_states(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Epic", prompt="boot")
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Wait Phase",
+        prompt="Wait for child completion.",
+        parent_node_id=epic.node_id,
+    )
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=phase.node_id, catalog=catalog)
+
+    assert result.status == "compiled"
+    assert result.compiled_workflow is not None
+    wait_prompt = None
+    for task in result.compiled_workflow.tasks:
+        for subtask in task.subtasks:
+            if subtask.subtask_type == "wait_for_children":
+                wait_prompt = subtask.prompt_text
+                break
+        if wait_prompt is not None:
+            break
+    assert wait_prompt is not None
+    assert "tree show --node" in wait_prompt
+    assert "every direct child shows `lifecycle_state: COMPLETE`" in wait_prompt
+    assert "PAUSED_FOR_USER" in wait_prompt
+    assert "FAILED_TO_PARENT" in wait_prompt
+    assert "subtask fail" in wait_prompt
+    assert "summaries/child_rollup.md" in wait_prompt
+
+
+def test_compile_phase_layout_prompt_uses_direct_parent_request_only(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="epic",
+        title="Parent Epic",
+        prompt="Create exactly two real phase siblings with a blocked second lane.",
+    )
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Fix Cat Clone Test Failures",
+        prompt="\n".join(
+            [
+                "Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.",
+                "",
+                "Parent Epic Request:",
+                "Create exactly two real phase siblings with a blocked second lane.",
+                "",
+                "Child Acceptance Criteria:",
+                "- src/cat_clone.py is updated.",
+            ]
+        ),
+        parent_node_id=epic.node_id,
+    )
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=phase.node_id, catalog=catalog)
+
+    assert result.status == "compiled"
+    assert result.compiled_workflow is not None
+    layout_prompt = next(
+        subtask.prompt_text
+        for subtask in result.compiled_workflow.tasks[0].subtasks
+        if subtask.source_subtask_key == "generate_child_layout.render_layout_prompt"
+    )
+    assert layout_prompt is not None
+    assert "user request: `Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.`" in layout_prompt
+    assert "Node Prompt:\nUpdate src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes." in layout_prompt
+    assert "Parent Epic Request:\nCreate exactly two real phase siblings with a blocked second lane." not in layout_prompt
+    assert "Create exactly two real phase siblings with a blocked second lane." not in layout_prompt
+
+
+def test_compile_plan_layout_prompt_uses_direct_parent_request_only(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Epic", prompt="ship it")
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Phase",
+        prompt="Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.",
+        parent_node_id=epic.node_id,
+    )
+    plan = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="plan",
+        title="Plan",
+        prompt="\n".join(
+            [
+                "Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.",
+                "",
+                "Parent Phase Request:",
+                "Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.",
+                "",
+                "Child Acceptance Criteria:",
+                "- src/cat_clone.py is updated.",
+            ]
+        ),
+        parent_node_id=phase.node_id,
+    )
+    initialize_node_version(db_session_factory, logical_node_id=plan.node_id)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=plan.node_id, catalog=catalog)
+
+    assert result.status == "compiled"
+    assert result.compiled_workflow is not None
+    layout_prompt = next(
+        subtask.prompt_text
+        for subtask in result.compiled_workflow.tasks[0].subtasks
+        if subtask.source_subtask_key == "generate_child_layout.render_layout_prompt"
+    )
+    assert layout_prompt is not None
+    assert "user request: `Update src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes.`" in layout_prompt
+    assert "Node Prompt:\nUpdate src/cat_clone.py in the existing cat_clone workspace so python3 -m pytest -q tests/test_cat_clone.py passes." in layout_prompt
+    assert "Parent Phase Request:" not in layout_prompt
+    assert "Child Acceptance Criteria:\n- src/cat_clone.py is updated." not in layout_prompt
+
+
+def test_compile_node_workflow_rejects_task_that_does_not_apply_to_node_kind(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path,
+) -> None:
+    base_catalog = load_resource_catalog()
+    overrides_root = tmp_path / "overrides"
+    (overrides_root / "nodes").mkdir(parents=True, exist_ok=True)
+    (overrides_root / "nodes" / "epic_invalid_tasks.yaml").write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: epic",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace_list",
+                "value:",
+                "  available_tasks:",
+                "    - research_context",
+                "    - build_node_docs",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    catalog = replace(base_catalog, yaml_overrides_dir=overrides_root)
+
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Invalid Epic", prompt="ship it")
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    version = initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+
+    result = compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=catalog)
+    failures = list_compile_failures_for_node(db_session_factory, logical_node_id=node.node_id)
+    refreshed_version = load_node_version(db_session_factory, version.id)
+
+    assert result.status == "failed"
+    assert result.compile_failure is not None
+    assert result.compile_failure.failure_class == "compiled_workflow_structure_failure"
+    assert result.compile_failure.target_family == "task_definition"
+    assert result.compile_failure.target_id == "build_node_docs"
+    assert "does not apply to node kind 'epic'" in result.compile_failure.summary
+    assert failures[0].id == result.compile_failure.id
+    assert refreshed_version.compiled_workflow_id is None
 
 
 def test_generate_child_layout_uses_node_kind_specific_prompt_templates(

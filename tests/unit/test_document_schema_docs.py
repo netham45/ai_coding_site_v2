@@ -30,11 +30,12 @@ def _section_lines(text: str, heading: str) -> list[str]:
 def test_authoritative_document_family_inventory_lists_key_families() -> None:
     text = (CHECKLISTS_DIR / "authoritative_document_family_inventory.md").read_text(encoding="utf-8")
 
-    for family_id in ["DF-03", "DF-04", "DF-08", "DF-09", "DF-10", "DF-14", "DF-15", "DF-16", "DF-18", "DF-19"]:
+    for family_id in ["DF-03", "DF-04", "DF-08", "DF-09", "DF-10", "DF-14", "DF-15", "DF-16", "DF-18", "DF-19", "DF-20"]:
         assert family_id in text
     assert "Task plans | yes | `plan/tasks/*.md`" in text
     assert "Development logs and operational logs | yes" in text
     assert "Structured relevant user flow inventory | yes" in text
+    assert "User/operator documentation family | yes" in text
 
 
 def test_document_schema_rulebook_covers_plan_flow_and_log_families() -> None:
@@ -55,10 +56,12 @@ def test_document_schema_rulebook_covers_plan_flow_and_log_families() -> None:
     assert "verification checklists must include:" in text
     assert "standard richer plan schema families must include:" in text
     assert "task plans must additionally include:" in text
+    assert "task plans created or materially revised on or after 2026-03-13 must additionally include:" in text
     assert "log files must live under a structured subdirectory" in text
     assert "coverage, gap, and planning statuses must be scoped explicitly" in text
     assert "audit/review-only status values must be scoped explicitly" in text
     assert "structured relevant-user-flow inventory must:" in text
+    assert "### User Documentation Family" in text
 
 
 def test_document_schema_test_policy_defines_core_suite_and_adoption_rules() -> None:
@@ -66,6 +69,7 @@ def test_document_schema_test_policy_defines_core_suite_and_adoption_rules() -> 
 
     assert "## Canonical Commands" in text
     assert "tests/unit/test_document_schema_docs.py" in text
+    assert "tests/unit/test_user_documentation_governance_docs.py" in text
     assert "## Adoption Rules" in text
     assert "## Failure Triage" in text
 

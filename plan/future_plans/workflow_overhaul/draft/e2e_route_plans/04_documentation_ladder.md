@@ -19,11 +19,13 @@ Prove documentation-specific decomposition from `epic.documentation` through inv
 - inventory, authoring, verification, and remediation bands exist
 - documentation verification remains explicit
 - documentation closure is inspectable at parent and descendant levels
+- each documentation remediation step schedules follow-up reverification automatically rather than relying on manual operator restarts
 
 ## Adversarial Checks
 
 - block completion when docs verification descendants are missing
 - block completion when documentation outputs or checks are missing
+- stop automatic corrective expansion and escalate once the remediation-turn cap is exhausted
 
 ## Affected Systems
 
@@ -35,4 +37,4 @@ Prove documentation-specific decomposition from `epic.documentation` through inv
 
 ## Proof Target
 
-Documentation lifecycle decomposition with explicit verification and remediation.
+Documentation lifecycle decomposition with explicit verification, remediation, and mandatory reverification.

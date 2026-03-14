@@ -90,6 +90,475 @@ PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_full_epic_tree_runtime_real.
 PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k "grouped_cutover_rematerializes_authoritative_child or manual_restart_requires_explicit_reconcile or manual_restart_clears_after_fresh_manual_child_create"
 ```
 
+## Progress Notes
+
+- 2026-03-12 Pool 2 rerun status after scoped-override setup repair:
+  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` now reaches the scoped parent review stage and submits a real `review run`, but it still never exposes the expected phase child afterward.
+  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` now reaches the same scoped parent review stage and no longer fails on the old leaf-execution routing, but the run still stalls with `subtask current` and `subtask prompt` returning `review_child_layout` instead of progressing into `spawn_children`.
+  - Current Pool 2 blocker has therefore narrowed from missing scoped parent decomposition to the live review-to-spawn continuation path inside the parent workflow.
+- 2026-03-12 bounded follow-up:
+  - `tests/integration/test_daemon.py -q -k review_run_routes_scoped_parent_into_spawn_children` now passes and proves the daemon-backed `review run` route advances a scoped parent into the `spawn_child_nodes` command stage with `node materialize-children --node <id>` loaded as the next live command.
+  - The remaining Pool 2 blocker is therefore in the tmux/Codex live session loop rather than in the daemon review router itself.
+  - The clean post-wipe reruns still fail:
+    - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py -q` now reaches the scoped review continuation path and runs `subtask current`, but then falls back into a background-terminal wait instead of starting the review subtask and no phase child appears.
+    - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` completes the layout-generation `subtask succeed`, then also falls into a background-terminal wait while the parent is left `PAUSED_FOR_USER` with no phase siblings created.
+- 2026-03-12 daemon-driven continuation hardening:
+  - `tests/integration/test_daemon.py` now also passes prompt-push coverage for `subtask succeed`, `report-command`, and `review run`, so the daemon actively injects the next-stage prompt into the bound tmux session after routed `next_stage` outcomes.
+  - The idle monitor now treats `background terminal running` / `Waited for background terminal` pane states as nudgeable instead of permanently active.
+  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py -q` still fails, but it now reaches the injected review prompt and later receives the repeated-missed-step recovery prompt from the daemon. No phase child is created yet.
+- 2026-03-12 routed-stage durability and prompt-loop hardening:
+  - `tests/integration/test_daemon.py` now passes a new bounded regression proving that old idle-nudge debt does not immediately pause a freshly routed parent stage after `subtask succeed`.
+  - The daemon now records a durable `stage_prompt_pushed` event and refreshes the primary-session heartbeat whenever it injects a routed next-stage prompt, so idle-nudge counting resets at real stage boundaries instead of accumulating forever across the whole tmux session.
+  - Parent prompts were tightened again so the success handoff itself must be the next `exec_command` call, and routed continuation now tells the live session to continue from the daemon-injected next-stage prompt by default rather than manually chaining `subtask current` / `subtask prompt`.
+  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` still fails after these changes, but the failure shape has moved twice:
+    - first rerun: `subtask succeed` advanced into `review_child_layout`, then the run was paused immediately by stale `idle_nudge_limit_exceeded` debt
+    - latest rerun: the parent survives that old pause race, writes the success summary, submits `subtask succeed`, enters the review stage, runs `subtask start` and `subtask context`, and then still stalls before `review run`
+  - The remaining Pool 2 blocker is therefore narrower: the live tmux/Codex loop still stops after entering the routed review stage, even though the daemon now preserves the stage transition correctly.
+- 2026-03-12 live tmux submission hardening:
+  - `tests/integration/test_daemon.py` now also passes a new bounded proof that `subtask start` for `generate_child_layout.render_layout_prompt` pushes a concise layout-stage instruction into the active session, telling the live loop to write `layouts/generated_layout.yaml`, register it, then immediately run `subtask succeed`.
+  - The tmux adapter now sends injected text and `Enter` as separate key events with a short delay so Codex does not treat the trailing newline as part of the pasted block.
+  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` still fails, but it now gets materially farther through the live parent runtime:
+    - the parent creates the generated layout, registers it, writes the success summary, submits `subtask succeed`, and starts the routed review subtask for real
+    - the failure now happens because the injected review-stage instruction is still only typed into the Codex composer and no `review run` executes before the sibling-creation polling window expires
+  - The remaining Pool 2 blocker is therefore no longer parent layout generation. It is the live tmux/Codex message-submission path for injected routed-stage prompts, especially the review-stage `review run` handoff.
+- 2026-03-12 child runtime follow-through hardening:
+  - `node run start` now exits nonzero through the real CLI when the daemon returns a dependency/readiness-blocked admission payload, while still treating `already_running` as non-fatal.
+  - Fresh primary-session binds now prime the active current subtask attempt and push the current stage prompt immediately after the session is created, so runtime-created child sessions no longer depend entirely on Codex discovering the first `subtask start` path by itself.
+  - The generic runtime `cli_bootstrap` prompt and Codex bootstrap instruction now explicitly require the foreground startup sequence (`subtask current`, `subtask start`, `subtask context`) before broader work.
+  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` still fails, but the failure has moved downstream again:
+    - the parent now creates the sibling phases and the dependency-blocked `node run start` gate fails correctly for the blocked sibling
+    - the left sibling reaches a live tmux/Codex run, but after bind-time priming and later idle nudges it still falls back into background-terminal waits during `research_context.build_context`
+    - the current blocker is therefore the child-side build-context recovery path, not parent decomposition or sibling dependency admission
+- 2026-03-12 child prompt-contract hardening:
+  - Compiled parent/child prompts for `build_context` now carry the real summary output path (`summaries/context.md`) instead of the generic `summaries/parent_subtask.md`, and the compiled prompt now names the next routed stage where the task-local workflow order is known.
+  - The bounded proofs now pass:
+    - `tests/unit/test_workflows.py -q -k "compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links or compile_phase_research_context_prompt_uses_exact_summary_output_and_next_stage or compile_node_workflow_rejects_task_that_does_not_apply_to_node_kind"`: passed (`3 passed, 18 deselected`)
+    - `tests/integration/test_daemon.py -q -k "session_nudge_for_review_stage_includes_review_run_guidance or session_nudge_for_build_context_stage_includes_summary_path_and_next_stage or session_nudge_for_bootstrap_hook_stage_includes_completion_guidance"`: passed (`3 passed, 65 deselected`)
+  - The real Flow 22 rerun still fails:
+    - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 138.05s`)
+    - the prerequisite child still never reaches `COMPLETE`
+    - the captured child pane now shows the idle nudge plus a real `subtask start`, but then the provider drifts into an unrelated generic task prompt (`Find and fix a bug in @filename`) instead of completing `research_context.build_context`
+  - The remaining Pool 2 blocker is therefore no longer the missing summary path in the compiled child prompt. It is that the live provider turn still fails to stay on the current child subtask after the daemon has started the attempt and pushed the corrected prompt contract.
+- 2026-03-12 real built-in parent wait contract repair:
+  - The real built-in `epic`, `phase`, and `plan` node definitions now include `wait_for_children` after `spawn_children` instead of stopping the parent workflow immediately after child materialization.
+  - The daemon now rejects `subtask succeed` for `wait_for_children` unless every direct child is actually `COMPLETE`, and the parent prompt/runtime nudge guidance now tells the live session to verify child completion with `tree show --full` before finishing that stage.
+  - The bounded proofs pass:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_run_orchestration.py -q -k 'subtask_succeed_rejects_wait_for_children_until_all_children_are_complete'`: passed (`1 passed, 22 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_workflows.py -q -k 'compile_node_workflow_persists_linear_snapshot or compile_phase_layout_prompt_uses_real_stage_contract or compile_phase_wait_for_children_prompt_requires_complete_child_states'`: passed (`3 passed, 19 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_workflow_compile_flow.py -q`: passed (`3 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q`: passed (`10 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'session_nudge_for_build_context_stage_includes_summary_path_and_next_stage or session_nudge_for_review_stage_includes_review_run_guidance'`: passed (`2 passed, 66 deselected`)
+  - The real Flow 22 rerun still fails twice after the contract fix:
+    - first rerun on the guarded parent contract: failed (`1 failed in 920.31s`) because the prerequisite `phase` no longer closed early, but never reached `COMPLETE` or `FAILED` within the 900-second budget
+    - second rerun after seeding a real `cat_clone` workspace and concrete prerequisite-lane prompt: failed again (`1 failed in 934.98s`) with the same symptom
+  - The current blocker has therefore moved again: Flow 22 no longer fails on premature phase completion or missing workspace content, but the prerequisite left sibling still does not reach a terminal lifecycle state through the live runtime path before its tmux session disappears.
+- 2026-03-12 empty Codex startup and ready-then-inject bootstrap:
+  - Fresh primary and delegated child tmux sessions now launch an empty interactive `codex --yolo` session instead of passing the first instruction on the Codex command line.
+  - The daemon now waits for the tmux pane to show the live Codex readiness banner (`OpenAI Codex` plus `>_`), then waits an additional five seconds before injecting the first instruction through tmux.
+  - The first injected instruction now reuses the existing prompt-log/CLI-target contract:
+    - primary sessions inject the prompt-log path when one exists, otherwise the live `subtask prompt --node <id>` command text
+    - delegated child sessions inject the delegated prompt-file path
+  - Verification results for this startup contract:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_codex_session_bootstrap.py tests/unit/test_session_harness.py tests/unit/test_session_manager.py -q`: passed (`27 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_session_cli_and_daemon.py -q -k 'session_bind_and_show_current_round_trip or session_attach_and_resume_commands_round_trip'`: passed (`2 passed, 46 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q -k 'test_tmux_primary_session_launches_codex_not_shell or test_tmux_primary_session_exports_prompt_log_for_live_codex_bootstrap'`: passed (`2 passed, 1 deselected`)
+  - This repair changes the live runtime contract from “bootstrap Codex with a prompt-bearing argv” to “start Codex empty, wait for readiness, then submit the first instruction as a real session turn.” Flow 22 still needs a fresh rerun on top of that startup change.
+- 2026-03-12 prompt-push timing and Flow 22 timeout correction:
+  - The remaining direct tmux prompt sends now also go through the readiness gate:
+    - daemon next-stage pushes in `app.py`
+    - delegated child first-prompt pushes in `child_sessions.py`
+  - Bounded verification after that timing fix:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_harness.py tests/unit/test_codex_session_bootstrap.py tests/unit/test_session_manager.py -q`: passed (`28 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'session_nudge_endpoint_does_not_nudge_when_active_work_marker_is_visible or session_nudge_endpoint_treats_background_terminal_wait_as_idle or session_nudge_for_review_stage_includes_review_run_guidance or session_nudge_for_build_context_stage_includes_summary_path_and_next_stage or review_run_routes_scoped_parent_into_spawn_children or subtask_start_pushes_review_stage_prompt_into_active_session or subtask_start_pushes_layout_generation_prompt_into_active_session or subtask_succeed_pushes_next_stage_prompt_into_active_session or subtask_report_command_pushes_next_stage_prompt_into_active_session'`: passed (`9 passed, 59 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_materialization.py tests/unit/test_run_orchestration.py -q -k 'child_prompt_from_layout_includes_parent_request_and_acceptance or direct_parent_request_text_strips_inherited_ancestor_sections or child_prompt_from_layout_excludes_inherited_ancestor_request_sections or materialize_layout_children_creates_child_nodes_and_dependency_state or advance_workflow_clears_idle_nudge_pause_after_success or subtask_succeed_rejects_wait_for_children_until_all_children_are_complete'`: passed (`6 passed, 30 deselected`)
+  - Flow 22 test contract correction:
+    - the parent sibling-creation gate now uses `PARENT_SIBLING_CREATION_TIMEOUT_SECONDS = 900.0` instead of a hard-coded 120-second wall-clock cutoff
+  - Fresh real rerun after those changes:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 1039.96s`)
+    - actual runtime progression in that rerun:
+      - the parent completed layout generation, `review run`, and `children/materialize`
+      - the left phase was admitted, bound, and progressed through real descendant creation
+      - the left phase's plan child reached real `subtasks/fail`, `subtasks/succeed`, `review/run`, and `children/materialize` mutations
+    - remaining blocker:
+      - the left top-level prerequisite phase still never reached lifecycle `COMPLETE` or `FAILED` within the 900-second child budget
+    - the bound left-phase tmux session disappeared before the phase lifecycle became terminal
+    - Flow 22 is therefore no longer blocked on parent sibling creation; it is blocked on descendant completion propagating back to the prerequisite phase lifecycle
+- 2026-03-13 review-routing and child-rollup follow-up:
+  - Review-stage prompt delivery no longer hardcodes the layout-review command for every `review` subtask:
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'subtask_start_pushes_compiled_non_layout_review_prompt_into_active_session or session_nudge_for_review_stage_includes_review_run_guidance'`: passed (`2 passed, 67 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py tests/unit/test_workflows.py -q -k 'nudge_primary_session_uses_compiled_task_review_prompt or compile_phase_wait_for_children_prompt_requires_complete_child_states'`: passed (`3 passed, 48 deselected`)
+  - Fresh real rerun:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 991.00s`)
+    - the prerequisite phase no longer dies in review/materialization routing
+    - it now reaches the post-materialization `wait_for_children.collect_child_summaries` stage and the captured tmux history shows the real bad behavior:
+      - `sleep 5 && python3 -m aicoding.cli.main tree show --node <phase> --full`
+      - `sleep 10 && python3 -m aicoding.cli.main tree show --node <phase> --full`
+    - so the current blocker is not review routing anymore; it is the child-summary rollup stage treating itself as a polling loop instead of gathering the already-completed child outputs and recording `summaries/child_rollup.md`
+  - Child-rollup prompt/recovery hardening is now in place:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py tests/unit/test_workflows.py -q -k 'nudge_primary_session_rolls_child_summaries_without_sleep_polling or nudge_primary_session_uses_compiled_task_review_prompt or compile_phase_wait_for_children_prompt_requires_complete_child_states'`: passed (`3 passed, 48 deselected`)
+    - the real Flow 22 rerun still needs to be repeated on top of that child-rollup fix
+- 2026-03-13 queued stage-prompt delivery for busy Codex turns:
+  - Real bug found in the descendant review path:
+    - the deepest Flow 22 child no longer looped on `subtask prompt`, but after entering review it submitted `review run` multiple times in a row
+    - the daemon was still pushing the next-stage prompt immediately, even when Codex was visibly in an active `Working (...)` turn
+    - the old `send_input_when_ready(...)` behavior waited briefly, then sent anyway once the timeout expired, so stage instructions could be shoved into a busy turn and effectively lost
+  - Runtime fix now in place:
+    - stage-prompt delivery can now queue instead of forcing the send when the tmux/Codex session is still active
+    - queued prompts are flushed later by session supervision once the session is input-ready again
+    - stale queued prompts are dropped if the current compiled subtask has already advanced
+  - Bounded verification now passes:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_harness.py -q`: passed (`11 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'subtask_succeed_pushes_next_stage_prompt_into_active_session or subtask_succeed_queues_next_stage_prompt_until_active_turn_clears or subtask_report_command_pushes_next_stage_prompt_into_active_session or session_nudge_endpoint_does_not_nudge_when_active_work_marker_is_visible'`: passed (`4 passed, 66 deselected`)
+  - Fresh real Flow 22 rerun is the next proving step on top of this queued-delivery fix.
+  - Fresh real Flow 22 rerun after the queued-delivery fix:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 1000.59s`)
+    - actual movement:
+      - the parent no longer repeated `review run`; it progressed through review, child materialization, and command reporting
+      - the first descendant no longer repeated review either; it progressed through review, child materialization, and command reporting
+      - a deeper descendant session for node `be828581-f60d-440f-a5af-5b70989b6a4d` then fetched `subtask prompt` exactly once and later emitted its own bounded failure summary that no usable prompt text had been produced
+    - the rerun still ended with the prerequisite sibling non-terminal, and the captured left-session pane again shows the parent-side wait path repeating `tree show --full`
+  - The next concrete blocker is therefore split:
+    - descendant prompt retrieval / prompt-delivery failure on node `be828581-f60d-440f-a5af-5b70989b6a4d`
+    - parent/ancestor `wait_for_children` path still falling back into repeated `tree show --full` instead of completing after descendants settle
+- 2026-03-13 delegated prompt-file instruction hardening:
+  - The descendant bootstrap path was still using the generic primary-session instruction text even when a prepared prompt artifact already existed on disk.
+  - Real code fix:
+    - file-backed bootstrap instructions now explicitly treat the prompt file as authoritative for the current stage
+    - delegated child sessions now inject that file-backed instruction instead of the generic `subtask prompt` bootstrap wording
+    - primary initial prompt-log injection now also uses the file-backed wording when a prompt log exists
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_manager.py tests/unit/test_child_sessions.py tests/unit/test_codex_session_bootstrap.py -q`: passed (`25 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now in progress on top of that delegated prompt-file bootstrap fix.
+  - Actual rerun result:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 1005.06s`)
+    - the delegated prompt-file fix removed the old “no usable prompt text” descendant failure, but Flow 22 still stopped because the intermediate prerequisite plan entered `wait_for_children`, its Codex session exited, its leaf task child later completed, and nothing reactivated the waiting plan to consume that completion
+- 2026-03-13 session supervision now treats Codex exit-to-shell as lost:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - the prerequisite phase waited on direct child plan `1117b2f3-bd91-4aa9-ab19-95282b80cfe8`
+    - that plan entered `wait_for_children`
+    - its tmux session no longer had a live Codex process, but the tmux pane still existed as a shell, so the old supervision path did not recover it
+    - its leaf task child later completed implementation and command reporting, but the waiting plan never resumed to finish `wait_for_children`
+  - Real code fix:
+    - primary-session supervision now treats a session as lost when it previously recorded `codex_ready` and the live tmux pane no longer runs a `codex` process even though the tmux pane itself still exists
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'auto_supervise_primary_sessions_replaces_dead_tracked_tmux_process or auto_supervise_primary_sessions_replaces_session_when_codex_falls_back_to_shell'`: passed (`2 passed, 28 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the shell-fallback supervision fix.
+  - Actual rerun result:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 998.01s`)
+    - the shell-fallback supervision fix changed the failure shape again but still did not close Flow 22
+    - latest runtime evidence shows a concrete command-routing bug on node `0c3415fa-d02f-452d-80a1-8ea75e7ae83f`:
+      - the session registered a new requested sibling layout
+      - `node materialize-children` exited `0`
+      - verification showed the node was still using older already-materialized children instead of the newly requested ones
+      - the session wrote a real `summaries/parent_subtask_failure.md` describing that mismatch
+      - `subtask report-command` still advanced as success because the daemon only looked at `exit_code == 0`
+- 2026-03-13 report-command now honors non-empty failure summaries even on exit code 0:
+  - Real code fix:
+    - non-quality command stages now fail if the CLI supplied a non-empty `failure_summary`, even when the command exit code is `0`
+    - this preserves semantic verification failures like “materialize-children exited 0 but verified the wrong children”
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_run_orchestration.py -q -k 'report_command_subtask_routes_ordinary_command_success or report_command_subtask_fails_ordinary_command_on_nonzero_exit or report_command_subtask_fails_ordinary_command_on_zero_exit_when_failure_summary_present'`: passed (`3 passed, 22 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the command-routing fix.
+- 2026-03-13 node-specific generated layout registration:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - generated child layouts were all being copied into the single shared workspace path `layouts/generated_layout.yaml`
+    - descendant layout registration therefore overwrote ancestor layout registration inside the same live workspace
+    - later `node materialize-children` calls could legally verify and materialize the wrong node's registered layout even though each node had previously called `node register-layout`
+  - Real code fix now in place:
+    - registered generated layouts now persist under `layouts/generated/<node_id>.yaml`
+    - materialization now resolves the latest registered generated layout from the node's own workflow-event record instead of reading a shared global generated-layout filename
+    - parent prompts, review prompts, session recovery guidance, prompt packs, and task YAML now all reference the node-specific generated layout path
+    - workflow compilation now renders `outputs[].path` so the node-specific generated-layout output contract remains legal in compiled tasks
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_materialization.py tests/unit/test_workflows.py tests/unit/test_prompt_pack.py -q -k 'prefers_generated_workspace_layout or is_idempotent_for_generated_workspace_layout or uses_node_specific_registered_layouts or ignores_unregistered_generated_workspace_layout or compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links or compile_phase_layout_prompt_uses_real_stage_contract or layout_generation_prompts_require_explicit_layout_registration'`: passed (`7 passed, 37 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py tests/integration/test_session_cli_and_daemon.py -q -k 'register_layout or child_materialization_reports_dependency_blocked_children or subtask_succeed_pushes_next_stage_prompt_into_active_session or subtask_report_command_pushes_next_stage_prompt_into_active_session or subtask_start_pushes_layout_generation_prompt_into_active_session'`: passed (`7 passed, 111 deselected`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the node-specific layout registration fix.
+- 2026-03-13 review-run endpoint now rejects non-review cursors:
+  - Real runtime cause found while tracing the latest Flow 22 descendant behavior:
+    - `POST /api/nodes/{node_id}/review/run` was force-starting and completing whatever the current cursor was
+    - the route never verified that the active compiled subtask was actually a `review` stage
+    - that meant a stray repeated `review run` could bypass normal stage-specific completion guards, including the `wait_for_children` guard that otherwise blocks premature completion
+  - Real code fix now in place:
+    - the review-run endpoint now loads the active compiled subtask and rejects the request unless `subtask_type == "review"`
+    - existing bounded routing coverage was updated to assert the actual routed spawn-stage prompt after a successful review
+    - new bounded coverage proves non-review review submissions are rejected without creating a subtask attempt
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_rejects_non_review_current_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`2 passed, 69 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the review-run guard fix.
+- 2026-03-13 spawn-child materialization now routes its own stage:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - the prerequisite phase materialized its plan child, and that plan materialized its task child
+    - the workspace contained `summaries/command_result.json` for `node materialize-children`, showing the materialization command itself had run
+    - but the durable follow-up `subtask report-command` step was missing, so the active `spawn_child_node` stage could remain open even after child creation succeeded
+  - Real code fix now in place:
+    - `POST /api/nodes/{node_id}/children/materialize` now auto-completes and routes the active `spawn_child_node` stage when that stage is actually running
+    - spawn-child prompts and recovery guidance now tell the live session that `node materialize-children` records the materialization result and routes the stage itself, instead of asking for a separate `subtask report-command`
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'materialize_children_endpoint_routes_active_spawn_stage or review_run_rejects_non_review_current_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`3 passed, 69 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_workflows.py -q -k 'compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links or compile_phase_layout_prompt_uses_real_stage_contract'`: passed (`2 passed, 20 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the spawn-child routing fix.
+- 2026-03-13 prompt contract no longer requires extra live subtask-id lookups before completion:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - the deepest leaf task completed the real code/test work in the workspace
+    - it then wrote a durable failure summary saying `subtask current` and `subtask context` timed out, so it could not safely resolve the live compiled subtask UUID needed for `subtask succeed`/`subtask fail`
+    - the runtime prompt builder had already started relaxing that dependency, but the shipped prompt-pack files still hard-required `subtask current` plus mandatory `subtask context`
+  - Real code/prompt fix now in place:
+    - runtime prompt delivery now substitutes `CURRENT_COMPILED_SUBTASK_ID` with the actual active compiled-subtask UUID before prompt delivery
+    - synthesized command prompts now tell the live session to use the compiled-subtask UUID already embedded in the prompt instead of re-reading it with `subtask current`
+    - prompt-pack assets for CLI bootstrap, leaf execution, and generated-layout stages now treat `subtask context` as optional and explicitly non-blocking if unavailable or timed out
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_prompt_pack.py tests/unit/test_run_orchestration.py -q -k 'execution_prompt_includes_original_node_request or layout_generation_prompts_require_explicit_layout_registration or runtime_cli_bootstrap_prompt_requires_foreground_subtask_startup_sequence or synthesized_command_subtask_prompt_reports_validation_command_result or synthesized_non_quality_command_subtask_prompt_reports_result_with_optional_failure_summary or subtask_prompt_context_heartbeat_and_summary_registration'`: passed (`6 passed, 28 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the prompt-contract fix.
+  - Actual rerun result:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 960.06s`)
+    - the prompt-contract fix removed the old leaf `subtask current` / `subtask context` completion failure
+    - latest runtime evidence shows the deep task now gets through implementation, validation, and into review, but the left sibling still remains non-terminal because the descendant never reaches terminal state from its review path
+- 2026-03-13 review-route handoff now queues instead of injecting mid-turn:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - the deep task child `5ad66376-0c6a-4d58-8a16-cd9a6da65735` reached its review path
+    - while a live `review run` command was still in flight, the daemon injected the routed next-stage prompt back into the same Codex session
+    - that produced overlapping review turns on the same node and the descendant never reached a terminal lifecycle state
+  - Real code fix now in place:
+    - routed next-stage prompts from `review run` are now recorded as queued stage prompts instead of being pushed synchronously into the same active session
+    - the existing queued-stage flusher remains responsible for delivering that next-stage prompt once the session is actually ready for another turn
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_routes_scoped_parent_into_spawn_children or review_run_rejects_non_review_current_stage'`: passed (`2 passed, 70 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the queued review-route handoff fix.
+- 2026-03-13 descendant queued-stage prompts now outrank idle nudges:
+  - Real runtime cause found in the latest Flow 22 artifacts:
+    - runtime-created descendant task `92503f82-0b6a-46b4-b870-090e4739b20d` had a valid prompt log file prepared under `prompt_logs/.../00ed1944-d12a-4249-b70f-6a90145e4792.md`
+    - its actual Codex session never received the initial prompt-file bootstrap instruction and instead fell into idle-nudge recovery, then manually retried `subtask prompt --node 92503f82-...`
+    - the daemon allowed `nudge_primary_session` to inject recovery text even when that primary session still had a newer queued stage prompt waiting to flush
+  - Real code fix now in place:
+    - idle nudge now skips any primary session that still has a pending queued stage prompt
+    - queued stage-prompt flushing now waits up to `1.0s` for an active Codex turn marker to clear instead of giving up after `0.1s`
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_repeated_prompt_then_escalates or nudge_primary_session_does_not_pause_wait_for_children_while_child_is_running'`: passed (`3 passed, 28 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now the next proof step on top of the queued-stage-vs-nudge fix.
+- 2026-03-13 layout-generation recovery now carries the concrete write/register/succeed sequence:
+  - Real runtime cause found while watching the live descendant tmux session during the latest Flow 22 rerun:
+    - prerequisite phase child `78238724-ed5c-4c81-b10f-f3132f98a67e` did receive the initial prompt-file bootstrap instruction
+    - it still went idle, got nudged, then manually ran `subtask prompt --node 78238724-...` during `generate_child_layout.render_layout_prompt`
+    - that session never wrote `layouts/generated/78238724-ed5c-4c81-b10f-f3132f98a67e.yaml`, later reached review with the layout file missing, and paused for user
+    - recovery guidance only had a layout-specific branch after a generated layout was already registered, so plain pre-registration layout generation still fell back to generic idle-nudge text
+  - Real code fix now in place:
+    - idle recovery for `generate_child_layout.render_layout_prompt` now tells the live session exactly to write `layouts/generated/<node>.yaml`, register it, write `summaries/layout_generation.md`, and then run the exact `subtask succeed` command
+    - the recovery text now explicitly says not to fetch `subtask prompt` again unless the generated prompt file is missing or unreadable
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_compiled_task_review_prompt'`: passed (`3 passed, 29 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Actual rerun result before this fix was loaded:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 977.75s`)
+    - the prerequisite phase reached `PAUSED_FOR_USER`; its live pane reported that the generated layout file did not exist, so review could not proceed
+  - Fresh real Flow 22 rerun is now required on top of the new layout-generation recovery guidance.
+- 2026-03-13 latest real rerun on top of the layout-generation recovery fix:
+  - Actual rerun result:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 971.85s`)
+  - What improved in the actual live run:
+    - parent epic created the two real phase siblings
+    - prerequisite phase `bf727a63-18a6-450f-ade9-41d3c100f71a` wrote and registered its generated layout, passed `subtask succeed`, passed review, and materialized two real plan children
+    - plan child `c4bda25f-7cf3-49b7-8f6e-3bcb70df5dfe` was auto-admitted and bound through a real tmux/Codex session
+  - Current live blocker:
+    - the prerequisite phase reached `wait_for_children`
+    - its pane text at timeout showed it inspecting child materialization and the `wait_for_children` contract rather than becoming terminal
+    - the direct plan child remained non-terminal and never produced its own descendants within the 900-second window
+    - live plan-child pane text showed it drift back into repeated idle/recovery text after layout-generation work instead of reaching terminal child creation/completion
+  - Next fix direction:
+    - inspect the bound plan child `c4bda25f-7cf3-49b7-8f6e-3bcb70df5dfe` as the new deepest blocker
+    - tighten descendant plan-stage recovery/continuation the same way the phase layout-generation stage was tightened in this pass
+- 2026-03-13 duplicate post-success `subtask succeed` replays are now idempotent:
+  - Real runtime cause found in the latest Flow 22 rerun:
+    - direct plan child `c4bda25f-7cf3-49b7-8f6e-3bcb70df5dfe` completed layout generation once and the daemon accepted that first `subtask succeed` (`200 OK`)
+    - the same live session later replayed the same stale `subtask succeed` command after the cursor had already advanced
+    - the daemon rejected the replay with `409 Conflict`, and the plan child never recovered into the next stage
+  - Real code fix now in place:
+    - `succeed_current_subtask(...)` now treats an exact replay of the just-completed subtask as idempotent when:
+      - `last_completed_compiled_subtask_id` matches
+      - the latest attempt for that subtask is already `COMPLETE`
+      - the replayed summary path/content matches the previously recorded subtask summary
+    - in that case the daemon returns the current routed progress instead of raising a cursor conflict
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_run_orchestration.py -q -k 'subtask_succeed_allows_exact_replay_of_just_completed_stage_without_duplicate_summary or subtask_succeed_rejects_wait_for_children_until_all_children_are_complete or subtask_succeed_rejects_command_stages'`: passed (`3 passed, 23 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Fresh real Flow 22 rerun is now required on top of the idempotent duplicate-success fix.
+- 2026-03-13 initial bind now combines authoritative prompt-file bootstrap with exact stage action guidance:
+  - Real runtime cause found while tracing the next two live Flow 22 reruns:
+    - auto-started child primary sessions still began from the generic prompt-file bootstrap text alone on initial bind
+    - that left runtime-created descendants free to re-run `subtask prompt --node ...` even though a full prompt artifact already existed on disk
+    - replacing that bootstrap with only the short stage-action text was also wrong: the first regression rerun immediately showed the parent generating the wrong child kind/tier because it no longer had the full prompt context from the saved prompt file
+  - Real code fix now in place:
+    - initial bind now combines both requirements:
+      - read the authoritative saved prompt file first
+      - do not re-fetch `subtask prompt` unless that file is missing or unreadable
+      - then follow the exact current-stage action guidance for layout/review/materialization/child-rollup stages
+    - routed next-stage prompt pushes still use the shorter stage-specific injected message once the full current-stage prompt is already present in the session turn
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'bind_primary_session_uses_stage_specific_layout_prompt_on_initial_bind or nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_compiled_task_review_prompt'`: passed (`4 passed, 29 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'subtask_start_pushes_layout_generation_prompt_into_active_session or subtask_succeed_pushes_next_stage_prompt_into_active_session or session_nudge_for_build_context_stage_includes_summary_path_and_next_stage or session_nudge_for_review_stage_includes_review_run_guidance'`: passed (`4 passed, 68 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+  - Actual rerun result:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 1018.06s`)
+  - What improved in the actual live run:
+    - parent epic `2bd6c711-d74a-48a1-94f6-9d08f483a570` created both real phase siblings
+    - prerequisite phase `6375806b-7cec-4eff-a2f4-17d9224cb9bf` advanced through:
+      - layout generation
+      - review
+      - child materialization
+    - its plan child `6aba332a-8edb-40b4-90e8-ed4f6f5e705f` advanced through:
+      - layout generation
+      - review
+      - child materialization
+    - its task child `020206b5-c8e2-45f9-ae54-1260737e2dab` reached the real leaf execution path and emitted `POST /api/subtasks/report-command`
+  - Current live blocker:
+    - the prerequisite phase still never reached lifecycle `COMPLETE` or `FAILED` within the 900-second child budget
+    - the phase pane at timeout showed it had reached `wait_for_children.wait_for_child_completion`
+    - the deepest visible descendant had moved beyond runtime child creation and into leaf execution/reporting, so the remaining gap is completion/rollup propagation back up the prerequisite branch rather than missing descendants
+  - Next step:
+    - inspect the post-`report-command` leaf completion path and the subsequent wait-for-children rollup on the enclosing task/plan/phase chain
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` after hardening that completion propagation path
+- 2026-03-13 descendant review-stage recovery prompt now resolves the real compiled subtask UUID:
+  - Real runtime cause found while inspecting the live `pytest-1752` descendant histories:
+    - deeper child `7497c12e-3679-42c9-add1-8db165605f48` reached review recovery
+    - the injected review-stage recovery text embedded the raw compiled prompt body
+    - that embedded body still contained `CURRENT_COMPILED_SUBTASK_ID` instead of the real subtask UUID
+    - this left the live descendant recovery path capable of emitting malformed follow-on `review run` commands even after the routed next-stage payload bug was fixed
+  - Real code fix now in place:
+    - review-stage recovery guidance now replaces `CURRENT_COMPILED_SUBTASK_ID` with the active compiled subtask UUID before the compiled prompt body is injected into the live recovery text
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_uses_compiled_task_review_prompt or nudge_primary_session_review_prompt_resolves_current_compiled_subtask_token'`: passed (`2 passed, 34 deselected`)
+  - Current real E2E status:
+    - a fresh `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` rerun is now in progress on top of this review-recovery fix
+    - the older `pytest-1752` rerun was stale for this fix because its descendant sessions had already been bootstrapped before the corrected recovery text existed
+- 2026-03-13 exact duplicate `review run` submissions are now idempotent after the daemon already advanced:
+  - Real runtime cause found in the latest live Flow 22 rerun:
+    - descendant review stages were still replaying the just-completed `review run`
+    - the daemon accepted the first review submission, advanced the workflow, then rejected the exact replay with `409 Conflict`
+    - after that replay conflict, the enclosing parent branch still failed to consume descendant completion cleanly and remained in `wait_for_children`
+  - Real code fix now in place:
+    - `/api/nodes/{node_id}/review/run` now returns the current routed progress for an exact replay of the just-completed review stage when:
+      - `last_completed_compiled_subtask_id` is the just-finished review subtask
+      - the latest review attempt for that subtask is already `COMPLETE`
+      - the replayed review payload exactly matches the recorded review payload
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_rejects_non_review_current_stage or review_run_allows_exact_replay_of_just_completed_review_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`3 passed, 71 deselected`)
+  - Document consistency note:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: failed on the same unrelated pre-existing doc-schema issue outside Pool 2 scope (`2026-03-13_ai_project_skeleton_milestone_gate_hardening.md should cite its governing task plan`)
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the review-replay fix and inspect whether the mid-level prerequisite branch now leaves `wait_for_children`
+- 2026-03-13 Codex readiness now requires the real banner before first-prompt injection:
+  - Real runtime cause found while inspecting the latest failing `pytest-1773` descendant artifacts:
+    - deepest descendant `db5d0c38-7d82-40d3-9886-62cb24f96897` had a valid prompt log file on disk
+    - its Codex history contained only idle nudges and no initial stage prompt
+    - `wait_for_codex_ready(...)` was still treating a tmux pane whose process command line merely contained `codex` as ready, even when the interactive Codex banner/prompt had not appeared yet
+    - that allowed first-prompt injection to happen too early, where the input could be lost before the fresh descendant session was actually receptive
+  - Real code fix now in place:
+    - `wait_for_codex_ready(...)` no longer accepts process-command-line detection alone
+    - readiness now requires the real Codex banner/prompt markers (`OpenAI Codex` and `>_`) before the settle window and first prompt injection
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_harness.py tests/unit/test_codex_session_bootstrap.py tests/unit/test_session_manager.py -q`: passed (`31 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_session_cli_and_daemon.py -q -k 'session_bind_and_show_current_round_trip or session_attach_and_resume_commands_round_trip'`: passed (`2 passed, 46 deselected`)
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the corrected readiness detector and inspect whether the deepest runtime-created descendant now receives its first stage prompt instead of going straight to idle nudges
+- 2026-03-13 idle recovery now reseeds a missing first stage prompt after `codex_ready`:
+  - Real runtime cause found in the fresh `pytest-1778` rerun:
+    - readiness detection fix worked for the first two descendant depths
+    - but the next deepest descendant session (`e80f198a-...`, node `be35b85e-700a-4409-b70c-de91bfb75894`) still reached a live Codex session with no initial stage prompt in its history
+    - its pane showed only the idle nudge, then one bounded `subtask prompt --node ...` fetch attempt that blocked with no output
+    - this means the session had `codex_ready` but no `stage_prompt_pushed`/`stage_prompt_queued` after that ready event
+  - Real code fix now in place:
+    - before sending an idle nudge, `nudge_primary_session(...)` now checks for the missing-first-prompt pattern
+    - when a session has `codex_ready` but no later stage-prompt event, the daemon reseeds the current stage prompt instead of nudging
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready or nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued'`: passed (`3 passed, 34 deselected`)
+  - Real E2E note:
+    - the `pytest-1778` rerun that exposed this bug was stopped after the bounded fix because it was already running on the stale pre-fix code path
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the new prompt-reseed fix and inspect whether the next deepest descendant now gets its routed first stage prompt instead of falling straight into the idle-nudge path
+- 2026-03-14 descendant `children/materialize` now serializes duplicate live replays with a transaction-scoped advisory lock:
+  - Real runtime cause found in the live `pytest-1779` daemon log:
+    - descendant `children/materialize` requests could replay concurrently for the same authoritative parent version
+    - the second request then crashed inside `materialize_layout_children(...)` with:
+      - `psycopg.errors.UniqueViolation: duplicate key value violates unique constraint "pk_parent_child_authority"`
+    - once that happened, the branch kept polling higher-level lifecycle state while the damaged descendant never completed cleanly
+  - Real code fix now in place:
+    - `materialize_layout_children(...)` acquires a transaction-scoped PostgreSQL advisory lock derived from the authoritative parent version UUID before it creates or updates `ParentChildAuthority` / `NodeChild` rows
+    - this serializes duplicate replayed materialization requests without the broader blocking side effects from the earlier `FOR UPDATE` attempt
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_materialization.py -q -k 'materialize_layout_children_uses_advisory_lock_during_materialization or materialize_layout_children_creates_child_nodes_and_dependency_state or materialize_layout_children_is_idempotent_when_layout_matches or materialize_layout_children_is_idempotent_for_generated_workspace_layout'`: passed (`4 passed, 11 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_allows_exact_replay_of_just_completed_review_stage or subtask_start_pushes_layout_generation_prompt_into_active_session'`: passed (`2 passed, 72 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: failed on the same unrelated pre-existing doc-schema issue outside Pool 2 scope (`2026-03-13_ai_project_skeleton_milestone_gate_hardening.md should cite its governing task plan`)
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the descendant materialization replay fix and inspect whether the prerequisite branch now survives the deeper descendant `spawn_children` path cleanly
+- 2026-03-14 `wait_for_children` recovery guidance no longer tells the session to fail and then succeed in the same branch:
+  - Real runtime cause found in the stale `pytest-1786` rerun after the deeper descendant finally reached the live leaf task:
+    - the leaf task implemented `src/cat_clone.py`, passed `python3 -m pytest -q tests/test_cat_clone.py`, then later ended `PAUSED_FOR_USER` during `review_node`
+    - the enclosing plan `d51a7be2-a98d-4d22-b0c9-9bde1ff85b36` reached `wait_for_children`
+    - its live pane showed contradictory current-action guidance:
+      - if a direct child was terminally bad, run `subtask fail ... parent_subtask_failure.md`
+      - then still run `subtask succeed ... child_rollup.md`
+    - that contradiction matches the observed stale state: the plan wrote `summaries/parent_subtask_failure.md` correctly but did not propagate the terminal failure cleanly upward
+  - Real code fix now in place:
+    - the `wait_for_children` stage-specific action text in `session_records.py` now makes the failure path terminal:
+      - if any direct child is terminal without `COMPLETE`, run `subtask fail` and stop
+      - only the all-children-complete branch instructs `subtask succeed`
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_does_not_pause_wait_for_children_while_child_is_running or nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready'`: passed (`3 passed, 34 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_uses_compiled_task_review_prompt or nudge_primary_session_does_not_pause_wait_for_children_while_child_is_running'`: passed (`2 passed, 35 deselected`)
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the corrected terminal-failure wait-stage guidance and inspect whether the prerequisite plan/phase now actually fail upward instead of waiting indefinitely on a `PAUSED_FOR_USER` descendant
+- 2026-03-14 fresh descendant sessions now ignore idle recovery until `codex_ready` is actually recorded:
+  - Real runtime cause found in the fresh `pytest-1790` rerun:
+    - parent, phase, and plan decomposition all advanced cleanly through real layout/review/materialization
+    - leaf task `67a2c7aa-d2cb-4cbf-a343-25ab5918fe7f` did get a prompt-log artifact on disk containing the exact `Implement Leaf Task` instructions
+    - but its live tmux pane showed generic idle-nudge text before the Codex banner instead of that initial stage prompt
+    - the leaf then fell back to `subtask prompt --node 67a2c7aa-d2cb-4cbf-a343-25ab5918fe7f`; the first fetch hung and later bounded retries still did not produce a reliable first-turn path
+    - daemon stderr during the same rerun still showed intermittent child auto-bind `wait_for_codex_ready(...)` `ConfigurationError` failures, reinforcing that fresh descendant readiness remains timing-sensitive
+  - Real code fix now in place:
+    - `nudge_primary_session(...)` now returns `awaiting_codex_ready` and skips idle-recovery prompt injection entirely until the session has recorded a real `codex_ready` event
+    - this prevents fresh runtime-created descendants from being preempted by generic idle nudges before their initial stage prompt has a chance to land
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready'`: passed (`3 passed, 35 deselected`)
+  - Next step:
+    - rerun `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` on top of the pre-`codex_ready` nudge guard and inspect whether the leaf task now receives its initial `implement_leaf_task` first turn instead of falling back to generic idle recovery
+- 2026-03-14 descendant sessions now recover a missing `codex_ready` event once the real Codex banner is visible:
+  - Real runtime cause found in the live `pytest-1791` Flow 22 rerun:
+    - parent `95c229dd-a840-4016-bfc5-446f4c3d537a` completed real layout generation, review, and child materialization
+    - child `46eeb2e9-b752-4418-a1d6-2fd8daab9446` got a real prompt-log file and a live tmux/Codex pane
+    - daemon stderr still logged `_run_child_auto_start_background_loop -> bind_primary_session -> wait_for_codex_ready(...) -> ConfigurationError`
+    - after that failed auto-bind attempt, the live child pane showed a real Codex banner but no first stage prompt, leaving the child stranded while the parent sat in `wait_for_children`
+  - Real code fix now in place:
+    - `nudge_primary_session(...)` now treats a live pane showing the real Codex banner as recovered readiness when `codex_ready` is missing
+    - once that banner is visible, the daemon records `codex_ready` instead of leaving the session permanently stuck in the pre-ready branch
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_recovers_missing_codex_ready_from_visible_banner or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready'`: passed (`3 passed, 36 deselected`)
+  - Real E2E note:
+    - the still-running `pytest-1791` rerun was started on the stale pre-fix daemon, so it cannot prove this recovery path and must be replaced by a fresh rerun
+  - Next step:
+    - stop the stale `pytest-1791` rerun and start a fresh `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` rerun on top of the missing-`codex_ready` recovery fix
+- 2026-03-14 descendant sessions now restart the missing running attempt before reseeding a recovered stage prompt:
+  - Real runtime cause found in the live `pytest-1801` Flow 22 rerun:
+    - child `de0df5d4-8023-4992-a368-86ad57a31e9c` recovered far enough to edit and successfully register `layouts/generated/de0df5d4-8023-4992-a368-86ad57a31e9c.yaml`
+    - after registration, repeated `subtask succeed --node de0df5d4-... --compiled-subtask 7c4b6567-... --summary-file summaries/layout_generation.md` returned `409 Conflict`
+    - the child pane showed the daemon conflict text: `current compiled subtask has no running attempt`
+    - this matches the child auto-bind failure path: when `bind_primary_session(...)` dies inside `wait_for_codex_ready(...)`, it never reaches `_prime_bound_primary_session(...)`, so the recovered session can later get a prompt without ever having started the durable attempt row
+  - Real code fix now in place:
+    - `_seed_missing_stage_prompt_after_codex_ready(...)` now calls `start_subtask_attempt(...)` for the current compiled subtask before it reseeds the missing stage prompt
+    - this ensures a recovered child session has a live running attempt before it is told to submit `subtask succeed`
+  - Bounded verification:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_recovers_missing_codex_ready_from_visible_banner or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready or nudge_primary_session_reseeds_missing_stage_prompt_and_restarts_missing_attempt'`: passed (`4 passed, 36 deselected`)
+  - Real E2E note:
+    - the live `pytest-1801` rerun was already running on the pre-fix daemon when this patch landed, so it cannot validate the restarted-attempt behavior and must be replaced by a fresh rerun
+  - Next step:
+    - stop the stale `pytest-1801` rerun and start a fresh `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` rerun on top of the restarted-attempt recovery fix
+
 ## Exit Criteria
 
 - owned files show real runtime-created descendants where their narrative requires them

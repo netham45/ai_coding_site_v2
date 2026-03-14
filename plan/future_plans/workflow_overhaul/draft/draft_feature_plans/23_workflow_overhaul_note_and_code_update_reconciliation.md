@@ -12,10 +12,10 @@ Make the workflow-overhaul note/code-update bundle executable by turning its bro
 
 ## Implementation Subtasks
 
-- define the note families that must update when workflow-profile runtime, prompts, or flows change
+- define the note families that must update when workflow-profile runtime, templated-task-generation behavior, prompts, or flows change
 - define the checklist and development-log maintenance expectations for workflow-overhaul implementation slices
 - map code surfaces to their required note updates so plan execution can track them explicitly
-- document the minimal repo-wide note update batch that must accompany each major workflow-profile runtime milestone
+- document the minimal repo-wide note update batch that must accompany each major workflow-profile or template-generation runtime milestone
 
 ## Main Dependencies
 

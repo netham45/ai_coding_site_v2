@@ -2,13 +2,13 @@
 
 ## Goal
 
-Prepare the verification, checklist, E2E, and flow-traceability surfaces required to land workflow-overhaul features honestly.
+Prepare the verification, checklist, E2E, and flow-traceability surfaces required to land workflow-overhaul features honestly, including template-driven generated-task narratives.
 
 ## Main Work
 
 - freeze canonical bounded and E2E proving expectations
 - map route plans and future flows into traceability updates
-- define which feature/checklist families must be updated together
+- define which feature/checklist/template families must be updated together
 
 ## Main Outputs
 
@@ -18,7 +18,7 @@ Prepare the verification, checklist, E2E, and flow-traceability surfaces require
 
 ## Implementation Subtasks
 
-- define the bounded-test and real-E2E proving standard for workflow-profile and checklist-mode work
+- define the bounded-test and real-E2E proving standard for workflow-profile and templated-task-generation work
 - map which canonical flows and future flows must be updated when each feature slice lands
 - define the checklist, verification-command, and traceability artifacts that must move in lockstep with each slice
 - align the route-plan assets with the future authoritative E2E narratives so proof scope stays explicit
@@ -32,7 +32,7 @@ Prepare the verification, checklist, E2E, and flow-traceability surfaces require
 ## Flows Touched
 
 - all workflow-overhaul-affected flows
-- future checklist flows
+- future template-generation flows
 
 ## Relevant Current Code
 
@@ -48,5 +48,5 @@ Prepare the verification, checklist, E2E, and flow-traceability surfaces require
 
 ## Current Gaps
 
-- there are no profile-aware or checklist-aware real E2E suites yet
-- the current traceability and flow surfaces cover existing runtime flows, not the future workflow-profile and checklist routes drafted in this bundle
+- there are no profile-aware or template-generation-aware real E2E suites yet
+- the current traceability and flow surfaces cover existing runtime flows, not the future workflow-profile and template-generation routes drafted in this bundle

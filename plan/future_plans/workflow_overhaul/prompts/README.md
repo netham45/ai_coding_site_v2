@@ -82,6 +82,7 @@ The intended composition model is:
 - `plan/authoring.md`
 - `plan/execution.md`
 - `plan/verification.md`
+- `plan/remediation.md`
 
 ### Task tier
 

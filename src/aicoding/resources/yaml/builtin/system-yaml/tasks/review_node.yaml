@@ -5,6 +5,8 @@ description: Run the default review gate for the current node.
 applies_to_kinds:
   - task
   - plan
+  - phase
+  - epic
 policy:
   max_subtask_retries: 1
   on_failure: pause_for_user

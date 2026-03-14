@@ -12,6 +12,7 @@ It backfills the checklist system defined in `notes/catalogs/checklists/feature_
 - E2E target basis: `plan/e2e_tests/06_e2e_feature_matrix.md`
 - Current real E2E assets already present in the repo: `tests/e2e/test_flow_01_create_top_level_node_real.py`, `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py`, `tests/e2e/test_flow_03_materialize_and_schedule_children_real.py`, `tests/e2e/test_flow_04_manual_tree_edit_and_reconcile_real.py`
 - Interpretation rule: where the E2E matrix names a future suite that does not yet exist in `tests/e2e/`, the E2E target is still recorded here, but E2E status remains `planned`.
+- Transitional documentation rule: historical entries in this backfill still use a combined `Notes` field until DU-05 migration updates each checklist entry to split `User documentation` from `Notes`.
 
 ## Feature Plan Index
 

@@ -230,6 +230,17 @@ After merge-back:
 
 This prevents pushed child work from creating hidden cursor jumps.
 
+## Child Bootstrap Prompt Rule
+
+The delegated child-session bootstrap prompt must include:
+
+- the durable child session id
+- the explicit `session pop --session <id> --file <path>` command the child must run to merge back
+- the allowed result shape fields
+- clear instruction that the delegated `reason` is the authoritative scope unless additional concrete child inputs are present
+
+If the delegated reason is present but no further concrete child work is available in the prompt or workspace, the child session may return a bounded `partial` result instead of stalling while searching for hidden scope.
+
 ---
 
 ## DB Implications

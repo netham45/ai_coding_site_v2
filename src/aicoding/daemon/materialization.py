@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+import re
 from uuid import UUID
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.config import get_settings
@@ -18,7 +19,16 @@ from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle, 
 from aicoding.daemon.workflow_events import record_workflow_event
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
-from aicoding.db.models import HierarchyNode, LogicalNodeCurrentVersion, NodeChild, NodeVersion, ParentChildAuthority, RebuildEvent, WorkflowEvent
+from aicoding.db.models import (
+    HierarchyNode,
+    LogicalNodeCurrentVersion,
+    NodeChild,
+    NodeHierarchyDefinition,
+    NodeVersion,
+    ParentChildAuthority,
+    RebuildEvent,
+    WorkflowEvent,
+)
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import HierarchyRegistry
 from aicoding.resources import ResourceCatalog
@@ -141,6 +151,17 @@ class LayoutRegistrationSnapshot:
         }
 
 
+def generated_layout_relative_path(*, logical_node_id: UUID) -> str:
+    return f"layouts/generated/{logical_node_id}.yaml"
+
+
+def _materialization_lock_key(*, parent_version_id: UUID) -> int:
+    key = int(parent_version_id.hex[:16], 16)
+    if key >= 1 << 63:
+        key -= 1 << 64
+    return key
+
+
 def register_generated_layout(
     session_factory: sessionmaker[Session],
     *,
@@ -164,13 +185,15 @@ def register_generated_layout(
 
     layout_hash = sha256(content.encode("utf-8")).hexdigest()
     workspace_root = get_settings().workspace_root or Path.cwd()
-    registered_path = workspace_root / "layouts" / "generated_layout.yaml"
+    layout_relative_path = generated_layout_relative_path(logical_node_id=logical_node_id)
+    registered_path = workspace_root / layout_relative_path
     registered_path.parent.mkdir(parents=True, exist_ok=True)
 
     with session_scope(session_factory) as session:
         parent_node = session.get(HierarchyNode, logical_node_id)
         if parent_node is None:
             raise DaemonNotFoundError("parent node not found")
+        _validate_layout_children_for_parent(session=session, parent_node=parent_node, children_spec=list(document.children))
         selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
         if selector is None:
             raise DaemonNotFoundError("parent node version selector not found")
@@ -186,7 +209,7 @@ def register_generated_layout(
             payload_json={
                 "source_path": str(source_path.resolve()),
                 "registered_path": str(registered_path),
-                "layout_relative_path": "layouts/generated_layout.yaml",
+                "layout_relative_path": layout_relative_path,
                 "layout_hash": layout_hash,
                 "child_count": len(document.children),
             },
@@ -198,7 +221,7 @@ def register_generated_layout(
         status="registered",
         source_path=str(source_path.resolve()),
         registered_path=str(registered_path),
-        layout_relative_path="layouts/generated_layout.yaml",
+        layout_relative_path=layout_relative_path,
         layout_hash=layout_hash,
         child_count=len(document.children),
         workflow_event_id=event.id,
@@ -222,6 +245,14 @@ def materialize_layout_children(
         parent_version = session.get(NodeVersion, selector.authoritative_node_version_id)
         if parent_version is None:
             raise DaemonNotFoundError("parent node version not found")
+        # Serialize materialization per authoritative parent version so replayed
+        # requests cannot race on authority or child-edge creation.
+        session.execute(
+            text("select pg_advisory_xact_lock(cast(:lock_key as bigint))"),
+            {
+                "lock_key": _materialization_lock_key(parent_version_id=parent_version.id),
+            },
+        )
 
         resolved_layout = _resolve_materialization_layout(
             session_factory=session_factory,
@@ -235,6 +266,7 @@ def materialize_layout_children(
         if not children_spec:
             raise DaemonConflictError("layout has no children")
         _validate_layout_children(children_spec)
+        _validate_layout_children_for_parent(session=session, parent_node=parent_node, children_spec=children_spec)
 
         authority = session.get(ParentChildAuthority, parent_version.id)
         if authority is None:
@@ -321,7 +353,7 @@ def materialize_layout_children(
 
 def _child_prompt_from_layout(*, parent_version: NodeVersion, child_spec: dict[str, object]) -> str:
     goal = str(child_spec.get("goal", "")).strip()
-    parent_prompt = parent_version.prompt.strip()
+    parent_prompt = _direct_parent_request_text(parent_version.prompt)
     acceptance = [str(item).strip() for item in child_spec.get("acceptance", []) if str(item).strip()]
     parts = [goal] if goal else []
     if parent_prompt:
@@ -330,6 +362,21 @@ def _child_prompt_from_layout(*, parent_version: NodeVersion, child_spec: dict[s
         parts.extend(["", "Child Acceptance Criteria:"])
         parts.extend(f"- {item}" for item in acceptance)
     return "\n".join(parts).strip()
+
+
+_INHERITED_REQUEST_SECTION_RE = re.compile(
+    r"(?m)^\s*(Parent [A-Za-z]+ Request:|Child Acceptance Criteria:)\s*$"
+)
+
+
+def _direct_parent_request_text(prompt_text: str) -> str:
+    normalized = prompt_text.strip()
+    if not normalized:
+        return ""
+    match = _INHERITED_REQUEST_SECTION_RE.search(normalized)
+    if match is None:
+        return normalized
+    return normalized[: match.start()].rstrip()
 
 
 def _existing_materialization_snapshot(
@@ -435,20 +482,12 @@ def _resolve_materialization_layout(
     resources: ResourceCatalog,
     parent_kind: str,
 ) -> ResolvedMaterializationLayout:
-    workspace_root = get_settings().workspace_root or Path.cwd()
-    generated_layout_path = workspace_root / "layouts" / "generated_layout.yaml"
-    if generated_layout_path.exists():
-        generated_content = generated_layout_path.read_text(encoding="utf-8")
-        generated_hash = sha256(generated_content.encode("utf-8")).hexdigest()
-        if _generated_layout_is_registered(
-            session_factory,
-            logical_node_id=logical_node_id,
-            layout_hash=generated_hash,
-        ):
-            return ResolvedMaterializationLayout(
-                relative_path="layouts/generated_layout.yaml",
-                content=generated_content,
-            )
+    registered_layout = _load_registered_generated_layout(
+        session_factory,
+        logical_node_id=logical_node_id,
+    )
+    if registered_layout is not None:
+        return registered_layout
 
     layout_relative_path = _default_layout_for_kind(parent_kind)
     if layout_relative_path is None:
@@ -460,12 +499,12 @@ def _resolve_materialization_layout(
     )
 
 
-def _generated_layout_is_registered(
+def _load_registered_generated_layout(
     session_factory: sessionmaker[Session],
     *,
     logical_node_id: UUID,
-    layout_hash: str,
-) -> bool:
+) -> ResolvedMaterializationLayout | None:
+    workspace_root = get_settings().workspace_root or Path.cwd()
     with query_session_scope(session_factory) as session:
         row = (
             session.execute(
@@ -481,8 +520,25 @@ def _generated_layout_is_registered(
             .first()
         )
         if row is None:
-            return False
-        return str((row.payload_json or {}).get("layout_hash", "")) == layout_hash
+            return None
+        payload = row.payload_json or {}
+        registered_path_text = str(payload.get("registered_path", "")).strip()
+        layout_relative_path = str(payload.get("layout_relative_path", "")).strip()
+        expected_hash = str(payload.get("layout_hash", "")).strip()
+    if not registered_path_text or not layout_relative_path:
+        return None
+    registered_path = Path(registered_path_text)
+    if not registered_path.is_absolute():
+        registered_path = workspace_root / registered_path
+    if not registered_path.exists():
+        return None
+    content = registered_path.read_text(encoding="utf-8")
+    if expected_hash and sha256(content.encode("utf-8")).hexdigest() != expected_hash:
+        return None
+    return ResolvedMaterializationLayout(
+        relative_path=layout_relative_path,
+        content=content,
+    )
 
 
 def _validate_layout_children(children_spec: list[dict[str, object]]) -> None:
@@ -513,6 +569,39 @@ def _validate_layout_children(children_spec: list[dict[str, object]]) -> None:
                 raise DaemonConflictError("layout child dependency target is invalid")
             adjacency[child_id].append(str(dependency))
     _ensure_acyclic_dependencies(adjacency)
+
+
+def _validate_layout_children_for_parent(
+    *,
+    session: Session,
+    parent_node: HierarchyNode,
+    children_spec: list[dict[str, object]],
+) -> None:
+    parent_definition = session.get(NodeHierarchyDefinition, parent_node.kind)
+    if parent_definition is None:
+        raise DaemonNotFoundError(f"node hierarchy definition not found for parent kind '{parent_node.kind}'")
+    allowed_child_kinds = {
+        str(item).strip()
+        for item in (parent_definition.allowed_child_kinds_json or [])
+        if str(item).strip()
+    }
+    allowed_child_tiers = {
+        str(item).strip()
+        for item in (parent_definition.allowed_child_tiers_json or [])
+        if str(item).strip()
+    }
+    for item in children_spec:
+        child_id = str(getattr(item, "id", None) or (item.get("id", "") if isinstance(item, dict) else "")).strip() or "<unknown>"
+        child_kind = str(getattr(item, "kind", None) or (item.get("kind", "") if isinstance(item, dict) else "")).strip()
+        child_tier = str(getattr(item, "tier", None) or (item.get("tier", "") if isinstance(item, dict) else "")).strip()
+        if allowed_child_kinds and child_kind not in allowed_child_kinds:
+            raise DaemonConflictError(
+                f"layout child '{child_id}' uses kind '{child_kind}', but parent kind '{parent_node.kind}' only allows: {', '.join(sorted(allowed_child_kinds))}"
+            )
+        if allowed_child_tiers and child_tier not in allowed_child_tiers:
+            raise DaemonConflictError(
+                f"layout child '{child_id}' uses tier '{child_tier}', but parent kind '{parent_node.kind}' only allows tiers: {', '.join(sorted(allowed_child_tiers))}"
+            )
 
 
 def _logical_node_id_for_version(session: Session, node_version_id: UUID) -> UUID:

@@ -1,5 +1,13 @@
 # Checklist Execution Mode Schema Draft
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_task_sequence_template_schema_draft.md`
+
+The active direction is to model reusable decomposition as task-sequence templates that materialize normal child tasks, not checklist instances with their own runtime lifecycle.
+
 ## Purpose
 
 Define a draft schema for checklist execution mode as an optional execution contract that any task-oriented workflow profile may enable.

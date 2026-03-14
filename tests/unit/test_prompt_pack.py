@@ -152,6 +152,8 @@ def test_execution_prompt_includes_original_node_request() -> None:
     assert "summary register --node node-123 --file summaries/implementation.md --type subtask" not in rendered.rendered_text
     assert 'subtask complete --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary "Implemented the leaf task."' not in rendered.rendered_text
     assert "workflow advance --node node-123" not in rendered.rendered_text
+    assert "subtask current --node node-123" not in rendered.rendered_text
+    assert "if this extra context read is unavailable or times out, continue with the compiled context already embedded in this prompt instead of blocking the workflow" in rendered.rendered_text
     assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123" in rendered.rendered_text
     assert "continue in the same session" in rendered.rendered_text
     assert "stop and do not probe the closed run" in rendered.rendered_text
@@ -171,19 +173,64 @@ def test_layout_generation_prompts_require_explicit_layout_registration() -> Non
 
         assert "node register-layout" in rendered.rendered_text
         assert "--node node-123" in rendered.rendered_text
-        assert "--file layouts/generated_layout.yaml" in rendered.rendered_text
+        assert "--file layouts/generated/node-123.yaml" in rendered.rendered_text
         assert "do not assume the daemon will discover" in rendered.rendered_text
         assert "kind: layout_definition" in rendered.rendered_text
         assert "children:" in rendered.rendered_text
-        assert "subtask current --node node-123" in rendered.rendered_text
+        assert "Use the current compiled subtask UUID from this prompt" in rendered.rendered_text
+        assert "CURRENT_COMPILED_SUBTASK_ID" in rendered.rendered_text
+        assert "subtask current --node node-123" not in rendered.rendered_text
         assert "subtask start --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID" in rendered.rendered_text
         assert "subtask context --node node-123" in rendered.rendered_text
+        assert "if this extra context read is unavailable or times out, continue with the compiled context already embedded in this prompt instead of blocking the workflow" in rendered.rendered_text
         assert "subtask succeed --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file summaries/layout_generation.md" in rendered.rendered_text
+        if relative_path == "layouts/generate_phase_layout.md":
+            assert "if the user request specifies an exact child count, honor that exact count" in rendered.rendered_text
+            assert "if the user request specifies a direct dependency shape between siblings, preserve that exact shape" in rendered.rendered_text
+            assert "do not add coordination, setup, or verification phases" in rendered.rendered_text
+        if relative_path == "layouts/generate_plan_layout.md":
+            assert "default to exactly one implementation plan" in rendered.rendered_text
+            assert "do not split concrete implementation work into separate diagnosis, discovery, reproduction, or verification-only plans" in rendered.rendered_text
+            assert "do not preserve ancestor decomposition patterns" in rendered.rendered_text
+        if relative_path == "layouts/generate_task_layout.md":
+            assert "create exactly one implementation task by default" in rendered.rendered_text
+            assert "do not split concrete implementation work into separate diagnosis, discovery, reproduction, or verification-only tasks" in rendered.rendered_text
+            assert "do not preserve ancestor dependency shapes" in rendered.rendered_text
         assert "summary register --node node-123 --file summaries/layout_generation.md --type subtask" not in rendered.rendered_text
         assert "subtask complete --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID" not in rendered.rendered_text
         assert "workflow advance --node node-123" not in rendered.rendered_text
         assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123" in rendered.rendered_text
         assert "stop and do not probe the closed parent run" in rendered.rendered_text
+
+
+def test_runtime_cli_bootstrap_prompt_requires_foreground_subtask_startup_sequence() -> None:
+    catalog = load_resource_catalog()
+    context = _render_context()
+    content = catalog.resolve("prompt_pack_default", "runtime/cli_bootstrap.md").read_text(encoding="utf-8")
+    rendered = render_text(content, context=context, field_name="prompt")
+
+    assert "Use the current compiled subtask UUID already provided in this prompt" in rendered.rendered_text
+    assert "subtask current --node node-123" not in rendered.rendered_text
+    assert "state.current_compiled_subtask_id" not in rendered.rendered_text
+    assert "subtask start --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID" in rendered.rendered_text
+    assert "subtask context --node node-123" in rendered.rendered_text
+    assert "If that extra context read is unavailable or times out, continue with the prompt and compiled context already in this session instead of blocking the workflow." in rendered.rendered_text
+    assert "Finish the concrete work for the current subtask instead of repeatedly reloading the prompt" in rendered.rendered_text
+    assert "subtask succeed --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file PATH_TO_SUMMARY" in rendered.rendered_text
+    assert "subtask fail --node node-123 --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file PATH_TO_FAILURE_SUMMARY" in rendered.rendered_text
+    assert "follow the daemon-routed next stage instead of looping back through `subtask prompt`" in rendered.rendered_text
+    assert "do not leave short-lived CLI commands waiting in a background terminal" in rendered.rendered_text
+
+
+def test_runtime_session_bootstrap_prompt_requires_single_pass_bootstrap_and_handoff() -> None:
+    catalog = load_resource_catalog()
+    context = _render_context()
+    content = catalog.resolve("prompt_pack_default", "runtime/session_bootstrap.md").read_text(encoding="utf-8")
+    rendered = render_text(content, context=context, field_name="prompt")
+
+    assert "do the bootstrap checks once, then stop reloading this prompt" in rendered.rendered_text
+    assert "record the result through the daemon-provided `subtask succeed` or `subtask fail` command path" in rendered.rendered_text
+    assert "continue from the routed next stage instead of fetching this bootstrap prompt again" in rendered.rendered_text
 
 
 def test_review_prompts_require_review_run_submission() -> None:
@@ -202,3 +249,7 @@ def test_review_prompts_require_review_run_submission() -> None:
         assert "--status fail" in rendered.rendered_text
         assert "--findings-file reviews/findings.json" in rendered.rendered_text
         assert "--criteria-file reviews/criteria.json" in rendered.rendered_text
+        if relative_path == "review/review_layout_against_request.md":
+            assert "diagnosis, discovery, reproduction, or verification-only children" in rendered.rendered_text
+            assert "concrete file/module target and exact validation command" in rendered.rendered_text
+            assert "Revise the layout instead of passing it" in rendered.rendered_text

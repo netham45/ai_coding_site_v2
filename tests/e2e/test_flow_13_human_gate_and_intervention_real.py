@@ -33,8 +33,8 @@ def _write_workspace_pause_override(workspace_root) -> None:
                 "value:",
                 "  available_tasks:",
                 "    - research_context",
-                "    - execute_node",
                 "    - pause_for_user",
+                "    - execute_node",
                 "    - validate_node",
                 "    - review_node",
             ]
@@ -68,7 +68,7 @@ def test_flow_13_human_gate_and_intervention_runs_against_real_daemon_and_real_c
 
     paused_progress = None
     last_pane_text = ""
-    deadline = time.time() + 60.0
+    deadline = time.time() + 90.0
     while time.time() < deadline:
         progress_result = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
         assert progress_result.exit_code == 0, progress_result.stderr

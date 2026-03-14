@@ -197,6 +197,7 @@ def test_flow_14_project_bootstrap_and_yaml_onboarding_runs_against_real_daemon_
 
     start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
     assert start_result.exit_code == 0, start_result.stderr
+    assert start_result.json()["status"] == "admitted", start_result.stdout
     bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
     assert bind_result.exit_code == 0, bind_result.stderr
     session_name = str(bind_result.json()["session_name"])

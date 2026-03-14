@@ -3,15 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+import re
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.daemon.incremental_parent_merge import record_completed_child_for_incremental_merge_in_session
+from aicoding.daemon.incremental_parent_merge import (
+    finalize_completed_child_for_incremental_merge,
+    record_completed_child_for_incremental_merge_in_session,
+)
 from aicoding.daemon.history import record_prompt_delivery, record_summary_history
 from aicoding.daemon.environments import build_execution_environment
+from aicoding.daemon.session_harness import SessionAdapter
 from aicoding.daemon.review_runtime import evaluate_review_subtask
 from aicoding.daemon.session_manager import current_stage_prompt_cli_command
 from aicoding.daemon.testing_runtime import evaluate_testing_subtask
@@ -21,6 +26,7 @@ from aicoding.db.models import (
     CompiledSubtask,
     CompiledTask,
     CompiledWorkflow,
+    HierarchyNode,
     LogicalNodeCurrentVersion,
     NodeDependency,
     NodeDependencyBlocker,
@@ -40,6 +46,23 @@ from aicoding.resources import ResourceCatalog
 ACTIVE_RUN_STATUSES = {"PENDING", "RUNNING", "PAUSED"}
 APPROVED_PAUSE_FLAGS_KEY = "approved_pause_flags"
 PAUSE_CONTEXT_KEY = "pause_context"
+AUTO_CLEARABLE_PROGRESS_PAUSE_FLAGS = {"idle_nudge_limit_exceeded"}
+_INHERITED_REQUEST_SECTION_RE = re.compile(
+    r"(?m)^\s*(Parent [A-Za-z]+ Request:|Child Acceptance Criteria:)\s*$"
+)
+
+
+def _effective_startup_node_prompt(*, version: NodeVersion, subtask: CompiledSubtask, compiled_task: CompiledTask | None) -> str:
+    prompt_text = version.prompt.strip()
+    if (
+        compiled_task is not None
+        and compiled_task.task_key == "generate_child_layout"
+        and version.node_kind in {"phase", "plan"}
+    ):
+        match = _INHERITED_REQUEST_SECTION_RE.search(prompt_text)
+        if match is not None:
+            return prompt_text[: match.start()].rstrip()
+    return prompt_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,7 +359,13 @@ def list_node_runs(session_factory: sessionmaker[Session], *, logical_node_id: U
         return [_run_snapshot(row, version.logical_node_id) for row in rows]
 
 
-def start_subtask_attempt(session_factory: sessionmaker[Session], *, logical_node_id: UUID, compiled_subtask_id: UUID) -> RunProgressSnapshot:
+def start_subtask_attempt(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+    compiled_subtask_id: UUID,
+    adapter: SessionAdapter | None = None,
+) -> RunProgressSnapshot:
     with session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
         if state.current_compiled_subtask_id != compiled_subtask_id:
@@ -387,7 +416,18 @@ def start_subtask_attempt(session_factory: sessionmaker[Session], *, logical_nod
             attempt.output_json = {"execution_environment": execution_environment.to_payload()}
         _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
         session.flush()
-        return _progress_snapshot(session, run.id)
+        snapshot = _progress_snapshot(session, run.id)
+    if adapter is not None and snapshot.run.run_status == "FAILED":
+        from aicoding.daemon.session_records import cleanup_sessions_for_run
+
+        cleanup_sessions_for_run(
+            session_factory,
+            node_run_id=snapshot.run.id,
+            adapter=adapter,
+            cleanup_reason="subtask_attempt_launch_failed",
+            status="FAILED",
+        )
+    return snapshot
 
 
 def heartbeat_current_subtask(
@@ -451,6 +491,30 @@ def complete_current_subtask(
         return _progress_snapshot(session, run.id)
 
 
+def _wait_for_children_incomplete_states(session: Session, *, logical_node_id: UUID) -> list[dict[str, str | None]]:
+    child_nodes = session.execute(
+        select(HierarchyNode)
+        .where(HierarchyNode.parent_node_id == logical_node_id)
+        .order_by(HierarchyNode.created_at.asc(), HierarchyNode.node_id.asc())
+    ).scalars().all()
+    incomplete: list[dict[str, str | None]] = []
+    for child in child_nodes:
+        lifecycle = session.get(NodeLifecycleState, str(child.node_id))
+        lifecycle_state = None if lifecycle is None else lifecycle.lifecycle_state
+        run_status = None if lifecycle is None else lifecycle.run_status
+        if lifecycle_state != "COMPLETE":
+            incomplete.append(
+                {
+                    "node_id": str(child.node_id),
+                    "title": child.title,
+                    "kind": child.kind,
+                    "lifecycle_state": lifecycle_state,
+                    "run_status": run_status,
+                }
+            )
+    return incomplete
+
+
 def load_current_subtask_prompt(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> SubtaskPromptSnapshot:
     with session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
@@ -464,6 +528,11 @@ def load_current_subtask_prompt(session_factory: sessionmaker[Session], *, logic
         command_text = subtask.command_text
         if prompt_text is None and command_text:
             prompt_text = _synthesized_command_subtask_prompt(logical_node_id=logical_node_id, subtask=subtask)
+        current_subtask_token = str(subtask.id)
+        if isinstance(prompt_text, str) and prompt_text:
+            prompt_text = prompt_text.replace("CURRENT_COMPILED_SUBTASK_ID", current_subtask_token)
+        if isinstance(command_text, str) and command_text:
+            command_text = command_text.replace("CURRENT_COMPILED_SUBTASK_ID", current_subtask_token)
         content = prompt_text or command_text or ""
         prompt_record = record_prompt_delivery(
             session,
@@ -506,9 +575,10 @@ def _synthesized_command_subtask_prompt(*, logical_node_id: UUID, subtask: Compi
         f"Current subtask type: `{subtask.subtask_type}`",
         "",
         "Required CLI workflow:",
-        f"1. Resolve the live compiled subtask UUID with `python3 -m aicoding.cli.main subtask current --node {logical_node_id}`.",
-        f"2. Start the attempt with `python3 -m aicoding.cli.main subtask start --node {logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`.",
-        f"3. Inspect the current context with `python3 -m aicoding.cli.main subtask context --node {logical_node_id}`.",
+        f"1. Use the current compiled subtask UUID from this prompt: `{subtask.id}`.",
+        f"2. Start the attempt with `python3 -m aicoding.cli.main subtask start --node {logical_node_id} --compiled-subtask {subtask.id}`.",
+        f"3. If you still need more current stage data, inspect it once with `python3 -m aicoding.cli.main subtask context --node {logical_node_id}`.",
+        "   - if that extra context read is unavailable or times out, continue with the prompt and compiled context already in this session instead of blocking the workflow",
         "4. Run the current command exactly once and capture its real exit code:",
         f"   - `{subtask.command_text}`",
         "5. Write `summaries/command_result.json` containing at least:",
@@ -646,10 +716,37 @@ def succeed_current_subtask(
     summary_path: str,
     content: str,
     catalog: ResourceCatalog | None = None,
+    adapter: SessionAdapter | None = None,
 ) -> CompositeStageOutcomeSnapshot:
     with query_session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
         if state.current_compiled_subtask_id != compiled_subtask_id:
+            if state.last_completed_compiled_subtask_id == compiled_subtask_id:
+                current_subtask = session.get(CompiledSubtask, compiled_subtask_id)
+                latest_attempt = _latest_attempt(session, run.id, compiled_subtask_id)
+                matching_summary = session.execute(
+                    select(SummaryRecord)
+                    .where(
+                        SummaryRecord.node_run_id == run.id,
+                        SummaryRecord.compiled_subtask_id == compiled_subtask_id,
+                        SummaryRecord.summary_type == "subtask",
+                        SummaryRecord.summary_path == summary_path,
+                        SummaryRecord.content == content,
+                    )
+                    .order_by(SummaryRecord.created_at.desc(), SummaryRecord.id.desc())
+                ).scalars().first()
+                if current_subtask is not None and latest_attempt is not None and latest_attempt.status == "COMPLETE" and matching_summary is not None:
+                    progressed = _progress_snapshot(session, run.id)
+                    return CompositeStageOutcomeSnapshot(
+                        node_id=version.logical_node_id,
+                        node_run_id=run.id,
+                        accepted_compiled_subtask_id=compiled_subtask_id,
+                        accepted_subtask_type=current_subtask.subtask_type,
+                        recorded_summary_id=matching_summary.id,
+                        recorded_summary_path=summary_path,
+                        outcome=_route_outcome(progressed),
+                        progress=progressed,
+                    )
             raise DaemonConflictError("compiled subtask is not the current run cursor")
         current_subtask = session.get(CompiledSubtask, compiled_subtask_id)
         if current_subtask is None:
@@ -658,6 +755,17 @@ def succeed_current_subtask(
             raise DaemonConflictError("subtask succeed only supports non-command stages")
         if current_subtask.subtask_type in {"review", "validate", "run_tests", "build_docs"}:
             raise DaemonConflictError("subtask succeed does not support this stage type")
+        if current_subtask.subtask_type == "wait_for_children":
+            incomplete_children = _wait_for_children_incomplete_states(session, logical_node_id=logical_node_id)
+            if incomplete_children:
+                child_summary = "; ".join(
+                    f"{item['title']} ({item['kind']} {item['node_id']}) lifecycle={item['lifecycle_state']} run={item['run_status']}"
+                    for item in incomplete_children
+                )
+                raise DaemonConflictError(
+                    "wait_for_children cannot complete before all materialized children are COMPLETE: "
+                    f"{child_summary}"
+                )
         accepted_subtask_type = current_subtask.subtask_type
         node_run_id = run.id
         node_id = version.logical_node_id
@@ -675,7 +783,7 @@ def succeed_current_subtask(
         compiled_subtask_id=compiled_subtask_id,
         summary=_summary_preview(content),
     )
-    progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+    progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog, adapter=adapter)
     return CompositeStageOutcomeSnapshot(
         node_id=node_id,
         node_run_id=node_run_id,
@@ -696,6 +804,7 @@ def report_command_subtask(
     execution_result_json: dict[str, object],
     failure_summary: str | None = None,
     catalog: ResourceCatalog | None = None,
+    adapter: SessionAdapter | None = None,
 ) -> CompositeStageOutcomeSnapshot:
     with query_session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
@@ -713,6 +822,7 @@ def report_command_subtask(
     exit_code = execution_result_json.get("exit_code")
     if not isinstance(exit_code, int):
         raise DaemonConflictError("command result payload must include integer exit_code")
+    normalized_failure_summary = (failure_summary or "").strip()
 
     if accepted_subtask_type in {"validate", "run_tests"}:
         complete_current_subtask(
@@ -722,7 +832,7 @@ def report_command_subtask(
             execution_result_json=execution_result_json,
             summary=f"Recorded command result for {accepted_subtask_type}.",
         )
-        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog, adapter=adapter)
         return CompositeStageOutcomeSnapshot(
             node_id=node_id,
             node_run_id=node_run_id,
@@ -734,6 +844,26 @@ def report_command_subtask(
             progress=progressed,
         )
 
+    if normalized_failure_summary:
+        failed = fail_current_subtask(
+            session_factory,
+            logical_node_id=logical_node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            summary=normalized_failure_summary,
+            execution_result_json=execution_result_json,
+            adapter=adapter,
+        )
+        return CompositeStageOutcomeSnapshot(
+            node_id=node_id,
+            node_run_id=node_run_id,
+            accepted_compiled_subtask_id=compiled_subtask_id,
+            accepted_subtask_type=accepted_subtask_type,
+            recorded_summary_id=UUID(int=0),
+            recorded_summary_path="summaries/command_result.json",
+            outcome=_route_outcome(failed),
+            progress=failed,
+        )
+
     if exit_code == 0:
         complete_current_subtask(
             session_factory,
@@ -742,7 +872,7 @@ def report_command_subtask(
             execution_result_json=execution_result_json,
             summary="Completed command subtask.",
         )
-        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog)
+        progressed = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=catalog, adapter=adapter)
         return CompositeStageOutcomeSnapshot(
             node_id=node_id,
             node_run_id=node_run_id,
@@ -758,8 +888,9 @@ def report_command_subtask(
         session_factory,
         logical_node_id=logical_node_id,
         compiled_subtask_id=compiled_subtask_id,
-        summary=(failure_summary or f"Command subtask failed with exit code {exit_code}."),
+        summary=(normalized_failure_summary or f"Command subtask failed with exit code {exit_code}."),
         execution_result_json=execution_result_json,
+        adapter=adapter,
     )
     return CompositeStageOutcomeSnapshot(
         node_id=node_id,
@@ -780,6 +911,7 @@ def fail_current_subtask(
     compiled_subtask_id: UUID,
     summary: str,
     execution_result_json: dict[str, object] | None = None,
+    adapter: SessionAdapter | None = None,
 ) -> RunProgressSnapshot:
     with session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
@@ -802,7 +934,18 @@ def fail_current_subtask(
         state.failure_count_consecutive += 1
         _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
         session.flush()
-        return _progress_snapshot(session, run.id)
+        snapshot = _progress_snapshot(session, run.id)
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_sessions_for_run
+
+        cleanup_sessions_for_run(
+            session_factory,
+            node_run_id=snapshot.run.id,
+            adapter=adapter,
+            cleanup_reason="subtask_failed",
+            status="FAILED",
+        )
+    return snapshot
 
 
 def advance_workflow(
@@ -810,6 +953,7 @@ def advance_workflow(
     *,
     logical_node_id: UUID,
     catalog: ResourceCatalog | None = None,
+    adapter: SessionAdapter | None = None,
 ) -> RunProgressSnapshot:
     current_subtask_id: UUID | None = None
     current_subtask_type: str | None = None
@@ -899,6 +1043,13 @@ def advance_workflow(
     with session_scope(session_factory) as session:
         run, state, version = _load_active_run_bundle(session, logical_node_id)
         assert current_subtask_id is not None
+        _clear_progress_pause_if_needed(
+            session,
+            logical_node_id=logical_node_id,
+            run=run,
+            state=state,
+            node_version_id=version.id,
+        )
         next_subtask = _next_subtask(session, run.compiled_workflow_id, current_subtask_id)
         if next_subtask is None:
             run.run_status = "COMPLETE"
@@ -908,31 +1059,83 @@ def advance_workflow(
             state.current_compiled_subtask_id = None
             state.current_subtask_attempt = None
             state.is_resumable = False
-            record_completed_child_for_incremental_merge_in_session(session, child_node_version_id=version.id)
+            _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
+            session.flush()
+            terminal_run_id = run.id
+            terminal_version_id = version.id
+        else:
+            state.lifecycle_state = "RUNNING"
+            state.current_task_id = next_subtask.compiled_task_id
+            state.current_compiled_subtask_id = next_subtask.id
+            state.current_subtask_attempt = None
+            state.execution_cursor_json = {"position": next_subtask.ordinal}
+            if next_subtask.block_on_user_flag:
+                _pause_run(
+                    session,
+                    logical_node_id=logical_node_id,
+                    run=run,
+                    state=state,
+                    node_version_id=version.id,
+                    pause_flag_name=next_subtask.block_on_user_flag,
+                    pause_summary=f"Paused before gated subtask '{next_subtask.title or next_subtask.source_subtask_key}'.",
+                    approval_required=True,
+                    current_subtask=next_subtask,
+                    pause_summary_prompt=next_subtask.pause_summary_prompt,
+                )
             _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
             session.flush()
             return _progress_snapshot(session, run.id)
-        state.lifecycle_state = "RUNNING"
-        state.current_task_id = next_subtask.compiled_task_id
-        state.current_compiled_subtask_id = next_subtask.id
-        state.current_subtask_attempt = None
-        state.execution_cursor_json = {"position": next_subtask.ordinal}
-        if next_subtask.block_on_user_flag:
-            _pause_run(
-                session,
-                logical_node_id=logical_node_id,
-                run=run,
-                state=state,
-                node_version_id=version.id,
-                pause_flag_name=next_subtask.block_on_user_flag,
-                pause_summary=f"Paused before gated subtask '{next_subtask.title or next_subtask.source_subtask_key}'.",
-                approval_required=True,
-                current_subtask=next_subtask,
-                pause_summary_prompt=next_subtask.pause_summary_prompt,
-            )
-        _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
-        session.flush()
-        return _progress_snapshot(session, run.id)
+    finalize_completed_child_for_incremental_merge(
+        session_factory,
+        catalog,
+        child_node_version_id=terminal_version_id,
+    )
+    with query_session_scope(session_factory) as session:
+        snapshot = _progress_snapshot(session, terminal_run_id)
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_sessions_for_run
+
+        cleanup_sessions_for_run(
+            session_factory,
+            node_run_id=snapshot.run.id,
+            adapter=adapter,
+            cleanup_reason="run_completed",
+            status="COMPLETE",
+        )
+    return snapshot
+
+
+def _clear_progress_pause_if_needed(
+    session: Session,
+    *,
+    logical_node_id: UUID,
+    run: NodeRun,
+    state: NodeRunState,
+    node_version_id: UUID,
+) -> None:
+    active_flag = state.pause_flag_name
+    if active_flag not in AUTO_CLEARABLE_PROGRESS_PAUSE_FLAGS:
+        return
+    run.run_status = "RUNNING"
+    state.lifecycle_state = "RUNNING"
+    state.pause_flag_name = None
+    state.is_resumable = True
+    cursor = dict(state.execution_cursor_json or {})
+    cursor.pop(APPROVED_PAUSE_FLAGS_KEY, None)
+    pause_context = dict(cursor.get(PAUSE_CONTEXT_KEY, {}))
+    pause_context["cleared_after_progress"] = True
+    pause_context["cleared_pause_flag_name"] = active_flag
+    cursor[PAUSE_CONTEXT_KEY] = pause_context
+    state.execution_cursor_json = cursor
+    record_workflow_event(
+        session,
+        logical_node_id=logical_node_id,
+        node_version_id=node_version_id,
+        node_run_id=run.id,
+        event_scope="pause",
+        event_type="pause_cleared_after_progress",
+        payload_json={"pause_flag_name": active_flag},
+    )
 
 
 def sync_paused_run(session_factory: sessionmaker[Session], *, logical_node_id: UUID, pause_flag_name: str | None) -> RunProgressSnapshot:
@@ -1039,6 +1242,7 @@ def sync_failed_run(
     logical_node_id: UUID,
     failure_summary: str,
     failure_reason: str,
+    adapter: SessionAdapter | None = None,
 ) -> RunProgressSnapshot:
     failed_at = datetime.now(timezone.utc)
     with session_scope(session_factory) as session:
@@ -1083,7 +1287,18 @@ def sync_failed_run(
         )
         _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
         session.flush()
-        return _progress_snapshot(session, run.id)
+        snapshot = _progress_snapshot(session, run.id)
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_sessions_for_run
+
+        cleanup_sessions_for_run(
+            session_factory,
+            node_run_id=snapshot.run.id,
+            adapter=adapter,
+            cleanup_reason=failure_reason,
+            status="FAILED",
+        )
+    return snapshot
 
 
 def cancel_active_run(
@@ -1091,6 +1306,7 @@ def cancel_active_run(
     *,
     logical_node_id: UUID,
     summary: str | None = None,
+    adapter: SessionAdapter | None = None,
 ) -> RunProgressSnapshot:
     cancelled_at = datetime.now(timezone.utc)
     cancellation_summary = summary or "Run cancelled by operator request."
@@ -1133,7 +1349,18 @@ def cancel_active_run(
         )
         _sync_lifecycle_with_run(session, logical_node_id=logical_node_id, run=run, state=state)
         session.flush()
-        return _progress_snapshot(session, run.id)
+        snapshot = _progress_snapshot(session, run.id)
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_sessions_for_run
+
+        cleanup_sessions_for_run(
+            session_factory,
+            node_run_id=snapshot.run.id,
+            adapter=adapter,
+            cleanup_reason="run_cancelled",
+            status="CANCELLED",
+        )
+    return snapshot
 
 
 def retry_current_subtask(
@@ -1328,6 +1555,13 @@ def _current_subtask_payload(session: Session, compiled_subtask_id: UUID | None)
     subtask = session.get(CompiledSubtask, compiled_subtask_id)
     if subtask is None:
         return None
+    current_subtask_token = str(subtask.id)
+    prompt_text = subtask.prompt_text
+    command_text = subtask.command_text
+    if isinstance(prompt_text, str) and prompt_text:
+        prompt_text = prompt_text.replace("CURRENT_COMPILED_SUBTASK_ID", current_subtask_token)
+    if isinstance(command_text, str) and command_text:
+        command_text = command_text.replace("CURRENT_COMPILED_SUBTASK_ID", current_subtask_token)
     return {
         "id": str(subtask.id),
         "compiled_task_id": str(subtask.compiled_task_id),
@@ -1335,8 +1569,8 @@ def _current_subtask_payload(session: Session, compiled_subtask_id: UUID | None)
         "ordinal": subtask.ordinal,
         "subtask_type": subtask.subtask_type,
         "title": subtask.title,
-        "prompt_text": subtask.prompt_text,
-        "command_text": subtask.command_text,
+        "prompt_text": prompt_text,
+        "command_text": command_text,
         "environment_policy_ref": subtask.environment_policy_ref,
         "environment_request_json": dict(subtask.environment_request_json or {}),
         "block_on_user_flag": subtask.block_on_user_flag,
@@ -1388,11 +1622,19 @@ def _next_run_number(session: Session, node_version_id: UUID) -> int:
 
 
 def _first_subtask(session: Session, workflow_id: UUID) -> CompiledSubtask | None:
+    tasks = session.execute(
+        select(CompiledTask)
+        .where(CompiledTask.compiled_workflow_id == workflow_id)
+        .order_by(CompiledTask.ordinal)
+    ).scalars().all()
+    if not tasks:
+        return None
+    entry_task = next((task for task in tasks if bool((task.config_json or {}).get("entry_task"))), None)
+    selected_task = entry_task or tasks[0]
     return session.execute(
         select(CompiledSubtask)
-        .join(CompiledTask, CompiledSubtask.compiled_task_id == CompiledTask.id)
-        .where(CompiledTask.compiled_workflow_id == workflow_id)
-        .order_by(CompiledTask.ordinal, CompiledSubtask.ordinal)
+        .where(CompiledSubtask.compiled_task_id == selected_task.id)
+        .order_by(CompiledSubtask.ordinal)
     ).scalars().first()
 
 
@@ -1689,13 +1931,18 @@ def _assemble_stage_context(
         .order_by(NodeDependencyBlocker.created_at, NodeDependencyBlocker.id)
     ).scalars().all()
     cursor = dict(state.execution_cursor_json or {})
+    effective_node_prompt = _effective_startup_node_prompt(
+        version=version,
+        subtask=subtask,
+        compiled_task=compiled_task,
+    )
     return {
         "startup": {
             "node_id": str(version.logical_node_id),
             "node_version_id": str(version.id),
             "node_title": version.title,
             "node_kind": version.node_kind,
-            "node_prompt": version.prompt,
+            "node_prompt": effective_node_prompt,
             "run_id": str(run.id),
             "run_number": run.run_number,
             "trigger_reason": run.trigger_reason,

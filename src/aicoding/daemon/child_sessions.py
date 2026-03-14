@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
-from aicoding.daemon.session_manager import build_child_session_plan
-from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
+from aicoding.daemon.session_manager import build_child_session_plan, codex_prompt_instruction
+from aicoding.daemon.session_harness import SessionAdapter, SessionPoller, send_input_when_ready, wait_for_codex_ready
 from aicoding.db.models import ChildSessionResult, NodeRunState, Session, SessionEvent
 from aicoding.db.session import query_session_scope, session_scope
+from aicoding.rendering import build_render_context, render_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,13 +115,22 @@ def push_child_session(
 
         record_id = uuid4()
         launch_plan = build_child_session_plan(parent_session_id=parent.id, session_id=record_id)
+        rendered_prompt = _render_delegated_child_prompt(
+            delegated_prompt_text,
+            logical_node_id=logical_node_id,
+            child_session_id=record_id,
+            reason=reason,
+        )
+        if launch_plan.prompt_log_path:
+            prompt_path = Path(launch_plan.prompt_log_path)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text(rendered_prompt, encoding="utf-8")
         snapshot = adapter.create_session(
             launch_plan.session_name,
             launch_plan.command,
             launch_plan.working_directory,
             environment=launch_plan.environment,
         )
-        adapter.send_input(launch_plan.session_name, delegated_prompt_text, press_enter=True)
         record = Session(
             id=record_id,
             node_version_id=parent.node_version_id,
@@ -152,7 +163,7 @@ def push_child_session(
             },
         )
         session.flush()
-        return _child_session_snapshot(
+        snapshot_payload = _child_session_snapshot(
             record,
             reason=reason,
             delegated_prompt_path=delegated_prompt_path,
@@ -160,6 +171,39 @@ def push_child_session(
             adapter=adapter,
             poller=poller,
         )
+    ready_snapshot = wait_for_codex_ready(adapter, session_name=snapshot_payload.tmux_session_name or "")
+    send_input_when_ready(
+        adapter,
+        session_name=ready_snapshot.session_name,
+        text=codex_prompt_instruction(
+            prompt_target=launch_plan.prompt_log_path or delegated_prompt_path,
+            prompt_source="file",
+        ),
+        press_enter=True,
+    )
+    with session_scope(session_factory) as session:
+        record = session.get(Session, record_id)
+        if record is not None:
+            record.last_heartbeat_at = ready_snapshot.last_activity_at
+            _record_session_event(
+                session,
+                record.id,
+                "child_codex_ready",
+                {
+                    "tmux_session_name": ready_snapshot.session_name,
+                    "delegated_prompt_path": delegated_prompt_path,
+                },
+            )
+            _record_session_event(
+                session,
+                record.id,
+                "child_prompt_pushed",
+                {
+                    "instruction_target": launch_plan.prompt_log_path or delegated_prompt_path,
+                },
+            )
+            session.flush()
+    return snapshot_payload
 
 
 def pop_child_session(
@@ -167,6 +211,7 @@ def pop_child_session(
     *,
     child_session_id: UUID,
     result_payload: dict[str, object],
+    adapter: SessionAdapter | None = None,
 ) -> ChildSessionResultSnapshot:
     with session_scope(session_factory) as session:
         child = session.get(Session, child_session_id)
@@ -225,7 +270,7 @@ def pop_child_session(
             },
         )
         session.flush()
-        return ChildSessionResultSnapshot(
+        snapshot = ChildSessionResultSnapshot(
             child_session_id=child.id,
             parent_compiled_subtask_id=parent_state.current_compiled_subtask_id,
             status=status,
@@ -235,6 +280,17 @@ def pop_child_session(
             suggested_next_actions=suggested_next_actions,
             recorded_at=durable.created_at.isoformat(),
         )
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_session_by_id
+
+        cleanup_session_by_id(
+            session_factory,
+            session_id=child_session_id,
+            adapter=adapter,
+            cleanup_reason="child_session_popped",
+            status="COMPLETE",
+        )
+    return snapshot
 
 
 def load_child_session_result(
@@ -321,6 +377,27 @@ def _attach_result_to_parent_context(
 
 def _record_session_event(session: OrmSession, session_id: UUID, event_type: str, payload: dict[str, object]) -> None:
     session.add(SessionEvent(id=uuid4(), session_id=session_id, event_type=event_type, payload_json=payload))
+
+
+def _render_delegated_child_prompt(
+    template_text: str,
+    *,
+    logical_node_id: UUID,
+    child_session_id: UUID,
+    reason: str,
+) -> str:
+    context = build_render_context(
+        scopes={
+            "node": {"id": str(logical_node_id)},
+            "child_session": {"id": str(child_session_id)},
+            "compat": {
+                "node_id": str(logical_node_id),
+                "child_session_id": str(child_session_id),
+                "delegated_reason": reason,
+            },
+        }
+    )
+    return render_text(template_text, context=context, field_name="prompt").rendered_text
 
 
 def _child_push_event_payload(session: OrmSession, session_id: UUID) -> dict[str, object]:

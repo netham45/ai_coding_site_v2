@@ -48,23 +48,27 @@ def test_dependency_endpoints_and_cli_round_trip(app_client, auth_headers, cli_r
     assert start_response.json()["status"] == "blocked"
     assert start_response.json()["reason"] == "blocked"
 
-    app_client.post("/api/nodes/lifecycle/transition", headers=auth_headers, json={"node_id": left, "target_state": "RUNNING"})
-    app_client.post("/api/nodes/lifecycle/transition", headers=auth_headers, json={"node_id": left, "target_state": "COMPLETE"})
-    start_after_complete = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": right})
-
-    assert start_after_complete.json()["status"] == "admitted"
-    assert start_after_complete.json()["current_state"] == "RUNNING"
-
     monkeypatch.setattr("aicoding.cli.handlers.build_daemon_client", lambda settings: daemon_bridge_client)
     dependencies_result = cli_runner(["node", "dependencies", "--node", right])
     validate_result = cli_runner(["node", "dependency-validate", "--node", right])
     blockers_result = cli_runner(["node", "blockers", "--node", right])
+    blocked_start_result = cli_runner(["node", "run", "start", "--node", right])
 
     assert dependencies_result.exit_code == 0
     assert len(dependencies_result.json()["dependencies"]) == 1
     assert validate_result.exit_code == 0
     assert validate_result.json()["status"] == "valid"
     assert blockers_result.exit_code == 0
+    assert blocked_start_result.exit_code == 4
+    assert blocked_start_result.stderr_json()["error"] == "daemon_conflict"
+    assert blocked_start_result.stderr_json()["details"]["response"]["status"] == "blocked"
+
+    app_client.post("/api/nodes/lifecycle/transition", headers=auth_headers, json={"node_id": left, "target_state": "RUNNING"})
+    app_client.post("/api/nodes/lifecycle/transition", headers=auth_headers, json={"node_id": left, "target_state": "COMPLETE"})
+    start_after_complete = app_client.post("/api/node-runs/start", headers=auth_headers, json={"node_id": right})
+
+    assert start_after_complete.json()["status"] == "admitted"
+    assert start_after_complete.json()["current_state"] == "RUNNING"
 
 
 def test_sibling_dependency_requires_incremental_merge_before_admission(

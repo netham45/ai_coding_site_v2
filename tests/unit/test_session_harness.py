@@ -5,7 +5,14 @@ import tempfile
 import time
 from uuid import uuid4
 
-from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller, TmuxSessionAdapter
+from aicoding.daemon.session_harness import (
+    FakeSessionAdapter,
+    SessionPoller,
+    TmuxSessionAdapter,
+    send_input_when_ready,
+    try_send_input_when_ready,
+    wait_for_codex_ready,
+)
 from tests.helpers.session_harness import FakeClock
 
 
@@ -55,6 +62,72 @@ def test_fake_session_adapter_can_preserve_dead_session_process() -> None:
     assert snapshot.process_alive is False
     assert snapshot.exit_status == 17
     assert adapter.session_exists("node-1") is True
+
+
+def test_wait_for_codex_ready_returns_immediately_for_non_tmux_backend() -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    adapter.create_session("node-1", "codex -C . --yolo", ".")
+
+    snapshot = wait_for_codex_ready(adapter, session_name="node-1")
+
+    assert snapshot.session_name == "node-1"
+
+
+def test_send_input_when_ready_waits_until_active_turn_markers_clear() -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    adapter.backend_name = "tmux"
+    adapter.create_session("node-1", "codex -C . --yolo", ".")
+    adapter._sessions["node-1"].pane_text = "• Working (3s • esc to interrupt)\n"
+
+    def release_turn() -> None:
+        time.sleep(0.2)
+        adapter._sessions["node-1"].pane_text = "OpenAI Codex\n>_\n"
+
+    import threading
+
+    worker = threading.Thread(target=release_turn, daemon=True)
+    worker.start()
+    send_input_when_ready(adapter, session_name="node-1", text="follow-up instruction", press_enter=False, timeout_seconds=2.0)
+    worker.join(timeout=1.0)
+
+    assert "follow-up instruction" in adapter.describe("node-1").pane_text
+
+
+def test_try_send_input_when_ready_returns_false_when_active_turn_does_not_clear() -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    adapter.backend_name = "tmux"
+    adapter.create_session("node-1", "codex -C . --yolo", ".")
+    adapter._sessions["node-1"].pane_text = "• Working (28s • esc to interrupt)\n"
+
+    sent = try_send_input_when_ready(
+        adapter,
+        session_name="node-1",
+        text="follow-up instruction",
+        press_enter=False,
+        timeout_seconds=0.2,
+    )
+
+    assert sent is False
+    assert "follow-up instruction" not in adapter.describe("node-1").pane_text
+
+
+def test_wait_for_codex_ready_requires_banner_not_just_codex_process() -> None:
+    clock = FakeClock()
+    adapter = FakeSessionAdapter(now=clock.now)
+    adapter.backend_name = "tmux"
+    adapter.create_session("node-1", "node /home/test/.nvm/versions/node/v22/bin/codex -C . --yolo", ".")
+    adapter._sessions["node-1"].pane_text = ""
+
+    import pytest
+    from aicoding.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        wait_for_codex_ready(adapter, session_name="node-1", timeout_seconds=1.0, settle_seconds=0.0)
+
+    assert exc_info.value.message == "Timed out waiting for Codex session readiness banner."
 
 
 def test_tmux_session_adapter_smoke_lifecycle() -> None:

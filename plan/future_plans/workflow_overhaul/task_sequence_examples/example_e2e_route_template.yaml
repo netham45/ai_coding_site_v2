@@ -1,0 +1,41 @@
+kind: task_sequence_template
+schema_ref: task_sequence_schema_v1
+id: e2e_route_v1
+name: E2E Route Sequence
+description: Materialize the standard route from inspection to real proof.
+applies_to_profiles:
+  - task.e2e
+when_to_use:
+  - a recurring E2E route should be reused across many runs
+  - the proving ladder should remain consistent
+when_not_to_use:
+  - the child tasks are bespoke to one plan
+  - the decomposition itself is still being discovered
+materialization:
+  strategy: spawn_child_tasks
+  freeze_dependencies_at_compile: true
+  allow_instance_overrides: false
+steps:
+  - id: inspect_runtime_contract
+    title: Inspect runtime contract
+    objective: Confirm the daemon and CLI contract for the route.
+    task_profile: task.docs
+    depends_on: []
+    expected_outputs:
+      - runtime_summary
+  - id: draft_route_plan
+    title: Draft route plan
+    objective: Write the route-plan note for the target runtime behavior.
+    task_profile: task.docs
+    depends_on:
+      - inspect_runtime_contract
+    expected_outputs:
+      - route_plan_note
+  - id: prove_real_e2e
+    title: Prove real E2E
+    objective: Add and run the real E2E proof for the route.
+    task_profile: task.e2e
+    depends_on:
+      - draft_route_plan
+    proving_targets:
+      - tests/e2e/

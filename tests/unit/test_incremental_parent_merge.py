@@ -14,6 +14,7 @@ from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifec
 from aicoding.daemon.hierarchy import create_hierarchy_node, sync_hierarchy_definitions
 from aicoding.daemon.git_conflicts import list_merge_conflicts_for_version, list_merge_events_for_node, resolve_merge_conflict
 from aicoding.daemon.incremental_parent_merge import (
+    finalize_completed_child_for_incremental_merge,
     get_parent_incremental_merge_lane,
     list_incremental_child_merge_states_for_parent,
     process_next_incremental_child_merge,
@@ -209,6 +210,8 @@ def test_advance_workflow_records_incremental_merge_state_on_terminal_completion
         lifecycle_state="RUNNING",
         current_task_id=uuid4(),
         current_subtask_attempt=1,
+        pause_flag_name=None,
+        execution_cursor_json={},
         is_resumable=True,
     )
     fake_version = SimpleNamespace(id=version_id)
@@ -240,11 +243,16 @@ def test_advance_workflow_records_incremental_merge_state_on_terminal_completion
     monkeypatch.setattr("aicoding.daemon.run_orchestration._sync_lifecycle_with_run", lambda *args, **kwargs: None)
     monkeypatch.setattr("aicoding.daemon.run_orchestration._progress_snapshot", lambda session, run_id: "terminal-progress")
 
-    def _record(session, *, child_node_version_id: UUID):
+    def _record(_factory, _catalog, *, child_node_version_id: UUID):
         recorded["child_node_version_id"] = child_node_version_id
         return None
 
-    monkeypatch.setattr("aicoding.daemon.run_orchestration.record_completed_child_for_incremental_merge_in_session", _record)
+    @contextmanager
+    def _fake_query_session_scope(_factory):
+        yield fake_session
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_session_scope)
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.finalize_completed_child_for_incremental_merge", _record)
 
     result = advance_workflow(object(), logical_node_id=logical_node_id)
 
@@ -252,6 +260,68 @@ def test_advance_workflow_records_incremental_merge_state_on_terminal_completion
     assert recorded["child_node_version_id"] == version_id
     assert fake_run.run_status == "COMPLETE"
     assert fake_state.lifecycle_state == "COMPLETE"
+
+
+def test_finalize_completed_child_for_incremental_merge_finalizes_non_leaf_child_and_records_parent_lane(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    child = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Child Phase",
+        prompt="c",
+        parent_node_id=parent.node_id,
+    )
+    child_version = initialize_node_version(db_session_factory, logical_node_id=child.node_id)
+    grandchild = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="plan",
+        title="Child Plan",
+        prompt="g",
+        parent_node_id=child.node_id,
+    )
+    grandchild_version = initialize_node_version(db_session_factory, logical_node_id=grandchild.node_id)
+
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=child_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=grandchild_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    grandchild_status = stage_live_git_change(
+        db_session_factory,
+        version_id=grandchild_version.id,
+        files={"shared.txt": "base\ngrandchild final\n"},
+        message="Grandchild final",
+        record_as_final=True,
+    )
+
+    record_completed_child_for_incremental_merge(db_session_factory, child_node_version_id=grandchild_version.id)
+    process_next_incremental_child_merge(db_session_factory, parent_node_version_id=child_version.id)
+
+    snapshot = finalize_completed_child_for_incremental_merge(
+        db_session_factory,
+        catalog,
+        child_node_version_id=child_version.id,
+    )
+    child_status = show_live_git_status(db_session_factory, version_id=child_version.id)
+    states = list_incremental_child_merge_states_for_parent(db_session_factory, parent_node_version_id=parent_version.id)
+    lane = get_parent_incremental_merge_lane(db_session_factory, parent_node_version_id=parent_version.id)
+
+    assert snapshot is not None
+    assert snapshot.child_node_version_id == child_version.id
+    assert child_status.final_commit_sha is not None
+    assert states[0].child_node_version_id == child_version.id
+    assert states[0].child_final_commit_sha == child_status.final_commit_sha
+    assert states[0].child_final_commit_sha != grandchild_status.final_commit_sha
+    assert lane is not None
+    assert lane.status == "pending"
 
 
 def test_process_next_incremental_child_merge_executes_real_git_and_records_applied_order(

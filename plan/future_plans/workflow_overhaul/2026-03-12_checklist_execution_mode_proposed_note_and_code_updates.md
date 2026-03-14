@@ -1,5 +1,13 @@
 # Checklist Execution Mode Proposed Note And Code Updates
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_templated_task_generation_proposed_note_and_code_updates.md`
+
+The active direction now tracks note and code updates for task-sequence templates and generated-task provenance instead of a checklist-specific runtime.
+
 ## Purpose
 
 Record the concrete note and code updates that checklist execution mode would require if promoted into implementation.

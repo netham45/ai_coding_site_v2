@@ -28,6 +28,13 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/user/getting-started.md
+        - docs/operator/first-live-run.md
     invariants:
       - created nodes, prompts, and compiled workflows must be durably inspectable
       - top-level creation must not rely on hidden session state
@@ -66,6 +73,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/compile-and-yaml-inspection.md
     invariants:
       - execution must run from immutable compiled workflow snapshots
       - compile lineage and source discovery must remain inspectable
@@ -104,6 +117,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: not_applicable
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/tree-materialization-and-rebuild.md
     invariants:
       - child materialization must be durable and idempotent for the same authoritative layout
       - blockers and readiness must be inspectable from durable state
@@ -142,6 +161,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: not_applicable
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/tree-materialization-and-rebuild.md
     invariants:
       - manual edits must not be silently overwritten by later regeneration
       - structural authority state must remain explicit and inspectable
@@ -180,6 +205,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/first-live-run.md
     invariants:
       - current subtask and attempt state must be reconstructable after restart
       - workflow advancement must not depend on hidden in-memory state
@@ -218,6 +249,13 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/inspect-state-and-blockers.md
+        - docs/reference/cli.md
     invariants:
       - inspect surfaces must agree on node, run, and workflow identity
       - blocker reasons must be explainable through intended read surfaces
@@ -256,6 +294,12 @@ flows:
       website_ui: affected
       yaml: not_applicable
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/runbooks/pause-resume-recovery.md
     invariants:
       - recovery classification must survive interruption and restart
       - pause and resume history must be durably inspectable
@@ -294,6 +338,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/runbooks/failure-escalation.md
     invariants:
       - failure cause and parent-decision history must be durably reconstructable
       - impossible waits and blocked states must route to explicit outcomes
@@ -332,6 +382,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/quality-provenance-and-finalize.md
     invariants:
       - gate results must persist with enough detail to explain pass or fail outcomes
       - finalization readiness must not skip required quality gates silently
@@ -370,6 +426,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/tree-materialization-and-rebuild.md
     invariants:
       - rectification and rebuild history must be durably queryable
       - supersession and authoritative-version movement must remain reconstructable
@@ -408,6 +470,12 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: not_applicable
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/operator/quality-provenance-and-finalize.md
     invariants:
       - merge events and conflict decisions must be durably inspectable
       - authoritative lineage movement must remain reconstructable after finalize
@@ -446,6 +514,13 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: not_applicable
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/reference/cli.md
+        - docs/operator/quality-provenance-and-finalize.md
     invariants:
       - provenance entities and relations must be queryable from durable state
       - docs outputs must remain addressable through operator surfaces
@@ -484,6 +559,13 @@ flows:
       website_ui: affected
       yaml: affected
       prompts: affected
+      user_documentation: affected
+    documentation:
+      required: true
+      surfaces:
+        - docs/README.md
+        - docs/runbooks/pause-resume-recovery.md
+        - docs/runbooks/failure-escalation.md
     invariants:
       - approval and intervention history must be durably auditable
       - blocked resume must not bypass the required human decision path

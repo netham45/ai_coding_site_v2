@@ -16,5 +16,6 @@ Boundary:
 
 - `notes/catalogs/inventory/major_feature_inventory.md` is the architecture inventory and design-maturity surface
 - `notes/catalogs/checklists/*.md` is the implementation and verification status surface
+- `docs/` is the user/operator documentation surface and should not be collapsed into `notes/` silently
 
 When feature plans, E2E targets, or proving status change, update the backfill in the same change.

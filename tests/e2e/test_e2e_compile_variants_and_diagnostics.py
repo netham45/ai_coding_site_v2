@@ -203,6 +203,7 @@ def test_e2e_compile_variants_and_diagnostics(real_daemon_harness) -> None:
 
     start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
     assert start_result.exit_code == 0, start_result.stderr
+    assert start_result.json()["status"] == "admitted", start_result.stdout
     bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
     assert bind_result.exit_code == 0, bind_result.stderr
     session_name = str(bind_result.json()["session_name"])
@@ -232,6 +233,27 @@ def test_e2e_compile_variants_and_diagnostics(real_daemon_harness) -> None:
         f"session_name={session_name}\n"
         f"pane_text=\n{last_pane_text}"
     )
+
+    cancel_result = real_daemon_harness.cli("workflow", "cancel", "--node", node_id)
+    assert cancel_result.exit_code == 0, cancel_result.stderr
+    cancelled_run_payload = None
+    cancel_cleared = False
+    cancel_deadline = time.time() + 30.0
+    while time.time() < cancel_deadline:
+        cancelled_run_show = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
+        if cancelled_run_show.exit_code != 0:
+            assert cancelled_run_show.stderr_json()["details"]["response"]["detail"] == "active node run not found"
+            cancel_cleared = True
+            break
+        cancelled_run_payload = cancelled_run_show.json()
+        if cancelled_run_payload["run"]["run_status"] == "CANCELLED":
+            break
+        time.sleep(1.0)
+
+    if not cancel_cleared:
+        assert cancelled_run_payload is not None
+        assert cancelled_run_payload["run"]["run_status"] == "CANCELLED"
+        assert cancelled_run_payload["state"]["lifecycle_state"] == "CANCELLED"
 
     supersede_result = real_daemon_harness.cli("node", "supersede", "--node", node_id, "--title", "Real E2E Compile Diagnostics Epic v2")
     assert supersede_result.exit_code == 0, supersede_result.stderr

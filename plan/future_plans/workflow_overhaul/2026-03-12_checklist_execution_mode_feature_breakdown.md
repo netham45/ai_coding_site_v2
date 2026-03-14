@@ -1,5 +1,13 @@
 # Checklist Execution Mode Feature Breakdown
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_templated_task_generation_feature_breakdown.md`
+
+The active workflow-overhaul direction now centers reusable task-sequence templates that generate normal child tasks.
+
 ## Purpose
 
 Break checklist execution mode into concrete implementation features rather than leaving it as one abstract future idea.

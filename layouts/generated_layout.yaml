@@ -1,31 +1,28 @@
 kind: layout_definition
-id: discovery_phase_to_plans
-name: Discovery Phase To Plans
-description: Discovery-driven plan layout for the ncurses editor evaluation phase.
+id: real_e2e_flow_22_parent_layout
+name: Real E2E Flow 22 Parent Layout
+description: Two sibling phases with a strict prerequisite dependency from the second phase to the first.
 children:
-  - id: editor_scope_and_interaction_spec
-    kind: plan
-    tier: 2
-    name: Editor Scope And Interaction Spec
-    goal: Lock the implementation stack and define the MVP editor behaviors for files, the Escape menu, and multiple-window interaction.
-    rationale: The request leaves the ncurses stack choice and several UI semantics ambiguous, so the implementation phase should not start until those decisions are explicit.
+  - id: prerequisite_lane
+    kind: phase
+    tier: 1
+    name: Prerequisite Lane
+    goal: Complete the prerequisite work required before the dependent lane can begin.
+    rationale: The user requested the first sibling to be the prerequisite lane and to keep the layout minimal.
     dependencies: []
     acceptance:
-      - The editor implementation language and terminal-library choice are explicit.
-      - The MVP behavior for open, save, save as, new, and close is defined.
-      - The meaning of multiple windows is concrete enough for task-level implementation.
-      - Known non-goals and open risks are recorded.
+      - The prerequisite lane defines and delivers the prerequisite work needed by the dependent sibling.
+      - The prerequisite lane can complete independently without relying on the second sibling.
     ordinal: 1
-  - id: implementation_breakdown_and_orchestration_plan
-    kind: plan
-    tier: 2
-    name: Implementation Breakdown And Orchestration Plan
-    goal: Turn the approved editor scope into executable task slices for editor core, file actions, window management, and verification inside the orchestrator tree.
-    rationale: The user explicitly wants a full epic -> phase -> plan -> task tree, so discovery must end with a task-ready breakdown rather than only a prose summary.
+  - id: blocked_dependent_lane
+    kind: phase
+    tier: 1
+    name: Blocked Dependent Lane
+    goal: Perform the dependent work only after the prerequisite lane completes through a live tmux session.
+    rationale: The second sibling must remain blocked on the first until the first completes, preserving the requested dependency shape.
     dependencies:
-      - editor_scope_and_interaction_spec
+      - prerequisite_lane
     acceptance:
-      - Task slices cover editor core, file lifecycle, menu handling, and multi-window behavior.
-      - Verification expectations for the ncurses editor MVP are explicit.
-      - The implementation sequence reflects real dependencies instead of speculative parallelism.
+      - The dependent lane remains blocked until the prerequisite lane is completed through a live tmux session.
+      - The dependent lane starts only after the prerequisite lane finishes successfully.
     ordinal: 2

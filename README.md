@@ -1,6 +1,6 @@
 # ai_coding_site_v2
 
-Bootstrap scaffold for the spec-driven orchestration system described in `notes/` and `plan/`.
+Bootstrap scaffold for the spec-driven orchestration system described in `notes/`, `plan/`, and the user/operator documentation surfaces under `docs/`.
 
 ## Current scope
 
@@ -27,6 +27,13 @@ The canonical feature implementation-status surface is:
 The architectural inventory remains in:
 
 - `notes/catalogs/inventory/major_feature_inventory.md`
+
+The user-documentation governance surface is being adopted through:
+
+- `docs/README.md`
+- `notes/specs/product/user_documentation_contract.md`
+- `notes/catalogs/checklists/feature_checklist_standard.md`
+- `notes/catalogs/traceability/relevant_user_flow_inventory.yaml`
 
 ## Environment
 
@@ -101,6 +108,7 @@ Real E2E checkpoints are tracked separately from bounded and integration proof.
 
 Use `notes/catalogs/checklists/verification_command_catalog.md` for the current canonical command families.
 Use `notes/catalogs/checklists/e2e_execution_policy.md` for the current local, CI, gated/manual, and release-readiness execution expectations.
+Use `docs/README.md` for the boundary between user/operator docs and internal `notes/` governance artifacts.
 
 Current wrapper rule:
 
@@ -118,9 +126,17 @@ Migration discipline in the current setup phase:
 
 ## Layout
 
+- `docs`: user guides, operator guides, references, and runbooks
 - `src/aicoding/cli`: Python CLI skeleton
 - `src/aicoding/daemon`: FastAPI daemon skeleton and auth dependency
 - `src/aicoding/db`: SQLAlchemy metadata and session factory foundation
 - `src/aicoding/resources`: YAML, prompt, and docs assets
 - `tests`: unit, integration, fixtures, factories, and performance scaffolding
 - `alembic`: migration environment scaffold
+
+## Documentation Boundary
+
+- `docs/` contains user-facing and operator-facing documentation artifacts
+- `notes/` contains governance, specifications, planning, traceability, and development logs
+- `notes/scenarios/` is retained for historical scenario analysis and migration pointers; real user/operator docs belong under `docs/`
+- `src/aicoding/resources/yaml/**/docs` contains machine-readable docs-definition assets, not the full user-documentation system

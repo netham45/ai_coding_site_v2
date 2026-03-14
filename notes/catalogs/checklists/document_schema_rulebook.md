@@ -51,6 +51,9 @@ Required rules:
 - task plans must additionally include:
   - `## Verification`
   - `## Exit Criteria`
+- task plans created or materially revised on or after 2026-03-13 must additionally include:
+  - `## Documentation Impact`
+  - `## Documentation Verification`
 - verification checklists must include:
   - `## Goal`
   - `## Verify`
@@ -76,6 +79,7 @@ Required rules:
 - full feature-plan coverage
 - explicit E2E target and E2E status fields
 - explicit current-command linkage
+- distinct notes status and user documentation status expectations
 
 ### Flow, Traceability, And E2E Families
 
@@ -101,9 +105,10 @@ Required rules:
 - the structured relevant-user-flow inventory must:
   - declare its interpretation boundary relative to `flows/*.md`
   - include one entry per canonical relevant flow
-  - record affected-system scope across the six required systems
+  - record affected-system scope across the seven required systems when user documentation is first-class
   - record invariants, canonical commands, and proof statuses for each tracked flow
   - link every tracked flow to an existing canonical `flows/*.md` file
+  - record whether documentation is required for the flow and which documentation surfaces are affected
 
 ### Traceability Catalog Family
 
@@ -147,6 +152,21 @@ Required rules:
 - canonical commands live in the command catalog
 - execution tiers live in the execution policy
 - README and other authoritative docs link back to those canonical sources instead of inventing parallel command sets
+
+### User Documentation Family
+
+Applies to:
+
+- `docs/**/*.md`
+- `notes/specs/product/user_documentation_contract.md`
+
+Required rules:
+
+- the repo must define the boundary among `docs/`, `notes/`, `notes/scenarios/`, and YAML `docs` assets explicitly
+- the top-level `docs/` tree must include stable user/operator/reference/runbook entrypoints
+- historical scenario walkthroughs under `notes/scenarios/` must point readers at the authoritative `docs/` tree instead of competing with it
+- authoritative onboarding and walkthrough docs must point readers to the documentation boundary rather than leaving it implicit
+- documentation-governance notes must explain when plans and checklists are required to record documentation impact
 
 ### Operational Log Family
 

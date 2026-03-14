@@ -92,6 +92,10 @@ def codex_home_path_for_run(*, node_run_id: UUID) -> str:
     return str(_runtime_artifact_root() / "codex-home" / str(node_run_id))
 
 
+def codex_home_path_for_child_session(*, parent_session_id: UUID, session_id: UUID) -> str:
+    return str(_runtime_artifact_root() / "codex-home" / "child-sessions" / str(parent_session_id) / str(session_id))
+
+
 def trusted_workspace_paths_for_codex(*, working_directory: str) -> tuple[str, ...]:
     working_path = Path(working_directory).expanduser().resolve()
     candidates: list[Path] = [working_path]
@@ -172,8 +176,46 @@ def prompt_log_path_for_session(
     )
 
 
+def child_prompt_path_for_session(
+    *,
+    working_directory: str,
+    parent_session_id: UUID,
+    session_id: UUID,
+) -> str:
+    project_name = project_name_for_working_directory(working_directory)
+    return str(
+        Path(working_directory)
+        / "prompt_logs"
+        / project_name
+        / "child_sessions"
+        / str(parent_session_id)
+        / f"{session_id}.md"
+    )
+
+
 def _fresh_codex_instruction(*, prompt_cli_command: str) -> str:
-    return f"Please read the prompt from `{prompt_cli_command}` and run the prompt"
+    return (
+        f"Please read the prompt from `{prompt_cli_command}` and run the prompt. "
+        "When the prompt tells you to run a shell command, your next response must be an `exec_command` tool call for that exact command rather than prose. "
+        "Use foreground shell commands for the requested daemon CLI steps; do not ask for `/review`, and do not leave short-lived CLI commands waiting in a background terminal. "
+        "For fresh daemon subtask prompts, immediately run the foreground startup sequence described in the prompt, including `subtask current`, `subtask start`, and `subtask context`, before broader repository work."
+    )
+
+
+def _prompt_file_codex_instruction(*, prompt_file: str) -> str:
+    return (
+        f"Read the full task prompt from `{prompt_file}` and treat that file as the authoritative current-stage prompt for this turn. "
+        "Do not start by re-fetching `subtask prompt`; only do that if the file is missing or unreadable and you must report that bounded failure. "
+        "When the prompt tells you to run a shell command, your next response must be an `exec_command` tool call for that exact command rather than prose. "
+        "Use foreground shell commands for the requested daemon CLI steps; do not ask for `/review`, and do not leave short-lived CLI commands waiting in a background terminal. "
+        "After reading the file, execute the concrete next workflow step from that prompt instead of restating or reloading it."
+    )
+
+
+def codex_prompt_instruction(*, prompt_target: str, prompt_source: str = "cli") -> str:
+    if prompt_source == "file":
+        return _prompt_file_codex_instruction(prompt_file=prompt_target)
+    return _fresh_codex_instruction(prompt_cli_command=prompt_target)
 
 
 def fresh_codex_bootstrap_command(
@@ -194,6 +236,15 @@ def recovery_codex_resume_command() -> str:
     return repo_local_python_module_command(
         "aicoding.daemon.codex_session_bootstrap",
         "resume",
+    ).command_text
+
+
+def delegated_prompt_file_bootstrap_command(*, prompt_file: str) -> str:
+    return repo_local_python_module_command(
+        "aicoding.daemon.codex_session_bootstrap",
+        "prompt-file",
+        "--prompt-file",
+        prompt_file,
     ).command_text
 
 
@@ -278,10 +329,26 @@ def build_child_session_plan(
     session_id: UUID,
 ) -> SessionLaunchPlan:
     session_name = f"aicoding-child-{str(parent_session_id)[:8]}-{str(session_id)[:8]}"
+    working_directory = default_session_working_directory()
+    codex_home_path = codex_home_path_for_child_session(parent_session_id=parent_session_id, session_id=session_id)
+    trusted_workspace_paths = trusted_workspace_paths_for_codex(working_directory=working_directory)
+    prompt_log_path = child_prompt_path_for_session(
+        working_directory=working_directory,
+        parent_session_id=parent_session_id,
+        session_id=session_id,
+    )
     return SessionLaunchPlan(
         session_name=session_name,
-        command=default_interactive_shell_command(),
-        working_directory=default_session_working_directory(),
+        command=delegated_prompt_file_bootstrap_command(prompt_file=prompt_log_path),
+        working_directory=working_directory,
         attach_command=tmux_attach_command(session_name),
-        environment=session_runtime_environment(),
+        environment={
+            **session_runtime_environment(),
+            "CODEX_HOME": codex_home_path,
+            "AICODING_CODEX_TRUSTED_PATHS": os.pathsep.join(trusted_workspace_paths),
+        },
+        launch_mode="codex_prompt_file",
+        prompt_log_path=prompt_log_path,
+        codex_home_path=codex_home_path,
+        trusted_workspace_paths=trusted_workspace_paths,
     )

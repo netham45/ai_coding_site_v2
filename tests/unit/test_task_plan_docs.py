@@ -30,3 +30,11 @@ def test_task_plans_follow_standard_schema_with_task_sections() -> None:
 
         for system in ["Database:", "CLI:", "Daemon:", "YAML:", "Prompts:", "Tests:", "Performance:", "Notes:"]:
             assert system in text, f"{path.name} should cover {system.rstrip(':')} in Scope."
+
+        if path.name >= "2026-03-13_":
+            assert "## Documentation Impact\n" in text, (
+                f"{path.name} is missing a Documentation Impact section."
+            )
+            assert "## Documentation Verification\n" in text, (
+                f"{path.name} is missing a Documentation Verification section."
+            )

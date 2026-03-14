@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy import select
 
 from aicoding.config import get_settings
@@ -11,7 +12,9 @@ from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import seed_node_lifecycle
 from aicoding.daemon.materialization import (
     _child_prompt_from_layout,
+    _direct_parent_request_text,
     _validate_layout_children,
+    generated_layout_relative_path,
     inspect_materialized_children,
     inspect_child_reconciliation,
     materialize_layout_children,
@@ -100,6 +103,72 @@ def test_child_prompt_from_layout_includes_parent_request_and_acceptance(db_sess
     assert "- Tests pass." in prompt
 
 
+def test_direct_parent_request_text_strips_inherited_ancestor_sections() -> None:
+    prompt_text = "\n".join(
+        [
+            "Fix the concrete workspace bug.",
+            "",
+            "Parent Epic Request:",
+            "Create exactly two phase siblings.",
+            "",
+            "Child Acceptance Criteria:",
+            "- The left sibling completes first.",
+        ]
+    )
+
+    assert _direct_parent_request_text(prompt_text) == "Fix the concrete workspace bug."
+
+
+def test_child_prompt_from_layout_excludes_inherited_ancestor_request_sections(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    epic = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="epic",
+        title="Top Parent",
+        prompt="Top parent prompt.",
+    )
+    seed_node_lifecycle(db_session_factory, node_id=str(epic.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=epic.node_id)
+    parent = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Prompt Parent",
+        prompt="\n".join(
+            [
+                "Fix src/cat_clone.py so targeted pytest passes.",
+                "",
+                "Parent Epic Request:",
+                "Create exactly two real phase siblings and block the second on the first.",
+                "",
+                "Child Acceptance Criteria:",
+                "- Targeted pytest passes.",
+                ]
+            ),
+            parent_node_id=epic.node_id,
+        )
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+
+    prompt = _child_prompt_from_layout(
+        parent_version=version,
+        child_spec={
+            "goal": "Create the executable plan child.",
+            "acceptance": ["The implementation plan is concrete."],
+        },
+    )
+
+    assert "Fix src/cat_clone.py so targeted pytest passes." in prompt
+    assert "Parent Phase Request:" in prompt
+    assert "Create exactly two real phase siblings" not in prompt
+    assert "Child Acceptance Criteria:\n- The implementation plan is concrete." in prompt
+
+
 def test_materialize_layout_children_is_idempotent_when_layout_matches(
     db_session_factory,
     migrated_public_schema,
@@ -124,6 +193,32 @@ def test_materialize_layout_children_is_idempotent_when_layout_matches(
     assert len(count) == 2
 
 
+def test_materialize_layout_children_uses_advisory_lock_during_materialization(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Locked Epic", prompt="boot prompt")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+
+    statements: list[str] = []
+    engine = db_session_factory.kw["bind"]
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    try:
+        result = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=parent.node_id)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_sql)
+
+    assert result.status == "created"
+    assert any("pg_advisory_xact_lock" in statement for statement in statements)
+
+
 def test_materialize_layout_children_prefers_generated_workspace_layout(
     db_session_factory,
     migrated_public_schema,
@@ -132,7 +227,14 @@ def test_materialize_layout_children_prefers_generated_workspace_layout(
 ) -> None:
     try:
         workspace_root = tmp_path / "workspace"
-        generated_layout = workspace_root / "layouts" / "generated_layout.yaml"
+        monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+        get_settings.cache_clear()
+
+        catalog = load_resource_catalog()
+        registry = load_hierarchy_registry(catalog)
+        parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Generated Layout Epic", prompt="boot prompt")
+        layout_relative_path = generated_layout_relative_path(logical_node_id=parent.node_id)
+        generated_layout = workspace_root / layout_relative_path
         generated_layout.parent.mkdir(parents=True, exist_ok=True)
         generated_layout.write_text(
             "\n".join(
@@ -144,7 +246,7 @@ def test_materialize_layout_children_prefers_generated_workspace_layout(
                     "children:",
                     "  - id: custom_phase",
                     "    kind: phase",
-                    "    tier: 2",
+                    "    tier: 1",
                     "    name: Generated Discovery",
                     "    ordinal: 1",
                     "    goal: Build the generated phase first.",
@@ -153,12 +255,6 @@ def test_materialize_layout_children_prefers_generated_workspace_layout(
             ),
             encoding="utf-8",
         )
-        monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
-        get_settings.cache_clear()
-
-        catalog = load_resource_catalog()
-        registry = load_hierarchy_registry(catalog)
-        parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Generated Layout Epic", prompt="boot prompt")
         seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
         initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
         register_generated_layout(db_session_factory, logical_node_id=parent.node_id, file_path=str(generated_layout))
@@ -166,10 +262,10 @@ def test_materialize_layout_children_prefers_generated_workspace_layout(
         result = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=parent.node_id)
         inspected = inspect_materialized_children(db_session_factory, catalog, logical_node_id=parent.node_id)
 
-        assert result.layout_relative_path == "layouts/generated_layout.yaml"
+        assert result.layout_relative_path == layout_relative_path
         assert result.child_count == 1
         assert [item.layout_child_id for item in result.children] == ["custom_phase"]
-        assert inspected.layout_relative_path == "layouts/generated_layout.yaml"
+        assert inspected.layout_relative_path == layout_relative_path
         assert [item.layout_child_id for item in inspected.children] == ["custom_phase"]
     finally:
         get_settings.cache_clear()
@@ -183,7 +279,14 @@ def test_materialize_layout_children_is_idempotent_for_generated_workspace_layou
 ) -> None:
     try:
         workspace_root = tmp_path / "workspace"
-        generated_layout = workspace_root / "layouts" / "generated_layout.yaml"
+        monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+        get_settings.cache_clear()
+
+        catalog = load_resource_catalog()
+        registry = load_hierarchy_registry(catalog)
+        parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Generated Layout Epic", prompt="boot prompt")
+        layout_relative_path = generated_layout_relative_path(logical_node_id=parent.node_id)
+        generated_layout = workspace_root / layout_relative_path
         generated_layout.parent.mkdir(parents=True, exist_ok=True)
         generated_layout.write_text(
             "\n".join(
@@ -195,7 +298,7 @@ def test_materialize_layout_children_is_idempotent_for_generated_workspace_layou
                     "children:",
                     "  - id: custom_phase",
                     "    kind: phase",
-                    "    tier: 2",
+                    "    tier: 1",
                     "    name: Generated Discovery",
                     "    ordinal: 1",
                     "    goal: Build the generated phase first.",
@@ -204,12 +307,6 @@ def test_materialize_layout_children_is_idempotent_for_generated_workspace_layou
             ),
             encoding="utf-8",
         )
-        monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
-        get_settings.cache_clear()
-
-        catalog = load_resource_catalog()
-        registry = load_hierarchy_registry(catalog)
-        parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Generated Layout Epic", prompt="boot prompt")
         seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
         initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
         register_generated_layout(db_session_factory, logical_node_id=parent.node_id, file_path=str(generated_layout))
@@ -218,10 +315,86 @@ def test_materialize_layout_children_is_idempotent_for_generated_workspace_layou
         second = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=parent.node_id)
 
         assert first.status == "created"
-        assert first.layout_relative_path == "layouts/generated_layout.yaml"
+        assert first.layout_relative_path == layout_relative_path
         assert second.status == "already_materialized"
-        assert second.layout_relative_path == "layouts/generated_layout.yaml"
+        assert second.layout_relative_path == layout_relative_path
         assert second.child_count == 1
+    finally:
+        get_settings.cache_clear()
+
+
+def test_materialize_layout_children_uses_node_specific_registered_layouts(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    try:
+        workspace_root = tmp_path / "workspace"
+        monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+        get_settings.cache_clear()
+
+        catalog = load_resource_catalog()
+        registry = load_hierarchy_registry(catalog)
+        parent_one = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent One", prompt="boot prompt")
+        parent_two = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent Two", prompt="boot prompt")
+        for parent in (parent_one, parent_two):
+            seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+
+        layout_one = workspace_root / generated_layout_relative_path(logical_node_id=parent_one.node_id)
+        layout_one.parent.mkdir(parents=True, exist_ok=True)
+        layout_one.write_text(
+            "\n".join(
+                [
+                    "kind: layout_definition",
+                    "id: parent_one_layout",
+                    "name: Parent One Layout",
+                    "description: Node-specific generated layout one.",
+                    "children:",
+                    "  - id: one_phase",
+                    "    kind: phase",
+                    "    tier: 1",
+                    "    name: Parent One Phase",
+                    "    ordinal: 1",
+                    "    goal: Materialize only for parent one.",
+                    "    rationale: Prove the first registered layout stays isolated.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        layout_two = workspace_root / generated_layout_relative_path(logical_node_id=parent_two.node_id)
+        layout_two.parent.mkdir(parents=True, exist_ok=True)
+        layout_two.write_text(
+            "\n".join(
+                [
+                    "kind: layout_definition",
+                    "id: parent_two_layout",
+                    "name: Parent Two Layout",
+                    "description: Node-specific generated layout two.",
+                    "children:",
+                    "  - id: two_phase",
+                    "    kind: phase",
+                    "    tier: 1",
+                    "    name: Parent Two Phase",
+                    "    ordinal: 1",
+                    "    goal: Materialize only for parent two.",
+                    "    rationale: Prove the second registered layout stays isolated.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        register_generated_layout(db_session_factory, logical_node_id=parent_one.node_id, file_path=str(layout_one))
+        register_generated_layout(db_session_factory, logical_node_id=parent_two.node_id, file_path=str(layout_two))
+
+        result_one = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=parent_one.node_id)
+        result_two = materialize_layout_children(db_session_factory, registry, catalog, logical_node_id=parent_two.node_id)
+
+        assert result_one.layout_relative_path == generated_layout_relative_path(logical_node_id=parent_one.node_id)
+        assert [item.layout_child_id for item in result_one.children] == ["one_phase"]
+        assert result_two.layout_relative_path == generated_layout_relative_path(logical_node_id=parent_two.node_id)
+        assert [item.layout_child_id for item in result_two.children] == ["two_phase"]
     finally:
         get_settings.cache_clear()
 
@@ -319,6 +492,63 @@ def test_validate_layout_children_rejects_cycles() -> None:
                 {"id": "second", "ordinal": 2, "dependencies": ["first"]},
             ]
         )
+
+
+def test_register_generated_layout_rejects_child_kind_incompatible_with_parent(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = workspace_root / "drafts" / "bad_phase_layout.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path.write_text(
+        "\n".join(
+            [
+                "kind: layout_definition",
+                "id: invalid_phase_layout",
+                "name: Invalid Phase Layout",
+                "description: Invalid child kind for a phase parent.",
+                "children:",
+                "  - id: wrong_phase_child",
+                "    kind: phase",
+                "    tier: 1",
+                "    name: Wrong Child",
+                "    ordinal: 1",
+                "    goal: Invalid nested phase.",
+                "    rationale: Should be rejected during registration.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    get_settings.cache_clear()
+    try:
+        catalog = load_resource_catalog()
+        registry = load_hierarchy_registry(catalog)
+        epic = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Top Epic", prompt="epic prompt")
+        seed_node_lifecycle(db_session_factory, node_id=str(epic.node_id), initial_state="DRAFT")
+        initialize_node_version(db_session_factory, logical_node_id=epic.node_id)
+        parent = create_hierarchy_node(
+            db_session_factory,
+            registry,
+            kind="phase",
+            title="Parent Phase",
+            prompt="phase prompt",
+            parent_node_id=epic.node_id,
+        )
+        seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+        initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+
+        with pytest.raises(DaemonConflictError, match="only allows: plan"):
+            register_generated_layout(
+                db_session_factory,
+                logical_node_id=parent.node_id,
+                file_path=str(layout_path),
+            )
+    finally:
+        get_settings.cache_clear()
 
 
 def test_inspect_child_reconciliation_exposes_preserve_manual_for_empty_dependency_invalidated_restart(

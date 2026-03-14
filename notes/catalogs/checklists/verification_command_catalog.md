@@ -59,7 +59,23 @@ PYTHONPATH=src python3 -m aicoding.cli.main admin db check-schema
 Use these for fast bounded proof during documentation and planning changes:
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_notes_quickstart_docs.py
+PYTHONPATH=src python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_notes_quickstart_docs.py tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_user_documentation_governance_docs.py tests/unit/test_docs_code_alignment.py
+```
+
+### User Documentation Governance Checks
+
+Use this when the doctrine, top-level `docs/` tree, documentation contract, or documentation-impact linkage rules change:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/unit/test_user_documentation_governance_docs.py -q
+```
+
+### User Documentation Code-Alignment Checks
+
+Use this when real docs under `docs/` are added or revised and must be verified against the live CLI, config, and flow surfaces:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/unit/test_docs_code_alignment.py -q
 ```
 
 ### Unit Suite

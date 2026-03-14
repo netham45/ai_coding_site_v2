@@ -1,30 +1,18 @@
 from __future__ import annotations
 
-import subprocess
 import time
 
 import pytest
 
 
-def _tmux_capture(session_name: str) -> str:
-    result = subprocess.run(
-        ["tmux", "capture-pane", "-p", "-t", session_name],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return f"[tmux capture failed] {result.stderr.strip()}"
-    return result.stdout
-
-
 def _write_workspace_quality_inputs(workspace_root) -> None:
     project_policy = workspace_root / "resources" / "yaml" / "project" / "project-policies" / "default_project_policy.yaml"
-    override_path = workspace_root / "resources" / "yaml" / "overrides" / "nodes" / "epic_test_node.yaml"
+    entry_override_path = workspace_root / "resources" / "yaml" / "overrides" / "nodes" / "epic_entry_task.yaml"
+    tasks_override_path = workspace_root / "resources" / "yaml" / "overrides" / "nodes" / "epic_quality_tasks.yaml"
     source_path = workspace_root / "src" / "quality_app.py"
 
     project_policy.parent.mkdir(parents=True, exist_ok=True)
-    override_path.parent.mkdir(parents=True, exist_ok=True)
+    entry_override_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.parent.mkdir(parents=True, exist_ok=True)
 
     project_policy.write_text(
@@ -43,8 +31,7 @@ def _write_workspace_quality_inputs(workspace_root) -> None:
                 "  runtime_policy_refs:",
                 "    - runtime/session_defaults.yaml",
                 "    - runtime/idle_nudge_policy.yaml",
-                "  hook_refs:",
-                "    - hooks/default_hooks.yaml",
+                "  hook_refs: []",
                 "  review_refs:",
                 "    - reviews/policy_compliance_review.yaml",
                 "  testing_refs:",
@@ -62,7 +49,22 @@ def _write_workspace_quality_inputs(workspace_root) -> None:
         ),
         encoding="utf-8",
     )
-    override_path.write_text(
+    entry_override_path.write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: epic",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace",
+                "value:",
+                "  entry_task: validate_node",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    tasks_override_path.write_text(
         "\n".join(
             [
                 "target_family: node_definition",
@@ -73,8 +75,6 @@ def _write_workspace_quality_inputs(workspace_root) -> None:
                 "merge_mode: replace_list",
                 "value:",
                 "  available_tasks:",
-                "    - research_context",
-                "    - execute_node",
                 "    - validate_node",
                 "    - review_node",
                 "    - test_node",
@@ -98,8 +98,6 @@ def _write_workspace_quality_inputs(workspace_root) -> None:
 
 
 @pytest.mark.e2e_real
-@pytest.mark.requires_tmux
-@pytest.mark.requires_ai_provider
 def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
     _write_workspace_quality_inputs(real_daemon_harness.workspace_root)
 
@@ -116,14 +114,27 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     assert start_result.exit_code == 0, start_result.stderr
     start_payload = start_result.json()
     node_id = str(start_payload["node"]["node_id"])
-    bind_result = real_daemon_harness.cli("session", "bind", "--node", node_id)
-    assert bind_result.exit_code == 0, bind_result.stderr
-    bind_payload = bind_result.json()
-    session_name = str(bind_payload["session_name"])
+    run_start_result = real_daemon_harness.cli("node", "run", "start", "--node", node_id)
+    assert run_start_result.exit_code == 0, run_start_result.stderr
+
+    current_result = None
+    deadline = time.time() + 20.0
+    while time.time() < deadline:
+        candidate = real_daemon_harness.cli("subtask", "current", "--node", node_id)
+        if candidate.exit_code == 0:
+            current_result = candidate
+            break
+        time.sleep(1.0)
+
+    assert current_result is not None, (
+        "Expected a live run before invoking the quality chain.\n"
+        f"workflow_start={start_payload}\n"
+        f"node_run_start={run_start_result.stdout or run_start_result.stderr}"
+    )
+    assert str(current_result.json()["current_subtask"]["source_subtask_key"]).startswith("validate_node.")
 
     quality_chain_payload = None
     last_run_payload = None
-    last_pane_text = ""
     deadline = time.time() + 90.0
     while time.time() < deadline:
         run_show_result = real_daemon_harness.cli("node", "run", "show", "--node", node_id)
@@ -132,7 +143,6 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
         assert quality_chain_result.exit_code == 0, quality_chain_result.stderr
         last_run_payload = run_show_result.json()
         quality_chain_payload = quality_chain_result.json()
-        last_pane_text = _tmux_capture(session_name)
         if quality_chain_payload["run_status"] == "COMPLETE":
             break
         time.sleep(2.0)
@@ -140,11 +150,10 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     assert quality_chain_payload is not None
     assert last_run_payload is not None
     assert quality_chain_payload["run_status"] == "COMPLETE", (
-        "Expected the real primary tmux/Codex session to drive the node through the quality chain without manual "
-        "subtask completion or workflow advancement from the test.\n"
-        f"session_name={session_name}\n"
+        "Expected the real daemon-owned quality-chain command to drive the node through the built-in quality stages "
+        "without manual subtask completion or workflow advancement from the test.\n"
         f"final_run_status={last_run_payload['run']['run_status']}\n"
-        f"pane_text=\n{last_pane_text}"
+        f"quality_chain_status={quality_chain_payload['run_status']}"
     )
 
     validation_result = real_daemon_harness.cli("validation", "show", "--node", node_id)
@@ -171,8 +180,7 @@ def test_flow_09_run_quality_gates_runs_against_real_daemon_and_real_cli(real_da
     rationale_payload = rationale_result.json()
     audit_payload = audit_result.json()
 
-    assert bind_payload["logical_node_id"] == node_id
-    assert bind_payload["tmux_session_exists"] is True
+    assert start_payload["node"]["node_id"] == node_id
     assert quality_chain_payload["run_status"] == "COMPLETE"
     assert quality_chain_payload["executed_stage_types"] == ["validate", "review", "run_tests"]
     assert quality_chain_payload["validation"]["status"] == "passed"

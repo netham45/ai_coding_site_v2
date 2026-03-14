@@ -16,6 +16,8 @@ def test_verification_command_catalog_defines_current_command_families() -> None
         "PYTHONPATH=src python3 -m pytest tests/unit",
         "PYTHONPATH=src python3 -m pytest tests/integration",
         "PYTHONPATH=src python3 -m pytest tests/integration/test_flow_contract_suite.py -q",
+        "PYTHONPATH=src python3 -m pytest tests/unit/test_user_documentation_governance_docs.py",
+        "PYTHONPATH=src python3 -m pytest tests/unit/test_docs_code_alignment.py -q",
         "PYTHONPATH=src python3 -m pytest tests/integration/test_flow_yaml_contract_suite.py -q",
         "PYTHONPATH=src python3 -m pytest tests/performance/test_harness.py -q",
         "PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_01_create_top_level_node_real.py -q",

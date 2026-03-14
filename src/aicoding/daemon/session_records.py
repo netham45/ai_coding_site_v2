@@ -14,9 +14,21 @@ from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
 from aicoding.daemon.incremental_parent_merge import process_pending_incremental_parent_merges
 from aicoding.daemon.lifecycle import transition_node_lifecycle
 from aicoding.daemon.live_git import refresh_child_live_git_from_parent_head
-from aicoding.daemon.session_manager import build_primary_session_plan, build_recovery_primary_session_plan
-from aicoding.daemon.session_harness import SessionAdapter, SessionPoller
+from aicoding.daemon.session_manager import (
+    build_primary_session_plan,
+    build_recovery_primary_session_plan,
+    codex_prompt_instruction,
+    current_stage_prompt_cli_command,
+)
+from aicoding.daemon.session_harness import (
+    SessionAdapter,
+    SessionPoller,
+    send_input_when_ready,
+    try_send_input_when_ready,
+    wait_for_codex_ready,
+)
 from aicoding.db.models import (
+    CompiledSubtask,
     HierarchyNode,
     LogicalNodeCurrentVersion,
     NodeChild,
@@ -29,6 +41,7 @@ from aicoding.db.models import (
     Session,
     SessionEvent,
     SubtaskAttempt,
+    WorkflowEvent,
 )
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.errors import ConfigurationError
@@ -41,6 +54,7 @@ ACTIVE_SESSION_STATUSES = {"BOUND", "ATTACHED", "RESUMED", "RUNNING"}
 AUTO_RESTARTABLE_LIFECYCLE_STATES = {
     "READY",
     "RUNNING",
+    "PAUSED_FOR_USER",
     "WAITING_ON_CHILDREN",
     "WAITING_ON_SIBLING_DEPENDENCY",
     "RECTIFYING_SELF",
@@ -63,6 +77,19 @@ _ACTIVE_WORK_MARKERS = (
     "Working (",
     "Messages to be submitted after next tool call",
 )
+_RECENT_STAGE_PROMPT_GRACE_SECONDS = 30.0
+
+
+def _initial_codex_instruction_target(
+    *,
+    prompt_log_path: str | None,
+    prompt_cli_command: str | None,
+) -> str | None:
+    if isinstance(prompt_log_path, str) and prompt_log_path.strip():
+        return prompt_log_path
+    if isinstance(prompt_cli_command, str) and prompt_cli_command.strip():
+        return prompt_cli_command
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +475,12 @@ def bind_primary_session(
                 status="LOST",
                 reason="tmux_session_missing" if current_snapshot is None else "tmux_process_exited",
             )
+            _cleanup_tmux_session_record(
+                session,
+                current,
+                adapter=adapter,
+                cleanup_reason="bind_replacing_lost_primary_session",
+            )
 
         durable_id = uuid4()
         launch_plan = build_primary_session_plan(
@@ -498,7 +531,61 @@ def bind_primary_session(
             },
         )
         session.flush()
-        return _session_snapshot(session, durable, adapter=adapter, poller=poller)
+        snapshot = _session_snapshot(session, durable, adapter=adapter, poller=poller)
+        initial_instruction_target = _initial_codex_instruction_target(
+            prompt_log_path=launch_plan.prompt_log_path,
+            prompt_cli_command=launch_plan.prompt_cli_command,
+        )
+    try:
+        ready_snapshot = wait_for_codex_ready(adapter, session_name=snapshot.tmux_session_name or "")
+    except ConfigurationError as exc:
+        session_name = snapshot.tmux_session_name or ""
+        if (
+            adapter.backend_name == "tmux"
+            and getattr(exc, "code", None) == "codex_not_ready"
+            and session_name
+            and _tmux_session_exists(adapter, session_name) is True
+            and _tmux_process_alive(adapter, session_name) is not False
+        ):
+            with session_scope(session_factory) as session:
+                record = session.get(Session, snapshot.session_id)
+                if record is not None:
+                    _record_session_event(
+                        session,
+                        record.id,
+                        "codex_ready_pending",
+                        {
+                            "node_id": str(logical_node_id),
+                            "tmux_session_name": session_name,
+                            "reason": str(exc),
+                            "process_command_line": adapter.process_command_line(session_name),
+                        },
+                    )
+                    session.flush()
+            return snapshot
+        raise
+    with session_scope(session_factory) as session:
+        record = session.get(Session, snapshot.session_id)
+        if record is not None:
+            record.last_heartbeat_at = ready_snapshot.last_activity_at
+            _record_session_event(
+                session,
+                record.id,
+                "codex_ready",
+                {
+                    "node_id": str(logical_node_id),
+                    "tmux_session_name": ready_snapshot.session_name,
+                },
+            )
+            session.flush()
+    _prime_bound_primary_session(
+        session_factory,
+        logical_node_id=logical_node_id,
+        session_id=snapshot.session_id,
+        adapter=adapter,
+        initial_instruction_target=initial_instruction_target,
+    )
+    return snapshot
 
 
 def attach_primary_session(
@@ -536,6 +623,12 @@ def attach_primary_session(
                 current,
                 status="LOST",
                 reason="attach_missing_session" if current_snapshot is None else "attach_found_dead_tmux_process",
+            )
+            _cleanup_tmux_session_record(
+                session,
+                current,
+                adapter=adapter,
+                cleanup_reason="attach_replacing_lost_primary_session",
             )
 
     snapshot = bind_primary_session(session_factory, logical_node_id=logical_node_id, adapter=adapter, poller=poller)
@@ -746,6 +839,12 @@ def recover_primary_session(
 
         for record in active_sessions:
             _invalidate_session(session, record, status="LOST", reason="provider_agnostic_recovery_replacement")
+            _cleanup_tmux_session_record(
+                session,
+                record,
+                adapter=adapter,
+                cleanup_reason="provider_agnostic_recovery_replacement",
+            )
         durable_id = uuid4()
         launch_plan = build_recovery_primary_session_plan(
             node_version_id=version.id,
@@ -1010,6 +1109,31 @@ def nudge_primary_session(
                 pause_flag_name=state.pause_flag_name,
                 screen_state=None,
             )
+        if run.run_status == "PAUSED":
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {
+                    "reason": "run_paused",
+                    "pause_flag_name": state.pause_flag_name,
+                },
+            )
+            session.flush()
+            return SessionNudgeSnapshot(
+                node_id=logical_node_id,
+                session_id=current.id,
+                status="run_paused",
+                action="none",
+                session_status=current.status,
+                idle_seconds=None,
+                in_alt_screen=None,
+                nudge_count=_nudge_event_count(session, current.id),
+                max_nudge_count=max_nudge_count,
+                prompt_relative_path=None,
+                pause_flag_name=state.pause_flag_name,
+                screen_state=None,
+            )
         current_tmux_exists = _tmux_session_exists(adapter, current.tmux_session_name)
         current_process_alive = _tmux_process_alive(adapter, current.tmux_session_name)
         if current.tmux_session_name is None or current_tmux_exists is not True or current_process_alive is False:
@@ -1037,6 +1161,7 @@ def nudge_primary_session(
         screen_state = _classify_session_screen_state(session, current, adapter=adapter, poller=poller, persist=True)
         poll_result = poller.poll(current.tmux_session_name)
         latest_event_type = _latest_session_event_type(session, current.id)
+        nudge_count = _nudge_event_count(session, current.id)
         if _current_subtask_has_registered_summary(session, run.id, state.current_compiled_subtask_id):
             _record_session_event(
                 session,
@@ -1064,6 +1189,58 @@ def nudge_primary_session(
                 pause_flag_name=state.pause_flag_name,
                 screen_state=screen_state.to_payload(),
             )
+        current_subtask = _current_subtask_for_recovery(session, state.current_compiled_subtask_id)
+        latest_codex_ready = _latest_session_event(
+            session,
+            current.id,
+            event_types=("codex_ready",),
+        )
+        if latest_codex_ready is None:
+            if _pane_shows_codex_ready_banner(adapter, current.tmux_session_name):
+                current.last_heartbeat_at = datetime.now(timezone.utc)
+                _record_session_event(
+                    session,
+                    current.id,
+                    "codex_ready",
+                    {
+                        "node_id": str(logical_node_id),
+                        "tmux_session_name": current.tmux_session_name,
+                        "recovered_by": "idle_nudge",
+                    },
+                )
+                session.flush()
+                latest_codex_ready = _latest_session_event(
+                    session,
+                    current.id,
+                    event_types=("codex_ready",),
+                )
+            else:
+                _record_session_event(
+                    session,
+                    current.id,
+                    "nudge_skipped",
+                    {
+                        "reason": "awaiting_codex_ready",
+                        "idle_seconds": poll_result.idle_seconds,
+                        "screen_classification": screen_state.classification,
+                        "screen_reason": screen_state.reason,
+                    },
+                )
+                session.flush()
+                return SessionNudgeSnapshot(
+                    node_id=logical_node_id,
+                    session_id=current.id,
+                    status="awaiting_codex_ready",
+                    action="none",
+                    session_status=current.status,
+                    idle_seconds=poll_result.idle_seconds,
+                    in_alt_screen=poll_result.snapshot.in_alt_screen,
+                    nudge_count=nudge_count,
+                    max_nudge_count=max_nudge_count,
+                    prompt_relative_path=None,
+                    pause_flag_name=state.pause_flag_name,
+                    screen_state=screen_state.to_payload(),
+                )
         if (
             screen_state.classification == "active"
             and screen_state.reason == "pane_changed"
@@ -1075,7 +1252,6 @@ def nudge_primary_session(
                 classification="idle",
                 reason="daemon_nudge_only_change",
             )
-        nudge_count = _nudge_event_count(session, current.id)
         if screen_state.classification != "idle":
             _record_session_event(
                 session,
@@ -1103,6 +1279,128 @@ def nudge_primary_session(
                 pause_flag_name=state.pause_flag_name,
                 screen_state=screen_state.to_payload(),
             )
+        missing_stage_prompt_seed = _seed_missing_stage_prompt_after_codex_ready(
+            session_factory,
+            logical_node_id=logical_node_id,
+            adapter=adapter,
+        )
+        if missing_stage_prompt_seed != "skipped":
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {
+                    "reason": "seeded_missing_stage_prompt",
+                    "idle_seconds": poll_result.idle_seconds,
+                    "seed_result": missing_stage_prompt_seed,
+                },
+            )
+            session.flush()
+            return SessionNudgeSnapshot(
+                node_id=logical_node_id,
+                session_id=current.id,
+                status="pending_stage_prompt" if missing_stage_prompt_seed == "queued" else "stage_prompt_seeded",
+                action="none",
+                session_status=current.status,
+                idle_seconds=poll_result.idle_seconds,
+                in_alt_screen=poll_result.snapshot.in_alt_screen,
+                nudge_count=nudge_count,
+                max_nudge_count=max_nudge_count,
+                prompt_relative_path=None,
+                pause_flag_name=state.pause_flag_name,
+                screen_state=screen_state.to_payload(),
+            )
+        pending_stage_prompt = _latest_pending_stage_prompt_event(session, current.id)
+        if pending_stage_prompt is not None:
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {
+                    "reason": "pending_stage_prompt",
+                    "idle_seconds": poll_result.idle_seconds,
+                    "queued_event_id": str(pending_stage_prompt.id),
+                },
+            )
+            session.flush()
+            return SessionNudgeSnapshot(
+                node_id=logical_node_id,
+                session_id=current.id,
+                status="pending_stage_prompt",
+                action="none",
+                session_status=current.status,
+                idle_seconds=poll_result.idle_seconds,
+                in_alt_screen=poll_result.snapshot.in_alt_screen,
+                nudge_count=nudge_count,
+                max_nudge_count=max_nudge_count,
+                prompt_relative_path=None,
+                pause_flag_name=state.pause_flag_name,
+                screen_state=screen_state.to_payload(),
+            )
+        recent_stage_event = _latest_session_event(
+            session,
+            current.id,
+            event_types=("stage_prompt_pushed", "codex_ready"),
+        )
+        if (
+            recent_stage_event is not None
+            and poll_result.idle_seconds is not None
+            and poll_result.idle_seconds < _RECENT_STAGE_PROMPT_GRACE_SECONDS
+        ):
+            _record_session_event(
+                session,
+                current.id,
+                "nudge_skipped",
+                {
+                    "reason": "recent_stage_prompt_grace",
+                    "idle_seconds": poll_result.idle_seconds,
+                    "recent_event_type": recent_stage_event.event_type,
+                    "recent_event_id": str(recent_stage_event.id),
+                },
+            )
+            session.flush()
+            return SessionNudgeSnapshot(
+                node_id=logical_node_id,
+                session_id=current.id,
+                status="recent_stage_prompt_grace",
+                action="none",
+                session_status=current.status,
+                idle_seconds=poll_result.idle_seconds,
+                in_alt_screen=poll_result.snapshot.in_alt_screen,
+                nudge_count=nudge_count,
+                max_nudge_count=max_nudge_count,
+                prompt_relative_path=None,
+                pause_flag_name=state.pause_flag_name,
+                screen_state=screen_state.to_payload(),
+            )
+        if current_subtask is not None and current_subtask.subtask_type == "wait_for_children":
+            active_children = _wait_stage_active_children(session, logical_node_id=logical_node_id)
+            if active_children:
+                _record_session_event(
+                    session,
+                    current.id,
+                    "nudge_skipped",
+                    {
+                        "reason": "waiting_on_children",
+                        "idle_seconds": poll_result.idle_seconds,
+                        "active_children": active_children,
+                    },
+                )
+                session.flush()
+                return SessionNudgeSnapshot(
+                    node_id=logical_node_id,
+                    session_id=current.id,
+                    status="waiting_on_children",
+                    action="none",
+                    session_status=current.status,
+                    idle_seconds=poll_result.idle_seconds,
+                    in_alt_screen=poll_result.snapshot.in_alt_screen,
+                    nudge_count=nudge_count,
+                    max_nudge_count=max_nudge_count,
+                    prompt_relative_path=None,
+                    pause_flag_name=state.pause_flag_name,
+                    screen_state=screen_state.to_payload(),
+                )
         if nudge_count >= max_nudge_count:
             current.status = "RUNNING"
             _record_session_event(
@@ -1130,11 +1428,21 @@ def nudge_primary_session(
                 screen_state=screen_state.to_payload(),
             )
         prompt_relative_path = "recovery/idle_nudge.md"
-        prompt_text = _render_recovery_prompt(idle_nudge_text, logical_node_id=logical_node_id)
+        prompt_text = _render_recovery_prompt(
+            idle_nudge_text,
+            session=session,
+            logical_node_id=logical_node_id,
+            current_subtask=current_subtask,
+        )
         if nudge_count + 1 >= max_nudge_count:
             prompt_relative_path = "recovery/repeated_missed_step.md"
-            prompt_text = _render_recovery_prompt(repeated_nudge_text, logical_node_id=logical_node_id)
-        adapter.send_input(current.tmux_session_name, prompt_text, press_enter=True)
+            prompt_text = _render_recovery_prompt(
+                repeated_nudge_text,
+                session=session,
+                logical_node_id=logical_node_id,
+                current_subtask=current_subtask,
+            )
+        send_input_when_ready(adapter, session_name=current.tmux_session_name, text=prompt_text, press_enter=True)
         current.last_heartbeat_at = datetime.now(timezone.utc)
         _record_session_event(
             session,
@@ -1149,10 +1457,10 @@ def nudge_primary_session(
             },
         )
         session.flush()
-        return SessionNudgeSnapshot(
-            node_id=logical_node_id,
-            session_id=current.id,
-            status="nudged",
+    return SessionNudgeSnapshot(
+        node_id=logical_node_id,
+        session_id=current.id,
+        status="nudged",
             action="sent_prompt",
             session_status=current.status,
             idle_seconds=poll_result.idle_seconds,
@@ -1161,8 +1469,22 @@ def nudge_primary_session(
             max_nudge_count=max_nudge_count,
             prompt_relative_path=prompt_relative_path,
             pause_flag_name=state.pause_flag_name,
-            screen_state=screen_state.to_payload(),
-        )
+        screen_state=screen_state.to_payload(),
+    )
+
+
+def _pane_shows_codex_ready_banner(adapter: SessionAdapter, session_name: str | None) -> bool:
+    if not isinstance(session_name, str) or not session_name.strip():
+        return False
+    if _tmux_session_exists(adapter, session_name) is not True:
+        return False
+    if _tmux_process_alive(adapter, session_name) is False:
+        return False
+    try:
+        pane_text = adapter.capture_pane(session_name, include_alt_screen=True)
+    except Exception:
+        return False
+    return "OpenAI Codex" in pane_text and ">_" in pane_text
 
 
 def auto_nudge_idle_primary_sessions(
@@ -1184,7 +1506,7 @@ def auto_nudge_idle_primary_sessions(
                 .where(
                     Session.session_role == "primary",
                     Session.status.in_(tuple(ACTIVE_SESSION_STATUSES)),
-                    NodeRun.run_status.in_(("PENDING", "RUNNING", "PAUSED")),
+                    NodeRun.run_status.in_(("PENDING", "RUNNING")),
                 )
                 .distinct()
             ).all()
@@ -1277,11 +1599,20 @@ def auto_supervise_primary_sessions(
         target = _load_session_supervision_target(session_factory, logical_node_id=logical_node_id, adapter=adapter)
         if target is None or target.tracked_session_id is None:
             continue
-        if target.tmux_session_exists and target.tmux_process_alive is not False:
+        codex_process_missing = (
+            target.codex_ready_seen
+            and target.tmux_session_exists
+            and target.tmux_process_alive is not False
+            and "codex" not in (target.tmux_process_command_line or "").lower()
+        )
+        if target.tmux_session_exists and target.tmux_process_alive is not False and not codex_process_missing:
             continue
         missing_reason = "tracked_tmux_session_missing"
         invalidation_reason = "supervision_detected_missing_tmux_session"
-        if target.tmux_session_exists and target.tmux_process_alive is False:
+        if codex_process_missing:
+            missing_reason = "tracked_codex_process_missing"
+            invalidation_reason = "supervision_detected_non_codex_process"
+        elif target.tmux_session_exists and target.tmux_process_alive is False:
             missing_reason = "tracked_tmux_process_exited"
             invalidation_reason = "supervision_detected_dead_tmux_process"
         if target.lifecycle_state not in AUTO_RESTARTABLE_LIFECYCLE_STATES:
@@ -1296,6 +1627,7 @@ def auto_supervise_primary_sessions(
                     "tmux_session_exists": target.tmux_session_exists,
                     "tmux_process_alive": target.tmux_process_alive,
                     "tmux_exit_status": target.tmux_exit_status,
+                    "tmux_process_command_line": target.tmux_process_command_line,
                 },
                 invalidate_active_session=True,
             )
@@ -1309,6 +1641,7 @@ def auto_supervise_primary_sessions(
                     f"lifecycle state '{target.lifecycle_state}' was not restartable."
                 ),
                 failure_reason="restart_not_allowed_for_lifecycle_state",
+                adapter=adapter,
             )
             snapshots.append(
                 SessionSupervisionSnapshot(
@@ -1334,6 +1667,7 @@ def auto_supervise_primary_sessions(
                 "tmux_session_exists": target.tmux_session_exists,
                 "tmux_process_alive": target.tmux_process_alive,
                 "tmux_exit_status": target.tmux_exit_status,
+                "tmux_process_command_line": target.tmux_process_command_line,
             },
             invalidate_active_session=True,
             invalidation_reason=invalidation_reason,
@@ -1359,6 +1693,7 @@ def auto_supervise_primary_sessions(
                     "tmux_session_exists": target.tmux_session_exists,
                     "tmux_process_alive": target.tmux_process_alive,
                     "tmux_exit_status": target.tmux_exit_status,
+                    "tmux_process_command_line": target.tmux_process_command_line,
                 },
                 invalidate_active_session=False,
             )
@@ -1369,6 +1704,7 @@ def auto_supervise_primary_sessions(
                 logical_node_id=logical_node_id,
                 failure_summary=f"Session supervision failed because replacement launch raised {type(exc).__name__}: {exc}",
                 failure_reason="restart_launch_failed",
+                adapter=adapter,
             )
             snapshots.append(
                 SessionSupervisionSnapshot(
@@ -1404,6 +1740,7 @@ def auto_supervise_primary_sessions(
                     f"or reusable session (status={decision.status})."
                 ),
                 failure_reason=decision.status,
+                adapter=adapter,
             )
             snapshots.append(
                 SessionSupervisionSnapshot(
@@ -1514,6 +1851,272 @@ def auto_bind_ready_child_runs(
             )
         )
     return snapshots
+
+
+def _prime_bound_primary_session(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    session_id: UUID,
+    adapter: SessionAdapter,
+    initial_instruction_target: str | None,
+) -> None:
+    from aicoding.daemon.run_orchestration import (
+        load_current_run_progress,
+        load_current_subtask_prompt,
+        start_subtask_attempt,
+    )
+
+    progress = load_current_run_progress(session_factory, logical_node_id=logical_node_id)
+    compiled_subtask_id = progress.state.current_compiled_subtask_id
+    if compiled_subtask_id is None:
+        return
+    start_subtask_attempt(
+        session_factory,
+        logical_node_id=logical_node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        adapter=adapter,
+    )
+    prompt_snapshot = load_current_subtask_prompt(session_factory, logical_node_id=logical_node_id)
+    prompt_text = prompt_snapshot.prompt_text or prompt_snapshot.command_text
+    instruction_text = None
+    if (
+        isinstance(initial_instruction_target, str)
+        and initial_instruction_target.strip()
+        and _should_use_stage_specific_prompt_message(prompt_snapshot)
+    ):
+        instruction_text = _initial_stage_prompt_instruction(
+            logical_node_id=logical_node_id,
+            prompt_snapshot=prompt_snapshot,
+            prompt_target=initial_instruction_target,
+        )
+    elif isinstance(initial_instruction_target, str) and initial_instruction_target.strip():
+        instruction_text = codex_prompt_instruction(
+            prompt_target=initial_instruction_target,
+            prompt_source="file",
+        )
+    elif isinstance(prompt_text, str) and prompt_text.strip():
+        instruction_text = prompt_text
+    if not isinstance(instruction_text, str) or not instruction_text.strip():
+        return
+    with session_scope(session_factory) as session:
+        record = session.get(Session, session_id)
+        if record is None or not record.tmux_session_name:
+            return
+    push_or_queue_primary_session_stage_prompt(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        prompt_text=instruction_text,
+        compiled_subtask_id=prompt_snapshot.compiled_subtask_id,
+        prompt_source=prompt_snapshot.subtask_type or "current_stage",
+        source_subtask_key=prompt_snapshot.source_subtask_key,
+        subtask_type=prompt_snapshot.subtask_type,
+        initial_instruction_target=initial_instruction_target,
+    )
+
+
+def _should_use_stage_specific_prompt_message(prompt_snapshot) -> bool:
+    source_subtask_key = (prompt_snapshot.source_subtask_key or "").strip()
+    subtask_type = (prompt_snapshot.subtask_type or "").strip()
+    return (
+        source_subtask_key == "generate_child_layout.render_layout_prompt"
+        or source_subtask_key == "wait_for_children.collect_child_summaries"
+        or subtask_type in {"review", "spawn_child_node"}
+    )
+
+
+def _initial_stage_prompt_instruction(*, logical_node_id: UUID, prompt_snapshot, prompt_target: str) -> str:
+    action_message = _stage_prompt_message(
+        logical_node_id=logical_node_id,
+        prompt_snapshot=prompt_snapshot,
+    )
+    return (
+        f"Read the full current-stage prompt from `{prompt_target}` first and treat that file as authoritative for this turn. "
+        "Do not start by re-fetching `subtask prompt`; only do that if the file is missing or unreadable and you must report that bounded failure. "
+        "After reading the full prompt file, continue immediately with this concrete stage action guidance:\n\n"
+        f"{action_message}"
+    )
+
+
+def push_or_queue_primary_session_stage_prompt(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    adapter: SessionAdapter,
+    prompt_text: str,
+    compiled_subtask_id: UUID,
+    prompt_source: str,
+    source_subtask_key: str | None,
+    subtask_type: str | None,
+    initial_instruction_target: str | None = None,
+    queue_only: bool = False,
+) -> str:
+    with session_scope(session_factory) as session:
+        try:
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+            current = _active_primary_session(session, run.id)
+        except (DaemonConflictError, DaemonNotFoundError):
+            return "skipped"
+        if current is None or current.tmux_session_name is None:
+            return "skipped"
+        payload = {
+            "node_id": str(logical_node_id),
+            "compiled_subtask_id": str(compiled_subtask_id),
+            "prompt_source": prompt_source,
+            "source_subtask_key": source_subtask_key,
+            "subtask_type": subtask_type,
+            "prompt_text": prompt_text,
+            "tmux_session_name": current.tmux_session_name,
+            "initial_instruction_target": initial_instruction_target,
+        }
+        if not queue_only and try_send_input_when_ready(
+            adapter,
+            session_name=current.tmux_session_name,
+            text=prompt_text,
+            press_enter=True,
+            timeout_seconds=1.0,
+        ):
+            current.last_heartbeat_at = datetime.now(timezone.utc)
+            _record_session_event(session, current.id, "stage_prompt_pushed", payload)
+            session.flush()
+            return "pushed"
+        _record_session_event(session, current.id, "stage_prompt_queued", payload)
+        session.flush()
+    return "queued"
+
+
+def _stage_prompt_message(*, logical_node_id: UUID, prompt_snapshot) -> str:
+    prompt_text = prompt_snapshot.prompt_text or prompt_snapshot.command_text
+    message = (
+        "The daemon routed you to the next workflow stage. Continue immediately with this current-stage prompt. "
+        "When the prompt requires a shell command, your next response must be an `exec_command` tool call for that exact command rather than prose:\n\n"
+        f"{(prompt_text or '').strip()}"
+    )
+    if prompt_snapshot.source_subtask_key == "generate_child_layout.render_layout_prompt":
+        message = (
+            "The daemon routed you to the layout-generation stage. Do not browse the repo or run broad discovery commands before completing it. "
+            "Use the current prompt/context only unless a referenced file is missing. Your next actions are: "
+            f"write `layouts/generated/{logical_node_id}.yaml`, run "
+            f"`python3 -m aicoding.cli.main node register-layout --node {logical_node_id} --file layouts/generated/{logical_node_id}.yaml`, "
+            "write `summaries/layout_generation.md`, then make your next response an `exec_command` tool call that runs exactly "
+            f"`python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {prompt_snapshot.compiled_subtask_id} --summary-file summaries/layout_generation.md`. "
+            "Do not answer with prose first."
+        )
+    elif prompt_snapshot.source_subtask_key == "wait_for_children.collect_child_summaries":
+        message = (
+            "The daemon routed you to the child-summary rollup stage. Do not wait and do not poll with `sleep`. "
+            "If you need the final child states, inspect them once with "
+            f"`python3 -m aicoding.cli.main tree show --node {logical_node_id} --full`, "
+            "write `summaries/child_rollup.md`, then make your next response an `exec_command` tool call that runs exactly "
+            f"`python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {prompt_snapshot.compiled_subtask_id} --summary-file summaries/child_rollup.md`. "
+            "Do not answer with prose first."
+        )
+    elif prompt_snapshot.subtask_type == "spawn_child_node":
+        command_text = prompt_snapshot.command_text or f"python3 -m aicoding.cli.main node materialize-children --node {logical_node_id}"
+        message = (
+            "The daemon routed you to the child-materialization stage. Do not wait. Your next response must be an `exec_command` tool call that runs exactly "
+            f"`{command_text}`. That command records the materialization result and routes the workflow stage itself. Do not answer with prose first. Use foreground shell commands only."
+        )
+    return message
+
+
+def flush_pending_primary_session_stage_prompts(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    adapter: SessionAdapter,
+) -> int:
+    with query_session_scope(session_factory) as session:
+        active_sessions = session.execute(
+            select(Session)
+            .where(
+                Session.session_role == "primary",
+                Session.status.in_(("BOUND", "ATTACHED", "RUNNING", "RESUMED")),
+                Session.tmux_session_name.is_not(None),
+                Session.node_run_id.is_not(None),
+            )
+            .order_by(Session.started_at.asc())
+        ).scalars().all()
+
+    flushed = 0
+    for record in active_sessions:
+        with session_scope(session_factory) as session:
+            current = session.get(Session, record.id)
+            if current is None or current.tmux_session_name is None:
+                continue
+            if _tmux_session_exists(adapter, current.tmux_session_name) is not True:
+                continue
+            if _tmux_process_alive(adapter, current.tmux_session_name) is False:
+                continue
+            queued = _latest_pending_stage_prompt_event(session, current.id)
+            if queued is None:
+                continue
+            payload = dict(queued.payload_json or {})
+            prompt_text = payload.get("prompt_text")
+            if not isinstance(prompt_text, str) or not prompt_text.strip():
+                _record_session_event(
+                    session,
+                    current.id,
+                    "stage_prompt_dropped",
+                    {"reason": "missing_prompt_text", "queued_event_id": str(queued.id)},
+                )
+                session.flush()
+                continue
+            compiled_subtask_raw = payload.get("compiled_subtask_id")
+            if not isinstance(compiled_subtask_raw, str):
+                _record_session_event(
+                    session,
+                    current.id,
+                    "stage_prompt_dropped",
+                    {"reason": "missing_compiled_subtask_id", "queued_event_id": str(queued.id)},
+                )
+                session.flush()
+                continue
+            run = None if current.node_run_id is None else session.get(NodeRun, current.node_run_id)
+            state = None if run is None else _require_run_state(session, run.id)
+            if state is None or state.current_compiled_subtask_id is None:
+                _record_session_event(
+                    session,
+                    current.id,
+                    "stage_prompt_dropped",
+                    {
+                        "reason": "no_current_subtask",
+                        "queued_event_id": str(queued.id),
+                        "compiled_subtask_id": compiled_subtask_raw,
+                    },
+                )
+                session.flush()
+                continue
+            if str(state.current_compiled_subtask_id) != compiled_subtask_raw:
+                _record_session_event(
+                    session,
+                    current.id,
+                    "stage_prompt_dropped",
+                    {
+                        "reason": "stale_compiled_subtask",
+                        "queued_event_id": str(queued.id),
+                        "queued_compiled_subtask_id": compiled_subtask_raw,
+                        "current_compiled_subtask_id": str(state.current_compiled_subtask_id),
+                    },
+                )
+                session.flush()
+                continue
+            if not try_send_input_when_ready(
+                adapter,
+                session_name=current.tmux_session_name,
+                text=prompt_text,
+                press_enter=True,
+                timeout_seconds=1.0,
+            ):
+                continue
+            current.last_heartbeat_at = datetime.now(timezone.utc)
+            pushed_payload = dict(payload)
+            pushed_payload["queued_event_id"] = str(queued.id)
+            _record_session_event(session, current.id, "stage_prompt_pushed", pushed_payload)
+            session.flush()
+            flushed += 1
+    return flushed
 
 
 def auto_advance_incremental_parent_merge_and_refresh_children(
@@ -1885,10 +2488,133 @@ def _require_single_active_primary_session(session: OrmSession, node_run_id: UUI
 
 
 def _nudge_event_count(session: OrmSession, session_id: UUID) -> int:
-    count = session.execute(
-        select(func.count()).select_from(SessionEvent).where(SessionEvent.session_id == session_id, SessionEvent.event_type == "nudged")
+    reset_at = session.execute(
+        select(func.max(SessionEvent.created_at)).where(
+            SessionEvent.session_id == session_id,
+            SessionEvent.event_type == "stage_prompt_pushed",
+        )
     ).scalar_one()
-    return int(count)
+    nudged_events = session.execute(
+        select(SessionEvent).where(
+            SessionEvent.session_id == session_id,
+            SessionEvent.event_type == "nudged",
+            *(tuple() if reset_at is None else (SessionEvent.created_at >= reset_at,)),
+        )
+    ).scalars()
+    return sum(1 for _ in nudged_events)
+
+
+def _latest_pending_stage_prompt_event(session: OrmSession, session_id: UUID) -> SessionEvent | None:
+    resolved_at = session.execute(
+        select(func.max(SessionEvent.created_at)).where(
+            SessionEvent.session_id == session_id,
+            SessionEvent.event_type.in_(("stage_prompt_pushed", "stage_prompt_dropped")),
+        )
+    ).scalar_one()
+    queued_query = select(SessionEvent).where(
+        SessionEvent.session_id == session_id,
+        SessionEvent.event_type == "stage_prompt_queued",
+    )
+    if resolved_at is not None:
+        queued_query = queued_query.where(SessionEvent.created_at > resolved_at)
+    return session.execute(queued_query.order_by(SessionEvent.created_at.desc())).scalars().first()
+
+
+def _latest_session_event(
+    session: OrmSession,
+    session_id: UUID,
+    *,
+    event_types: tuple[str, ...],
+) -> SessionEvent | None:
+    return session.execute(
+        select(SessionEvent)
+        .where(
+            SessionEvent.session_id == session_id,
+            SessionEvent.event_type.in_(event_types),
+        )
+        .order_by(SessionEvent.created_at.desc())
+    ).scalars().first()
+
+
+def record_primary_session_stage_prompt(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    prompt_source: str,
+    current_compiled_subtask_id: UUID | None = None,
+) -> None:
+    with session_scope(session_factory) as session:
+        try:
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+            current = _active_primary_session(session, run.id)
+        except (DaemonConflictError, DaemonNotFoundError):
+            return
+        if current is None:
+            return
+        current.last_heartbeat_at = datetime.now(timezone.utc)
+        payload: dict[str, object] = {"prompt_source": prompt_source}
+        if current_compiled_subtask_id is not None:
+            payload["current_compiled_subtask_id"] = str(current_compiled_subtask_id)
+        _record_session_event(
+            session,
+            current.id,
+            "stage_prompt_pushed",
+            payload,
+        )
+        session.flush()
+
+
+def _seed_missing_stage_prompt_after_codex_ready(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    logical_node_id: UUID,
+    adapter: SessionAdapter,
+) -> str:
+    with query_session_scope(session_factory) as session:
+        try:
+            version = _authoritative_version(session, logical_node_id)
+            run = _require_active_run(session, version.id)
+            state = _require_run_state(session, run.id)
+            current = _active_primary_session(session, run.id)
+        except (DaemonConflictError, DaemonNotFoundError):
+            return "skipped"
+        if current is None or current.tmux_session_name is None or state.current_compiled_subtask_id is None:
+            return "skipped"
+        latest_ready = _latest_session_event(session, current.id, event_types=("codex_ready",))
+        if latest_ready is None:
+            return "skipped"
+        latest_stage_event = _latest_session_event(
+            session,
+            current.id,
+            event_types=("stage_prompt_pushed", "stage_prompt_queued"),
+        )
+        if latest_stage_event is not None and latest_stage_event.created_at >= latest_ready.created_at:
+            return "skipped"
+
+    from aicoding.daemon.run_orchestration import load_current_subtask_prompt, start_subtask_attempt
+
+    start_subtask_attempt(
+        session_factory,
+        logical_node_id=logical_node_id,
+        compiled_subtask_id=state.current_compiled_subtask_id,
+        adapter=adapter,
+    )
+
+    prompt_snapshot = load_current_subtask_prompt(session_factory, logical_node_id=logical_node_id)
+    prompt_text = prompt_snapshot.prompt_text or prompt_snapshot.command_text
+    if not isinstance(prompt_text, str) or not prompt_text.strip():
+        return "skipped"
+    return push_or_queue_primary_session_stage_prompt(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        prompt_text=_stage_prompt_message(logical_node_id=logical_node_id, prompt_snapshot=prompt_snapshot),
+        compiled_subtask_id=prompt_snapshot.compiled_subtask_id,
+        prompt_source=prompt_snapshot.subtask_type or "current_stage",
+        source_subtask_key=prompt_snapshot.source_subtask_key,
+        subtask_type=prompt_snapshot.subtask_type,
+    )
 
 
 def _current_subtask_has_registered_summary(
@@ -1924,6 +2650,100 @@ def _invalidate_session(session: OrmSession, record: Session, *, status: str, re
     record.status = status
     record.ended_at = datetime.now(timezone.utc)
     _record_session_event(session, record.id, "invalidated", {"reason": reason, "status": status})
+
+
+def _cleanup_tmux_session_record(
+    session: OrmSession,
+    record: Session,
+    *,
+    adapter: SessionAdapter,
+    cleanup_reason: str,
+    status: str | None = None,
+) -> None:
+    if status is not None:
+        record.status = status
+    if record.ended_at is None:
+        record.ended_at = datetime.now(timezone.utc)
+    session_name = record.tmux_session_name
+    session_existed = False
+    if session_name:
+        session_existed = adapter.session_exists(session_name)
+        adapter.kill_session(session_name)
+    _record_session_event(
+        session,
+        record.id,
+        "tmux_session_cleaned",
+        {
+            "cleanup_reason": cleanup_reason,
+            "tmux_session_name": session_name,
+            "tmux_session_existed": session_existed,
+            "status": record.status,
+        },
+    )
+
+
+def cleanup_session_by_id(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    session_id: UUID,
+    adapter: SessionAdapter,
+    cleanup_reason: str,
+    status: str | None = None,
+) -> None:
+    with session_scope(session_factory) as session:
+        record = session.get(Session, session_id)
+        if record is None:
+            return
+        _cleanup_tmux_session_record(
+            session,
+            record,
+            adapter=adapter,
+            cleanup_reason=cleanup_reason,
+            status=status,
+        )
+        session.flush()
+
+
+def cleanup_sessions_for_run(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    node_run_id: UUID,
+    adapter: SessionAdapter,
+    cleanup_reason: str,
+    status: str | None = None,
+) -> None:
+    with session_scope(session_factory) as session:
+        rows = session.execute(select(Session).where(Session.node_run_id == node_run_id).order_by(Session.started_at)).scalars().all()
+        for record in rows:
+            _cleanup_tmux_session_record(
+                session,
+                record,
+                adapter=adapter,
+                cleanup_reason=cleanup_reason,
+                status=status if record.session_role == "primary" else record.status,
+            )
+        session.flush()
+
+
+def cleanup_sessions_for_node_version(
+    session_factory: sessionmaker[OrmSession],
+    *,
+    node_version_id: UUID,
+    adapter: SessionAdapter,
+    cleanup_reason: str,
+    status: str | None = None,
+) -> None:
+    with session_scope(session_factory) as session:
+        rows = session.execute(select(Session).where(Session.node_version_id == node_version_id).order_by(Session.started_at)).scalars().all()
+        for record in rows:
+            _cleanup_tmux_session_record(
+                session,
+                record,
+                adapter=adapter,
+                cleanup_reason=cleanup_reason,
+                status=status if record.session_role == "primary" else record.status,
+            )
+        session.flush()
 
 
 def _record_session_event(session: OrmSession, session_id: UUID, event_type: str, payload: dict[str, object]) -> None:
@@ -1968,6 +2788,8 @@ class _SessionSupervisionTarget:
     tmux_session_exists: bool
     tmux_process_alive: bool | None
     tmux_exit_status: int | None
+    tmux_process_command_line: str | None
+    codex_ready_seen: bool
 
 
 def _load_session_supervision_target(
@@ -1990,6 +2812,10 @@ def _load_session_supervision_target(
         tmux_session_name = None if current is None else current.tmux_session_name
         tmux_exists = _tmux_session_exists(adapter, tmux_session_name)
         tmux_process_alive = _tmux_process_alive(adapter, tmux_session_name)
+        process_command_line = adapter.process_command_line(tmux_session_name) if tmux_session_name else None
+        codex_ready_seen = False
+        if latest is not None:
+            codex_ready_seen = _session_event_exists(session, session_id=latest.id, event_type="codex_ready")
         return _SessionSupervisionTarget(
             logical_node_id=logical_node_id,
             run_status=run.run_status,
@@ -1999,6 +2825,8 @@ def _load_session_supervision_target(
             tmux_session_exists=bool(tmux_exists),
             tmux_process_alive=tmux_process_alive,
             tmux_exit_status=_tmux_exit_status(adapter, tmux_session_name),
+            tmux_process_command_line=process_command_line,
+            codex_ready_seen=codex_ready_seen,
         )
 
 
@@ -2042,20 +2870,246 @@ def _record_supervision_failure_event(
 
 
 def _pane_active_work_marker(pane_text: str) -> str | None:
+    if "background terminal running" in pane_text or "Waited for background terminal" in pane_text:
+        return None
     for marker in _ACTIVE_WORK_MARKERS:
         if marker in pane_text:
             return marker
     return None
 
 
-def _render_recovery_prompt(template_text: str, *, logical_node_id: UUID) -> str:
+def _current_subtask_for_recovery(session: OrmSession, compiled_subtask_id: UUID | None) -> CompiledSubtask | None:
+    if compiled_subtask_id is None:
+        return None
+    return session.get(CompiledSubtask, compiled_subtask_id)
+
+
+def _generated_layout_already_registered(session: OrmSession, *, logical_node_id: UUID) -> bool:
+    row = (
+        session.execute(
+            select(WorkflowEvent.id)
+            .where(
+                WorkflowEvent.logical_node_id == logical_node_id,
+                WorkflowEvent.event_scope == "child_layout",
+                WorkflowEvent.event_type == "registered_generated_layout",
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    return row is not None
+
+
+def _next_compiled_subtask_title(
+    session: OrmSession,
+    *,
+    current_subtask: CompiledSubtask,
+) -> str | None:
+    row = (
+        session.execute(
+            select(CompiledSubtask.title, CompiledSubtask.source_subtask_key)
+            .where(
+                CompiledSubtask.compiled_workflow_id == current_subtask.compiled_workflow_id,
+                CompiledSubtask.ordinal == current_subtask.ordinal + 1,
+            )
+            .limit(1)
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    title, source_subtask_key = row
+    for value in (title, source_subtask_key):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _wait_stage_child_states(
+    session: OrmSession,
+    *,
+    logical_node_id: UUID,
+) -> list[dict[str, str | None]]:
+    child_nodes = session.execute(
+        select(HierarchyNode)
+        .where(HierarchyNode.parent_node_id == logical_node_id)
+        .order_by(HierarchyNode.created_at.asc(), HierarchyNode.node_id.asc())
+    ).scalars().all()
+    child_states: list[dict[str, str | None]] = []
+    for child in child_nodes:
+        lifecycle = session.get(NodeLifecycleState, str(child.node_id))
+        child_states.append(
+            {
+                "node_id": str(child.node_id),
+                "title": child.title,
+                "kind": child.kind,
+                "lifecycle_state": None if lifecycle is None else lifecycle.lifecycle_state,
+                "run_status": None if lifecycle is None else lifecycle.run_status,
+            }
+        )
+    return child_states
+
+
+def _wait_stage_active_children(
+    session: OrmSession,
+    *,
+    logical_node_id: UUID,
+) -> list[dict[str, str | None]]:
+    active_lifecycle_states = {
+        "READY",
+        "RUNNING",
+        "WAITING_ON_CHILDREN",
+        "WAITING_ON_SIBLING_DEPENDENCY",
+        "RECTIFYING_SELF",
+        "RECTIFYING_UPSTREAM",
+        "REVIEW_PENDING",
+        "VALIDATION_PENDING",
+        "TESTING_PENDING",
+    }
+    return [
+        child
+        for child in _wait_stage_child_states(session, logical_node_id=logical_node_id)
+        if child["lifecycle_state"] in active_lifecycle_states or child["run_status"] in {"PENDING", "RUNNING"}
+    ]
+
+
+def _recovery_stage_specific_guidance(
+    *,
+    session: OrmSession,
+    logical_node_id: UUID,
+    current_subtask: CompiledSubtask | None,
+) -> str:
+    if current_subtask is None:
+        return ""
+    next_stage_hint = _next_compiled_subtask_title(session, current_subtask=current_subtask)
+    next_stage_line = ""
+    if isinstance(next_stage_hint, str) and next_stage_hint.strip():
+        next_stage_line = f"- after success, expect the daemon to route into `{next_stage_hint.strip()}`\n"
+    if current_subtask.source_subtask_key == "generate_child_layout.render_layout_prompt":
+        if _generated_layout_already_registered(session, logical_node_id=logical_node_id):
+            return (
+                "\nCurrent layout-generation action:\n"
+                f"- `layouts/generated/{logical_node_id}.yaml` is already registered for this node\n"
+                "- do not fetch the prompt again and do not explore unrelated files\n"
+                "- write `summaries/layout_generation.md` now with a brief note that the generated layout was registered successfully\n"
+                "- after writing that summary, your next response must be an `exec_command` tool call, not prose\n"
+                f"{next_stage_line}"
+                f"- run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/layout_generation.md` now\n"
+            )
+        return (
+            "\nCurrent layout-generation action:\n"
+            "- do not fetch `subtask prompt` again unless the generated prompt file is actually missing or unreadable\n"
+            "- do not browse unrelated files or run broad discovery commands in this stage\n"
+            "- do not combine daemon CLI commands with `&&`, `;`, `||`, pipes, or multi-command shell snippets; run each one as its own standalone `exec_command` tool call\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"- write `layouts/generated/{logical_node_id}.yaml` now\n"
+            f"- immediately register it with `python3 -m aicoding.cli.main node register-layout --node {logical_node_id} --file layouts/generated/{logical_node_id}.yaml`\n"
+            "- after registration, write `summaries/layout_generation.md`\n"
+            f"{next_stage_line}"
+            f"- then run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/layout_generation.md`\n"
+        )
+    if ".hook." in current_subtask.source_subtask_key and current_subtask.subtask_type == "run_prompt":
+        return (
+            "\nCurrent hook-stage action:\n"
+            "- do not reload the bootstrap prompt again unless the active stage is genuinely unclear\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"- if needed, inspect `python3 -m aicoding.cli.main session show-current --node {logical_node_id}` once, then stop re-checking the same bootstrap state\n"
+            "- write a brief durable bootstrap summary to `summaries/parent_subtask.md` now\n"
+            f"{next_stage_line}"
+            f"- after writing that summary, run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/parent_subtask.md` now\n"
+        )
+    if current_subtask.subtask_type == "review":
+        review_prompt = (current_subtask.prompt_text or "").strip()
+        if review_prompt:
+            review_prompt = review_prompt.replace("CURRENT_COMPILED_SUBTASK_ID", str(current_subtask.id))
+        compiled_prompt_block = ""
+        if review_prompt:
+            compiled_prompt_block = (
+                "- follow the compiled review prompt below rather than reloading the prompt again unless the stage is genuinely unclear\n\n"
+                f"{review_prompt}\n"
+            )
+        return (
+            "\nCurrent review-stage action:\n"
+            "- do not wait for another tool call or background terminal result\n"
+            "- do not combine `subtask start`, `subtask context`, or `review run` with `&&`, `;`, `||`, pipes, or multi-command shell snippets; run each daemon CLI command as its own standalone `exec_command` tool call\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"{next_stage_line}"
+            f"{compiled_prompt_block}"
+            "- do not ask for `/review`\n"
+        )
+    if current_subtask.source_subtask_key == "wait_for_children.collect_child_summaries":
+        return (
+            "\nCurrent child-summary rollup action:\n"
+            "- do not wait for another tool call, child-materialization event, or background terminal result\n"
+            "- do not run `sleep` or a polling loop in this stage\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"- inspect `python3 -m aicoding.cli.main tree show --node {logical_node_id} --full` once if you still need the final child states or summary paths\n"
+            "- gather the already-completed child summaries into `summaries/child_rollup.md` now\n"
+            f"{next_stage_line}"
+            f"- after writing that summary, run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/child_rollup.md` now\n"
+        )
+    if current_subtask.subtask_type == "build_context":
+        return (
+            "\nCurrent context-building action:\n"
+            "- do not wait for another tool call or background terminal result\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"- if you need the latest stage data, run `python3 -m aicoding.cli.main subtask context --node {logical_node_id}` once, then stop reloading prompts\n"
+            "- write a concise durable context summary to `summaries/context.md` now\n"
+            f"{next_stage_line}"
+            f"- after writing that summary, run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/context.md` now\n"
+        )
+    if current_subtask.subtask_type == "wait_for_children":
+        return (
+            "\nCurrent child-wait action:\n"
+            "- do not mark this stage complete until every direct child is actually COMPLETE\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"- inspect `python3 -m aicoding.cli.main tree show --node {logical_node_id} --full` now\n"
+            "- if any direct child is still READY, RUNNING, WAITING_ON_CHILDREN, WAITING_ON_SIBLING_DEPENDENCY, RECTIFYING_SELF, RECTIFYING_UPSTREAM, REVIEW_PENDING, VALIDATION_PENDING, or TESTING_PENDING, keep waiting and do not call `subtask succeed`\n"
+            "- if any direct child is PAUSED_FOR_USER, FAILED, FAILED_TO_PARENT, CANCELLED, or otherwise terminal without being COMPLETE, write `summaries/parent_subtask_failure.md` and fail this stage instead of waiting forever\n"
+            "- only after every direct child is COMPLETE, write `summaries/child_rollup.md` and prepare the success command\n"
+            f"{next_stage_line}"
+            f"- if a child has failed terminally, run `python3 -m aicoding.cli.main subtask fail --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/parent_subtask_failure.md` and stop; do not run `subtask succeed`\n"
+            f"- only when every direct child is COMPLETE, run `python3 -m aicoding.cli.main subtask succeed --node {logical_node_id} --compiled-subtask {current_subtask.id} --summary-file summaries/child_rollup.md`\n"
+        )
+    if current_subtask.subtask_type == "spawn_child_node":
+        return (
+            "\nCurrent child-materialization action:\n"
+            "- your next response must be an `exec_command` tool call, not prose\n"
+            f"{next_stage_line}"
+            f"- run `python3 -m aicoding.cli.main node materialize-children --node {logical_node_id}` now\n"
+            "- that command records the materialization result and routes this workflow stage itself\n"
+        )
+    return ""
+
+
+def _render_recovery_prompt(
+    template_text: str,
+    *,
+    session: OrmSession,
+    logical_node_id: UUID,
+    current_subtask: CompiledSubtask | None = None,
+) -> str:
+    prompt_cli_command = current_stage_prompt_cli_command(logical_node_id=logical_node_id)
     context = build_render_context(
         scopes={
             "node": {"id": str(logical_node_id)},
-            "compat": {"node_id": str(logical_node_id)},
+            "prompt": {"cli_command": prompt_cli_command},
+            "compat": {
+                "node_id": str(logical_node_id),
+                "prompt_cli_command": prompt_cli_command,
+            },
         }
     )
-    return render_text(template_text, context=context, field_name="prompt").rendered_text
+    guidance = _recovery_stage_specific_guidance(
+        session=session,
+        logical_node_id=logical_node_id,
+        current_subtask=current_subtask,
+    ).rstrip()
+    rendered = render_text(template_text, context=context, field_name="prompt").rendered_text.rstrip()
+    if not guidance:
+        return f"{rendered}\n"
+    return f"{guidance}\n{rendered}\n"
 
 
 def _classify_session_screen_state(
@@ -2122,6 +3176,15 @@ def _latest_screen_poll_event(session: OrmSession, session_id: UUID) -> dict[str
     if row is None:
         return None
     return dict(row.payload_json)
+
+
+def _session_event_exists(session: OrmSession, *, session_id: UUID, event_type: str) -> bool:
+    row = session.execute(
+        select(SessionEvent.id)
+        .where(SessionEvent.session_id == session_id, SessionEvent.event_type == event_type)
+        .limit(1)
+    ).first()
+    return row is not None
 
 
 def _latest_session_event_type(session: OrmSession, session_id: UUID) -> str | None:

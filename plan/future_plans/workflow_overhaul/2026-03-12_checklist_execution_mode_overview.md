@@ -1,5 +1,19 @@
 # Checklist Execution Mode Overview
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_templated_task_generation_overview.md`
+- `2026-03-12_task_sequence_template_schema_draft.md`
+
+The repository direction is now:
+
+- templated task generation for reusable decomposition
+- one-off authored child tasks for bespoke decomposition
+
+There is no longer an active proposal to add a separate checklist runtime.
+
 ## Purpose
 
 Capture the intended role of checklist execution mode inside the workflow-overhaul direction.

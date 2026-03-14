@@ -21,6 +21,9 @@ def _build_parser() -> argparse.ArgumentParser:
     fresh_parser.add_argument("--node", required=True)
     fresh_parser.add_argument("--prompt-log-path")
 
+    prompt_file_parser = subparsers.add_parser("prompt-file", help="Exec into Codex with instructions to read a prepared prompt file.")
+    prompt_file_parser.add_argument("--prompt-file", required=True)
+
     subparsers.add_parser("resume", help="Resume the last Codex session.")
     return parser
 
@@ -169,11 +172,16 @@ def _codex_base_argv() -> list[str]:
     return ["codex", "-C", str(Path.cwd().resolve())]
 
 
-def _exec_codex_fresh(prompt_cli_command: str) -> None:
-    instruction = f"Please read the prompt from `{prompt_cli_command}` and run the prompt"
+def _exec_codex_fresh() -> None:
     _ensure_codex_auth_state()
     _ensure_codex_trusted_workspace_config()
-    os.execvp("codex", [*_codex_base_argv(), "--yolo", instruction])
+    os.execvp("codex", [*_codex_base_argv(), "--yolo"])
+
+
+def _exec_codex_prompt_file() -> None:
+    _ensure_codex_auth_state()
+    _ensure_codex_trusted_workspace_config()
+    os.execvp("codex", [*_codex_base_argv(), "--yolo"])
 
 
 def _exec_codex_resume() -> None:
@@ -188,11 +196,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "resume":
         _exec_codex_resume()
         return 0
+    if args.mode == "prompt-file":
+        _exec_codex_prompt_file()
+        return 0
 
     logical_node_id = UUID(args.node)
-    prompt_cli_command, payload = _run_prompt_cli_command(logical_node_id=logical_node_id)
+    _, payload = _run_prompt_cli_command(logical_node_id=logical_node_id)
     _write_prompt_log(args.prompt_log_path, _extract_prompt_text(payload))
-    _exec_codex_fresh(prompt_cli_command)
+    _exec_codex_fresh()
     return 0
 
 

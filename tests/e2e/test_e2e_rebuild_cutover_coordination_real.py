@@ -12,6 +12,8 @@ def _compile_ready_and_start_node(harness, *, node_id: str) -> None:
     start_result = harness.cli("node", "run", "start", "--node", node_id)
     assert compile_result.exit_code == 0, compile_result.stderr
     assert start_result.exit_code == 0, start_result.stderr
+    assert compile_result.json()["status"] == "compiled", compile_result.stdout
+    assert start_result.json()["status"] == "admitted", start_result.stdout
 
 
 @pytest.mark.e2e_real

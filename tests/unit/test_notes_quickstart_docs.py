@@ -20,16 +20,11 @@ def test_getting_started_quickstart_mentions_current_entrypoint_and_query_loop()
         REPO_ROOT / "notes" / "scenarios" / "walkthroughs" / "getting_started_hypothetical_task_guide.md"
     ).read_text(encoding="utf-8")
 
-    assert "PYTHONPATH=src python3 -m aicoding.cli.main admin doctor" in text
-    assert "PYTHONPATH=src python3 -m aicoding.cli.main ..." in text
-    assert "PYTHONPATH=src python3 -m aicoding.daemon.main" in text
-    assert "workflow start \\" in text
-    assert "--kind epic" in text
-    assert "session show-current" in text
-    assert "PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node <node_id>" in text
-    assert "workflow advance --node <node_id>" in text
-    assert "top-ness is defined only by the absence of a parent node" in text
-    assert "the shipped built-in YAML and workflow-start path still expose only `epic` as parentless today" in text
+    assert "no longer an authoritative user/operator documentation surface" in text
+    assert "docs/user/getting-started.md" in text
+    assert "docs/operator/first-live-run.md" in text
+    assert "docs/operator/inspect-state-and-blockers.md" in text
+    assert "docs/runbooks/pause-resume-recovery.md" in text
 
 
 def test_scenario_and_flow_pytest_plan_references_all_flow_docs_and_scenario_sources() -> None:
@@ -57,6 +52,25 @@ def test_scenario_and_flow_pytest_plan_references_all_flow_docs_and_scenario_sou
         "13_human_gate_and_intervention_flow.md",
     ]:
         assert name in text
+
+
+def test_readme_mentions_documentation_boundary_and_docs_tree() -> None:
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "docs/README.md" in text
+    assert "## Documentation Boundary" in text
+    assert "- `docs/` contains user-facing and operator-facing documentation artifacts" in text
+
+
+def test_historical_plan_walkthrough_points_to_real_docs() -> None:
+    text = (
+        REPO_ROOT / "notes" / "scenarios" / "walkthroughs" / "hypothetical_plan_workthrough.md"
+    ).read_text(encoding="utf-8")
+
+    assert "historical simulation note" in text
+    assert "docs/operator/tree-materialization-and-rebuild.md" in text
+    assert "docs/operator/quality-provenance-and-finalize.md" in text
+    assert "docs/runbooks/failure-escalation.md" in text
 
 
 def test_flow_coverage_checklist_tracks_every_flow_and_the_new_suite() -> None:

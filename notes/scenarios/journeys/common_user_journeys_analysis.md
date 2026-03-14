@@ -1,10 +1,12 @@
 # Common User Journeys Analysis
 
+This note is now a historical analysis input for flow planning and relevance tracking. It is not the primary user/operator documentation surface.
+
 ## Purpose
 
 This note summarizes the most likely common user journeys implied by the current design notes, what each journey needs at a programmatic level, and which critical use cases still look under-accounted-for.
 
-It is a synthesis of the current notes, especially:
+It remains useful as a synthesis of the current notes, especially:
 
 - `notes/explorations/original_concept.md`
 - `notes/scenarios/walkthroughs/getting_started_hypothetical_task_guide.md`

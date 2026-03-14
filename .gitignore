@@ -18,3 +18,4 @@ frontend/test-results/
 frontend/playwright-report/
 build/**
 repos/**
+prompt_logs/**

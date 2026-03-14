@@ -133,16 +133,16 @@ def test_e2e_prompt_and_summary_history_real(real_daemon_harness, tmp_path) -> N
     assert summary_payload["summary_type"] == "subtask"
 
     assert prompt_history_payload["prompts"]
-    assert prompt_history_payload["prompts"][0]["id"] == prompt_id
+    assert any(item["id"] == prompt_id for item in prompt_history_payload["prompts"])
     assert prompt_show_payload["id"] == prompt_id
     assert prompt_show_payload["compiled_subtask_id"] == compiled_subtask_id
     assert prompt_show_payload["content_hash"]
 
     assert summary_history_payload["summaries"]
-    assert summary_history_payload["summaries"][0]["id"] == summary_id
+    assert any(item["id"] == summary_id for item in summary_history_payload["summaries"])
     assert summary_show_payload["id"] == summary_id
     assert summary_show_payload["summary_scope"] == "subtask_attempt"
 
     assert audit_payload["node_id"] == node_id
-    assert audit_payload["prompt_history"]["prompts"][0]["id"] == prompt_id
+    assert any(item["id"] == prompt_id for item in audit_payload["prompt_history"]["prompts"])
     assert any(item["id"] == summary_id for item in audit_payload["summary_history"]["summaries"])

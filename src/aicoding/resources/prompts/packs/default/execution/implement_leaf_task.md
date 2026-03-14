@@ -16,13 +16,14 @@ Priority rule:
 - once the daemon idle nudge arrives, resume with the requested workflow and complete the remaining task instructions normally
 
 Required CLI workflow:
-1. Resolve the live compiled subtask UUID:
-   - `python3 -m aicoding.cli.main subtask current --node {{node_id}}`
-   - read `state.current_compiled_subtask_id` from that output and use that UUID in all later `--compiled-subtask` flags
+1. Use the current compiled subtask UUID from this prompt:
+   - `CURRENT_COMPILED_SUBTASK_ID`
 2. Mark the subtask attempt started:
    - `python3 -m aicoding.cli.main subtask start --node {{node_id}} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`
-3. Inspect the current context before editing:
+   - if the daemon already started this attempt, this command is safe to repeat
+3. If you still need more current stage data before editing:
    - `python3 -m aicoding.cli.main subtask context --node {{node_id}}`
+   - if this extra context read is unavailable or times out, continue with the compiled context already embedded in this prompt instead of blocking the workflow
 4. Do the implementation work in the current workspace.
 5. When complete:
    - write a concise summary to `summaries/implementation.md`
@@ -35,7 +36,7 @@ Required CLI workflow:
      `python3 -m aicoding.cli.main subtask fail --node {{node_id}} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file summaries/failure.md`
 
 Execution rules:
-- inspect current context before editing
+- inspect current context before editing when the provided prompt and compiled context are not already sufficient
 - make the smallest coherent change that satisfies the acceptance criteria
 - keep output aligned with validation, review, and testing expectations
 - do not claim completion until the actual work and required artifacts exist

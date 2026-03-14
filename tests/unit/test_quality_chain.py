@@ -33,8 +33,7 @@ def _quality_catalog(tmp_path):
                 "    require_testing_before_finalize: true",
                 "    require_docs_before_finalize: true",
                 "  runtime_policy_refs: []",
-                "  hook_refs:",
-                "    - hooks/default_hooks.yaml",
+                "  hook_refs: []",
                 "  review_refs: []",
                 "  testing_refs: []",
                 "  docs_refs: []",
@@ -88,7 +87,7 @@ def test_run_turnkey_quality_chain_executes_gates_and_records_finalize(migrated_
     admit_node_run(factory, node_id=node.node_id)
 
     progress = load_current_run_progress(factory, logical_node_id=node.node_id)
-    while progress.current_subtask is not None and progress.current_subtask["subtask_type"] not in {"validate", "review", "run_tests"}:
+    while progress.current_subtask is not None and not str(progress.current_subtask["source_subtask_key"]).startswith("validate_node."):
         compiled_subtask_id = progress.state.current_compiled_subtask_id
         assert compiled_subtask_id is not None
         start_subtask_attempt(factory, logical_node_id=node.node_id, compiled_subtask_id=compiled_subtask_id)

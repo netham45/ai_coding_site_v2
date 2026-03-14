@@ -9,11 +9,13 @@ Freeze selected profile state, effective layout, obligations, and generated brie
 - add profile-aware compile context
 - generate and persist `workflow brief`
 - freeze required roles, updates, verification, and blocked-step metadata
+- freeze corrective-expansion policy and loop-budget metadata
 
 ## Implementation Subtasks
 
 - extend compile context to freeze selected profile descriptor, effective layout, and ancestry/profile chain data
 - freeze required child roles, required updates, verification obligations, and blocked-action metadata into compiled state
+- freeze the corrective-expansion contract into compiled state, including whether verification may append remediation/reverification on the same node, whether non-leaf verification may materialize corrective descendants, and the applicable remediation-turn cap
 - generate the compiler-owned `workflow brief` from tier prompt, profile prompt, layout context, and discovery guidance
 - expose compile failures clearly when profile applicability, layout compatibility, or role coverage checks fail
 
@@ -42,3 +44,4 @@ Freeze selected profile state, effective layout, obligations, and generated brie
 
 - compile is still driven by node-kind `available_tasks` and the first authored base subtask, not by workflow profiles or compiled subtask templates
 - there is no compiler-owned `workflow brief`, selected-profile snapshot, or frozen obligation payload in current compiled state
+- compile currently produces one immutable task/subtask chain and does not freeze any corrective-loop metadata that would allow deterministic verification-driven remediation and reverification

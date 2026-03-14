@@ -49,8 +49,13 @@ def test_flow_19_hook_expansion_compile_stage_runs_against_real_daemon_and_real_
         parent_id=plan_id,
     )
 
+    compile_result = harness.cli("workflow", "compile", "--node", task_id)
+    assert compile_result.exit_code == 0, compile_result.stderr
+    assert compile_result.json()["status"] == "compiled", compile_result.stdout
+
     start_result = harness.cli("node", "run", "start", "--node", task_id)
     assert start_result.exit_code == 0, start_result.stderr
+    assert start_result.json()["status"] == "admitted", start_result.stdout
     bind_result = harness.cli("session", "bind", "--node", task_id)
     assert bind_result.exit_code == 0, bind_result.stderr
     session_name = str(bind_result.json()["session_name"])

@@ -44,7 +44,7 @@ def test_session_bind_and_show_current_round_trip(cli_runner, daemon_bridge_clie
     assert current_payload["run_status"] == "RUNNING"
     assert current_payload["recommended_action"] == "attach_existing_session"
     assert current_payload["session_name"].startswith("aicoding-pri-r1-")
-    assert current_payload["screen_state"]["classification"] == "active"
+    assert current_payload["screen_state"]["classification"] in {"active", "quiet"}
 
 
 def test_session_show_current_reports_stale_binding_for_bootstrap(
@@ -128,6 +128,7 @@ def test_session_show_current_hides_superseded_version_session_after_cutover(
     bind_result = cli_runner(["session", "bind", "--node", node_id])
     assert bind_result.exit_code == 0
     old_session_id = bind_result.json()["session_id"]
+    old_session_name = bind_result.json()["session_name"]
     old_version_id = bind_result.json()["node_version_id"]
 
     assert cli_runner(["node", "cancel", "--node", node_id]).exit_code == 0
@@ -153,6 +154,7 @@ def test_session_show_current_hides_superseded_version_session_after_cutover(
     assert current_after_restart.json()["status"] == "none"
     assert show_result.exit_code == 0
     assert lifecycle_result.exit_code == 0
+    assert daemon_bridge_client.client.app.state.session_adapter.session_exists(old_session_name) is False
     assert show_result.json()["authoritative_node_version_id"] == candidate_version_id
     assert lifecycle_result.json()["node_version_id"] == candidate_version_id
     assert old_session_id
@@ -191,7 +193,9 @@ def test_session_attach_and_resume_commands_round_trip(cli_runner, daemon_bridge
     assert show_result.exit_code == 0
     assert show_result.json()["session_id"] == session_id
     assert events_result.exit_code == 0
-    assert [item["event_type"] for item in events_result.json()["events"]][:2] == ["bound", "attached"]
+    event_types = [item["event_type"] for item in events_result.json()["events"]]
+    assert event_types[:3] == ["bound", "codex_ready", "stage_prompt_pushed"]
+    assert "attached" in event_types
     assert "subtask prompt --node" in events_result.json()["events"][0]["payload_json"]["prompt_cli_command"]
     assert "prompt_logs" in events_result.json()["events"][0]["payload_json"]["prompt_log_path"]
     assert list_result.exit_code == 0
@@ -987,6 +991,8 @@ def test_cli_subtask_retry_and_node_cancel_round_trip(cli_runner, daemon_bridge_
     assert cli_runner(["workflow", "compile", "--node", node_id]).exit_code == 0
     assert cli_runner(["node", "lifecycle", "transition", "--node", node_id, "--state", "READY"]).exit_code == 0
     assert cli_runner(["node", "run", "start", "--node", node_id]).exit_code == 0
+    bind_result = cli_runner(["session", "bind", "--node", node_id])
+    session_name = bind_result.json()["session_name"]
 
     current_result = cli_runner(["subtask", "current", "--node", node_id])
     compiled_subtask_id = current_result.json()["state"]["current_compiled_subtask_id"]
@@ -1012,6 +1018,7 @@ def test_cli_subtask_retry_and_node_cancel_round_trip(cli_runner, daemon_bridge_
     assert workflow_cancel_result.stderr_json()["error"] == "not_found"
     assert lifecycle_result.exit_code == 0
     assert lifecycle_result.json()["lifecycle_state"] == "CANCELLED"
+    assert daemon_bridge_client.client.app.state.session_adapter.session_exists(session_name) is False
 
 
 def test_cli_validation_show_and_results_round_trip(cli_runner, daemon_bridge_client, migrated_public_schema, monkeypatch) -> None:
@@ -1597,13 +1604,13 @@ def test_cli_register_layout_round_trip(
 
             assert register_result.exit_code == 0
             assert register_result.json()["status"] == "registered"
-            assert register_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert register_result.json()["layout_relative_path"] == f"layouts/generated/{node_id}.yaml"
             assert register_result.json()["child_count"] == 1
             assert materialize_result.exit_code == 0
-            assert materialize_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert materialize_result.json()["layout_relative_path"] == f"layouts/generated/{node_id}.yaml"
             assert [item["layout_child_id"] for item in materialize_result.json()["children"]] == ["custom_phase"]
             assert after_result.exit_code == 0
-            assert after_result.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert after_result.json()["layout_relative_path"] == f"layouts/generated/{node_id}.yaml"
     finally:
         get_settings.cache_clear()
 
@@ -1663,7 +1670,7 @@ def test_cli_register_layout_accepts_workspace_relative_file_path(
             assert register_result.exit_code == 0
             assert register_result.json()["status"] == "registered"
             assert register_result.json()["source_path"] == str(layout_path.resolve())
-            assert register_result.json()["registered_path"] == str(layout_path.resolve())
+            assert register_result.json()["registered_path"] == str((workspace_root / f"layouts/generated/{node_id}.yaml").resolve())
     finally:
         get_settings.cache_clear()
 

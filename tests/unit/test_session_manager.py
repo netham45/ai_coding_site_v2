@@ -11,13 +11,17 @@ from aicoding.daemon.session_manager import (
     build_child_session_plan,
     build_primary_session_plan,
     build_recovery_primary_session_plan,
+    child_prompt_path_for_session,
     codex_home_path_for_run,
+    codex_home_path_for_child_session,
     current_stage_prompt_cli_command,
     default_interactive_shell_command,
+    delegated_prompt_file_bootstrap_command,
     prompt_log_path_for_session,
     primary_session_execution_working_directory,
     project_name_for_working_directory,
     repo_local_python_module_command,
+    codex_prompt_instruction,
     session_runtime_environment,
     trusted_workspace_paths_for_codex,
 )
@@ -71,10 +75,25 @@ def test_child_session_launch_plan_is_distinct_from_primary_plan() -> None:
     assert str(parent_session_id)[:8] in plan.session_name
     assert str(session_id)[:8] in plan.session_name
     assert plan.attach_command == f"tmux attach-session -t {plan.session_name}"
+    assert "aicoding.daemon.codex_session_bootstrap" in plan.command
+    assert "prompt-file" in plan.command
+    assert plan.launch_mode == "codex_prompt_file"
+    assert plan.prompt_log_path == child_prompt_path_for_session(
+        working_directory=plan.working_directory,
+        parent_session_id=parent_session_id,
+        session_id=session_id,
+    )
+    assert plan.codex_home_path == codex_home_path_for_child_session(
+        parent_session_id=parent_session_id,
+        session_id=session_id,
+    )
     assert plan.environment is not None
     expected_environment = session_runtime_environment()
     for key, value in expected_environment.items():
         assert plan.environment[key] == value
+    assert plan.environment["CODEX_HOME"] == plan.codex_home_path
+    assert plan.environment["AICODING_CODEX_TRUSTED_PATHS"]
+    assert plan.trusted_workspace_paths
 
 
 def test_default_interactive_shell_command_is_long_lived() -> None:
@@ -82,6 +101,21 @@ def test_default_interactive_shell_command_is_long_lived() -> None:
 
     assert "-lc" in command
     assert "exec" in command
+
+
+def test_delegated_prompt_file_bootstrap_command_uses_repo_local_pythonpath() -> None:
+    command = delegated_prompt_file_bootstrap_command(prompt_file="/tmp/prompt.md")
+
+    assert command.startswith(f"PYTHONPATH={ORCHESTRATOR_SRC_ROOT}")
+    assert command.endswith("python3 -m aicoding.daemon.codex_session_bootstrap prompt-file --prompt-file /tmp/prompt.md")
+
+
+def test_codex_prompt_instruction_for_prompt_file_forbids_immediate_subtask_prompt_refetch() -> None:
+    rendered = codex_prompt_instruction(prompt_target="/tmp/prompt.md", prompt_source="file")
+
+    assert "Read the full task prompt from `/tmp/prompt.md`" in rendered
+    assert "Do not start by re-fetching `subtask prompt`" in rendered
+    assert "execute the concrete next workflow step" in rendered
 
 
 def test_recovery_primary_session_launch_plan_uses_codex_resume_last() -> None:

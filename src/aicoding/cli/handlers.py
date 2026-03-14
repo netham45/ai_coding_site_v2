@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from argparse import Namespace
 from pathlib import Path
-from pathlib import Path
 
 from aicoding.auth import load_auth_token
 from aicoding.bootstrap import bootstrap_status
@@ -1299,6 +1298,38 @@ def handle_mutating_daemon_command(args: Namespace, context: CliContext) -> dict
     if payload is None:
         payload = {"node_id": getattr(args, "node")}
     return client.request("POST", getattr(args, "daemon_path"), json_payload=payload)
+
+
+def _node_run_start_is_nonfatal_conflict(payload: dict[str, object]) -> bool:
+    if payload.get("status") != "blocked":
+        return False
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return False
+    blocker_kinds = {
+        str(item.get("blocker_kind"))
+        for item in blockers
+        if isinstance(item, dict) and item.get("blocker_kind") is not None
+    }
+    return blocker_kinds == {"already_running"}
+
+
+def handle_node_run_start(args: Namespace, context: CliContext) -> dict[str, object]:
+    client = build_daemon_client(context.settings)
+    payload = client.request("POST", "/api/node-runs/start", json_payload={"node_id": getattr(args, "node")})
+    if payload.get("status") == "blocked" and not _node_run_start_is_nonfatal_conflict(payload):
+        raise CommandExecutionError(
+            message="The daemon rejected the node run start because the node is not ready to run.",
+            code="daemon_conflict",
+            exit_code=4,
+            details={
+                "base_url": build_daemon_base_url(context.settings),
+                "path": "/api/node-runs/start",
+                "status_code": 200,
+                "response": payload,
+            },
+        )
+    return payload
 
 
 def handle_debug_daemon_ping(args: Namespace, context: CliContext) -> dict[str, object]:

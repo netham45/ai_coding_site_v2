@@ -9,6 +9,7 @@ Turn the route-design draft into explicit implementation work for daemon endpoin
 - define the runtime route family for profile-aware create, inspect, compile, and legality-check surfaces
 - make blocked workflow-profile mutations explicit and inspectable
 - align CLI command families and browser actions with daemon-owned legality rules
+- define the route and mutation contracts for corrective expansion after verification findings
 
 ## Implementation Subtasks
 
@@ -16,6 +17,8 @@ Turn the route-design draft into explicit implementation work for daemon endpoin
 - map CLI commands and browser actions to the daemon route family instead of inventing separate semantics
 - document and enforce blocked mutation payloads for children-required, step-skip, and invalid-profile transitions
 - align route-level observability with operator inspection expectations and audit surfaces
+- define the daemon-owned mutation contract for `needs_remediation` outcomes so leaf task chains append exactly one remediation subtask plus one reverification subtask, while plan/phase verification surfaces materialize bounded corrective descendants plus a follow-up reverification step
+- define legality and blocked-reason payloads for remediation-turn-cap exhaustion, cross-boundary corrective requests, and duplicate corrective-loop creation attempts
 
 ## Main Dependencies
 
@@ -32,6 +35,7 @@ Turn the route-design draft into explicit implementation work for daemon endpoin
 - `02_compile_or_recompile_workflow_flow`
 - `05_admit_and_execute_node_run_flow`
 - `06_inspect_state_and_blockers_flow`
+- `09_run_quality_gates_flow`
 - `11_finalize_and_merge_flow`
 
 ## Relevant Current Code
@@ -46,3 +50,4 @@ Turn the route-design draft into explicit implementation work for daemon endpoin
 
 - the future-plan route-design note existed, but there was no standalone plan to implement those route and mutation contracts
 - current runtime command and route surfaces do not yet expose the blocked workflow-profile legality model described by the notes
+- there is no route contract for verification-driven corrective expansion, no daemon-owned append-or-materialize correction action, and no inspection surface for active remediation loop state

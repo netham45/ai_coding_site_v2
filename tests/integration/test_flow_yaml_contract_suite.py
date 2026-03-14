@@ -259,7 +259,7 @@ def _run_flow_yaml_15(app_client, auth_headers, **_kwargs) -> None:
     node_id = _create_node(app_client, auth_headers, kind="epic", title="Blueprint Epic", prompt="epic prompt")
     task_keys = _compile_and_load_task_keys(app_client, auth_headers, node_id)
 
-    assert task_keys == ["research_context", "execute_node", "validate_node", "review_node"]
+    assert task_keys == ["generate_child_layout", "review_child_layout", "spawn_children", "wait_for_children"]
 
 
 def _run_flow_yaml_16(app_client, auth_headers, **_kwargs) -> None:
@@ -274,7 +274,7 @@ def _run_flow_yaml_16(app_client, auth_headers, **_kwargs) -> None:
     )
     task_keys = _compile_and_load_task_keys(app_client, auth_headers, phase_id)
 
-    assert task_keys == ["research_context", "execute_node", "validate_node", "review_node"]
+    assert task_keys == ["generate_child_layout", "review_child_layout", "spawn_children", "wait_for_children"]
 
 
 def _run_flow_yaml_17(app_client, auth_headers, **_kwargs) -> None:
@@ -297,7 +297,7 @@ def _run_flow_yaml_17(app_client, auth_headers, **_kwargs) -> None:
     )
     task_keys = _compile_and_load_task_keys(app_client, auth_headers, plan_id)
 
-    assert task_keys == ["research_context", "execute_node", "validate_node", "review_node"]
+    assert task_keys == ["generate_child_layout", "review_child_layout", "spawn_children", "wait_for_children"]
 
 
 def _run_flow_yaml_18(app_client, auth_headers, **_kwargs) -> None:

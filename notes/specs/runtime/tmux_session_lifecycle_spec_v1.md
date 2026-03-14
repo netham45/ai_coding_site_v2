@@ -54,6 +54,7 @@ It narrows specifically to tmux/session lifecycle doctrine.
 10. Recovery must prefer safe reuse of an existing valid session before replacement.
 11. Replacement of a lost session must preserve the prior durable session history.
 12. For unfinished runnable work, the daemon must supervise authoritative tracked primary sessions and ensure the required tmux session remains running; if safe replacement cannot be completed, the unfinished run must fail durably rather than remaining silently stuck.
+13. `PAUSED_FOR_USER` remains unfinished resumable work; a lost authoritative tmux session for a paused node must be replaced or reused through the same supervised recovery model instead of being treated as unrestartable solely because the node is waiting on user input.
 
 ---
 
@@ -95,6 +96,7 @@ Before tmux binding is legal:
 - the node must have an authoritative version
 - the active run must be admitted
 - the compiled workflow cursor must exist durably
+- for already compiled nodes started through `node run start`, the daemon may first bridge `COMPILED -> READY` when `lifecycle_not_ready` is the only admission blocker; operators and E2E tests should not need a separate synthetic lifecycle push just to make a compiled node bindable
 
 Top-level startup note:
 
@@ -161,6 +163,13 @@ During steady-state execution, the primary session is expected to:
 - retrieve prompt and context through the CLI
 - mark start, heartbeat, completion, failure, and summaries through the CLI
 
+The primary tmux session should remain alive while all of the following are true:
+
+- the run is unfinished
+- the session is still the authoritative primary session for that run
+- the session has not been durably invalidated, superseded, or replaced
+- the daemon is still relying on that session for either active execution or resumable paused work
+
 ### 6. Detached session
 
 A session may be healthy but detached.
@@ -196,6 +205,33 @@ When that happens:
 Implementation note:
 
 - a primary session is also treated as `lost` when tmux still preserves the pane but the pane process has already exited; that case must surface `tmux_session_exists=true` together with `tmux_process_alive=false` and any known exit status
+
+### 9. Terminal, superseded, and replaced session cleanup
+
+tmux session teardown must be deliberate rather than incidental.
+
+The daemon should kill the tmux session once durable state proves the session is no longer needed as live runtime state.
+
+That includes:
+
+- the run reached a terminal state such as `COMPLETED`, `FAILED`, or `CANCELLED`
+- the session was replaced by a newer authoritative primary session
+- the node version was superseded or cut over such that the old session is no longer authoritative
+- the session was an optional child/delegated session whose bounded work is durably finished or abandoned
+
+The daemon should not keep a tmux session alive indefinitely only because the pane remains inspectable.
+
+When remain-on-exit preserves a dead pane for inspection:
+
+- pane preservation is a short-lived inspection aid, not a reason to treat the session as still live
+- the preserved pane should remain available long enough for the daemon/operator/test to capture failure evidence
+- after the relevant failure evidence is durably inspectable, normal cleanup should remove the tmux session unless an explicit operator-retention policy says otherwise
+
+For paused-but-resumable work:
+
+- `PAUSED_FOR_USER` is still unfinished authoritative work
+- the session should remain alive if it is healthy
+- if it is lost, the same supervised recovery/replacement rules apply rather than immediate cleanup
 
 ---
 
@@ -284,6 +320,7 @@ If the expected tmux session is dead and the runtime chooses replacement:
 - the prior session should be marked lost or invalidated durably
 - the new primary session should have its own durable session row
 - the replacement launch must be inspectable as a recovery event, not merely a new bind
+- once the replacement session is durably recorded, the old tmux session should be killed if it still exists and is not being intentionally retained for bounded failure inspection
 
 ### Autonomous supervision requirement
 
@@ -424,6 +461,15 @@ Real E2E proof should cover:
 - prompt-log creation
 - real stale or lost recovery behavior
 - real attach/resume surfaces
+
+Real test teardown must also own tmux cleanup explicitly.
+
+For real tmux-backed tests:
+
+- the test harness, not each individual test body, should be the default owner of final tmux cleanup
+- teardown should kill every tmux session durably recorded for that harness's isolated test database/environment
+- ad hoc per-test `kill-session` fallback is acceptable as temporary defense-in-depth, but it must not be the only cleanup layer
+- tests that need pane/failure inspection must do that inspection before teardown and then allow harness cleanup to remove the sessions
 
 ---
 

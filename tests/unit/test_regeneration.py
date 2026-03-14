@@ -4,7 +4,7 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 
-from aicoding.daemon.admission import add_node_dependency
+from aicoding.daemon.admission import add_node_dependency, admit_node_run
 from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle, transition_node_lifecycle
@@ -53,15 +53,36 @@ def test_rebuild_coordination_reports_active_run_blocker(db_session_factory, mig
     parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
     initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
     child = create_manual_node(db_session_factory, registry, kind="phase", title="Child", prompt="c", parent_node_id=parent.node_id)
+    compile_node_workflow(db_session_factory, logical_node_id=child.node.node_id, catalog=catalog)
     seed_node_lifecycle(db_session_factory, node_id=str(child.node.node_id), initial_state="DRAFT")
     transition_node_lifecycle(db_session_factory, node_id=str(child.node.node_id), target_state="COMPILED")
     transition_node_lifecycle(db_session_factory, node_id=str(child.node.node_id), target_state="READY")
-    apply_authority_mutation(db_session_factory, node_id=str(child.node.node_id), command="node.run.start")
+    admit_node_run(db_session_factory, node_id=child.node.node_id)
+    with session_scope(db_session_factory) as session:
+        lifecycle = load_node_lifecycle(db_session_factory, str(child.node.node_id))
+        selector = session.get(LogicalNodeCurrentVersion, child.node.node_id)
+        assert lifecycle.current_run_id is not None
+        assert selector is not None
+        session.add(
+            DurableSession(
+                id=uuid4(),
+                node_version_id=selector.authoritative_node_version_id,
+                node_run_id=lifecycle.current_run_id,
+                session_role="primary",
+                provider="tmux",
+                provider_session_id="tmux-child",
+                tmux_session_name="tmux-child",
+                cwd="/tmp",
+                status="BOUND",
+            )
+        )
+        session.flush()
 
     coordination = inspect_rebuild_coordination(db_session_factory, logical_node_id=child.node.node_id, scope="upstream")
 
     assert coordination.status == "blocked"
     assert any(item.blocker_type == "active_or_paused_run" and item.scope_role == "target" for item in coordination.blockers)
+    assert any(item.blocker_type == "active_primary_sessions" and item.scope_role == "target" for item in coordination.blockers)
     with pytest.raises(DaemonConflictError, match="live runtime state blocks upstream rectification"):
         from aicoding.daemon.regeneration import rectify_upstream
 

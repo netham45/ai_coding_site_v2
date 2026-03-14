@@ -13,6 +13,9 @@ Requirements:
 - dependencies must reflect real ordering constraints only
 - avoid speculative or overlapping children
 - prefer fewer, clearer phases over unnecessary fragmentation
+- if the user request specifies an exact child count, honor that exact count
+- if the user request specifies a direct dependency shape between siblings, preserve that exact shape
+- do not add coordination, setup, or verification phases unless the user request explicitly requires them as separate children
 
 Layout schema:
 - the file must be valid YAML with top-level keys:
@@ -54,19 +57,19 @@ children:
 Output contract:
 - produce a valid `layout_definition`
 - keep titles, rationale, and acceptance criteria concrete and reviewable
-- write the approved layout to `layouts/generated_layout.yaml`
-- immediately register that file with `python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file layouts/generated_layout.yaml`
-- do not assume the daemon will discover `layouts/generated_layout.yaml` unless it has been registered explicitly
+- write the approved layout to `layouts/generated/{{node_id}}.yaml`
+- immediately register that file with `python3 -m aicoding.cli.main node register-layout --node {{node_id}} --file layouts/generated/{{node_id}}.yaml`
+- do not assume the daemon will discover `layouts/generated/{{node_id}}.yaml` unless it has been registered explicitly
 
 Required CLI workflow:
-1. Resolve the live compiled subtask UUID:
-   - `python3 -m aicoding.cli.main subtask current --node {{node_id}}`
-   - read `state.current_compiled_subtask_id` from that output and use that UUID in later `--compiled-subtask` flags
+1. Use the current compiled subtask UUID from this prompt:
+   - `CURRENT_COMPILED_SUBTASK_ID`
 2. Mark the subtask attempt started:
    - `python3 -m aicoding.cli.main subtask start --node {{node_id}} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`
 3. Inspect the current context before writing the layout:
    - `python3 -m aicoding.cli.main subtask context --node {{node_id}}`
-4. Generate `layouts/generated_layout.yaml` and register it immediately.
+   - if this extra context read is unavailable or times out, continue with the compiled context already embedded in this prompt instead of blocking the workflow
+4. Generate `layouts/generated/{{node_id}}.yaml` and register it immediately.
 5. When the layout is registered successfully:
    - write a concise summary to `summaries/layout_generation.md`
    - record success and let the daemon route the workflow with:

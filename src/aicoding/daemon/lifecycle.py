@@ -260,6 +260,7 @@ def transition_node_lifecycle(
     pause_flag_name: str | None = None,
 ) -> NodeLifecycleSnapshot:
     target_state = normalize_lifecycle_state(target_state)
+    completed_version_id: UUID | None = None
     with session_scope(session_factory) as session:
         _lock_node(session, node_id)
         record = session.execute(_lifecycle_query(node_id)).scalar_one_or_none()
@@ -267,10 +268,9 @@ def transition_node_lifecycle(
             raise DaemonNotFoundError("node lifecycle record not found")
         _apply_transition(record, target_state=target_state, pause_flag_name=pause_flag_name)
         if target_state == "COMPLETE":
-            from aicoding.daemon.incremental_parent_merge import record_completed_child_for_incremental_merge_in_session
-
             selector = session.get(LogicalNodeCurrentVersion, UUID(node_id))
             if selector is not None:
+                completed_version_id = selector.authoritative_node_version_id
                 active_run = session.execute(
                     select(NodeRun)
                     .where(
@@ -290,12 +290,18 @@ def transition_node_lifecycle(
                         run_state.current_subtask_attempt = None
                         run_state.pause_flag_name = None
                         run_state.is_resumable = False
-                record_completed_child_for_incremental_merge_in_session(
-                    session,
-                    child_node_version_id=selector.authoritative_node_version_id,
-                )
         session.flush()
-        return _snapshot(record)
+        snapshot = _snapshot(record)
+    if target_state == "COMPLETE" and completed_version_id is not None:
+        from aicoding.daemon.incremental_parent_merge import finalize_completed_child_for_incremental_merge
+        from aicoding.resources import load_resource_catalog
+
+        finalize_completed_child_for_incremental_merge(
+            session_factory,
+            load_resource_catalog(),
+            child_node_version_id=completed_version_id,
+        )
+    return snapshot
 
 
 def update_node_cursor(

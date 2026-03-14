@@ -51,11 +51,54 @@ def _tmux_kill(session_name: str) -> None:
     )
 
 
+def _write_scoped_parent_overrides(workspace_root: Path, *, node_kinds: tuple[str, ...]) -> None:
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    for node_kind in node_kinds:
+        (overrides_root / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (overrides_root / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
 def _compile_ready_and_start_node(harness: RealDaemonHarness, *, node_id: str) -> None:
     compile_result = harness.cli("workflow", "compile", "--node", node_id)
     start_result = harness.cli("node", "run", "start", "--node", node_id)
     assert compile_result.exit_code == 0, compile_result.stderr
     assert start_result.exit_code == 0, start_result.stderr
+    assert compile_result.json()["status"] == "compiled", compile_result.stdout
+    assert start_result.json()["status"] == "admitted", start_result.stdout
 
 
 def _complete_node_run(harness: RealDaemonHarness, *, node_id: str, timeout_seconds: float = 180.0) -> None:
@@ -298,6 +341,7 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_grouped_cutover_rem
     tmp_path: Path,
 ) -> None:
     harness = real_daemon_harness_factory(extra_env={"AICODING_SESSION_POLL_INTERVAL_SECONDS": "0.1"})
+    _write_scoped_parent_overrides(harness.workspace_root, node_kinds=("phase",))
 
     parent_create = harness.cli(
         "node",
@@ -464,6 +508,7 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_requ
     tmp_path: Path,
 ) -> None:
     harness = real_daemon_harness_factory(extra_env={"AICODING_SESSION_POLL_INTERVAL_SECONDS": "0.1"})
+    _write_scoped_parent_overrides(harness.workspace_root, node_kinds=("phase",))
 
     parent_create = harness.cli(
         "node",
@@ -674,6 +719,7 @@ def test_e2e_incremental_parent_merge_dependency_invalidated_manual_restart_clea
     tmp_path: Path,
 ) -> None:
     harness = real_daemon_harness_factory(extra_env={"AICODING_SESSION_POLL_INTERVAL_SECONDS": "0.1"})
+    _write_scoped_parent_overrides(harness.workspace_root, node_kinds=("phase",))
 
     parent_create = harness.cli(
         "node",

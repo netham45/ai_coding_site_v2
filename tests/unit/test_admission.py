@@ -14,7 +14,7 @@ from aicoding.daemon.admission import (
 from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.incremental_parent_merge import process_next_incremental_child_merge, record_completed_child_for_incremental_merge
-from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
+from aicoding.daemon.lifecycle import load_node_lifecycle, seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.live_git import bootstrap_live_git_repo, refresh_child_live_git_from_parent_head, stage_live_git_change
 from aicoding.daemon.manual_tree import create_manual_node
 from aicoding.daemon.materialization import materialize_layout_children
@@ -48,6 +48,21 @@ def _create_runnable_node(db_session_factory, registry, *, kind: str, title: str
     initialize_node_version(db_session_factory, logical_node_id=node.node_id)
     compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=load_resource_catalog())
     transition_node_lifecycle(db_session_factory, node_id=str(node.node_id), target_state="READY")
+    return node
+
+
+def _create_compiled_node(db_session_factory, registry, *, kind: str, title: str, parent_node_id=None):
+    node = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind=kind,
+        title=title,
+        prompt="boot prompt",
+        parent_node_id=parent_node_id,
+    )
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+    compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=load_resource_catalog())
     return node
 
 
@@ -145,6 +160,48 @@ def test_sibling_dependency_becomes_ready_after_incremental_merge_success(
 
     assert readiness.status == "ready"
     assert readiness.blockers == []
+
+
+def test_non_leaf_sibling_dependency_becomes_ready_after_incremental_merge_success(
+    db_session_factory, migrated_public_schema
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="boot prompt")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    left = _create_runnable_node(db_session_factory, registry, kind="phase", title="Left", parent_node_id=parent.node_id)
+    right = _create_runnable_node(db_session_factory, registry, kind="phase", title="Right", parent_node_id=parent.node_id)
+    plan = _create_runnable_node(db_session_factory, registry, kind="plan", title="Left Plan", parent_node_id=left.node_id)
+    add_node_dependency(db_session_factory, node_id=right.node_id, depends_on_node_id=left.node_id)
+    left_version_id = _authoritative_version_id(db_session_factory, left.node_id)
+    right_version_id = _authoritative_version_id(db_session_factory, right.node_id)
+    plan_version_id = _authoritative_version_id(db_session_factory, plan.node_id)
+
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=left_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=right_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=plan_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    stage_live_git_change(
+        db_session_factory,
+        version_id=plan_version_id,
+        files={"shared.txt": "base\nplan final\n"},
+        message="Plan final",
+        record_as_final=True,
+    )
+    record_completed_child_for_incremental_merge(db_session_factory, child_node_version_id=plan_version_id)
+    process_next_incremental_child_merge(db_session_factory, parent_node_version_id=left_version_id)
+    transition_node_lifecycle(db_session_factory, node_id=str(left.node_id), target_state="RUNNING")
+    transition_node_lifecycle(db_session_factory, node_id=str(left.node_id), target_state="COMPLETE")
+    process_next_incremental_child_merge(db_session_factory, parent_node_version_id=parent_version.id)
+
+    stale_readiness = check_node_dependency_readiness(db_session_factory, node_id=right.node_id)
+    refreshed_status = refresh_child_live_git_from_parent_head(db_session_factory, child_version_id=right_version_id)
+    refreshed_readiness = check_node_dependency_readiness(db_session_factory, node_id=right.node_id)
+
+    assert stale_readiness.status == "blocked"
+    assert stale_readiness.blockers[0].blocker_kind == "blocked_on_parent_refresh"
+    assert refreshed_status.seed_commit_sha == refreshed_status.head_commit_sha
+    assert refreshed_readiness.status == "ready"
 
 
 def test_sibling_dependency_reports_conflicted_incremental_merge(
@@ -279,6 +336,28 @@ def test_admit_node_run_accepts_ready_unblocked_node(db_session_factory, migrate
     assert admission.status == "admitted"
     assert admission.current_state == "RUNNING"
     assert admission.current_run_id is not None
+
+
+def test_admit_node_run_promotes_compiled_manual_child_when_otherwise_ready(
+    db_session_factory, migrated_public_schema
+) -> None:
+    registry = load_hierarchy_registry(load_resource_catalog())
+    parent = _create_runnable_node(db_session_factory, registry, kind="epic", title="Parent")
+    child = _create_compiled_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Compiled Child",
+        parent_node_id=parent.node_id,
+    )
+
+    admission = admit_node_run(db_session_factory, node_id=child.node_id)
+    lifecycle = load_node_lifecycle(db_session_factory, str(child.node_id))
+
+    assert admission.status == "admitted"
+    assert admission.current_state == "RUNNING"
+    assert admission.current_run_id is not None
+    assert lifecycle.lifecycle_state == "RUNNING"
 
 
 def test_admit_node_run_reports_active_conflict_before_lifecycle_gate(db_session_factory, migrated_public_schema) -> None:

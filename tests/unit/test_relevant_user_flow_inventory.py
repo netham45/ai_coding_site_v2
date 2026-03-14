@@ -30,6 +30,10 @@ def test_relevant_user_flow_inventory_entries_link_to_real_paths_and_commands() 
     for flow in inventory.flows:
         assert (REPO_ROOT / flow.canonical_md).is_file()
         assert (REPO_ROOT / flow.proof.primary_e2e_target).is_file()
+        assert flow.scope.user_documentation in {"affected", "not_applicable"}
+        assert isinstance(flow.documentation.required, bool)
+        for surface in flow.documentation.surfaces:
+            assert (REPO_ROOT / surface).is_file()
         for note_path in flow.relevance.discovered_from + flow.related_notes:
             assert (REPO_ROOT / note_path).is_file()
         for command_group in (
@@ -51,3 +55,12 @@ def test_relevant_user_flow_inventory_declares_interpretation_boundary() -> None
         "bounded proof status and real E2E completion must remain distinct" in rule
         for rule in inventory.interpretation_rules
     )
+
+
+def test_relevant_user_flow_inventory_records_documentation_linkage() -> None:
+    inventory = load_relevant_user_flow_inventory(INVENTORY_PATH)
+
+    for flow in inventory.flows:
+        assert flow.scope.user_documentation == "affected"
+        assert flow.documentation.required is True
+        assert "docs/README.md" in flow.documentation.surfaces

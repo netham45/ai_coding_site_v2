@@ -59,6 +59,7 @@ from aicoding.cli.handlers import (
     handle_node_test,
     handle_node_validate,
     handle_node_blockers,
+    handle_node_run_start,
     handle_node_run_show,
     handle_node_run_audit,
     handle_node_runs,
@@ -385,10 +386,8 @@ def add_node_group(subparsers) -> None:
     run_start_parser = run_subparsers.add_parser("start", help="Start a node run via the daemon.")
     run_start_parser.add_argument("--node", required=True)
     run_start_parser.set_defaults(
-        handler=handle_mutating_daemon_command,
+        handler=handle_node_run_start,
         command_path=["node", "run", "start"],
-        daemon_path="/api/node-runs/start",
-        daemon_payload=None,
     )
 
     pause_parser = node_subparsers.add_parser("pause", help="Pause a node via the daemon.")

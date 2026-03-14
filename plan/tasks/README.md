@@ -17,9 +17,20 @@ Task-plan rules:
 - task plans must also include `Verification` and `Exit Criteria`
 - task plans must define the canonical verification commands to run before the task can be described as verified
 - task plans must name the notes and adjacent feature plans that define the task boundary
+- task plans created or materially revised on or after 2026-03-13 must also include `Documentation Impact` and `Documentation Verification`
 
 Current task index:
 
+- `2026-03-13_user_documentation_build_implementation.md`
+- `2026-03-13_user_documentation_build_planning.md`
+- `2026-03-13_user_documentation_governance_implementation.md`
+- `2026-03-13_user_documentation_governance_planning.md`
+- `2026-03-13_workflow_overhaul_command_lifecycle_foundation_plans.md`
+- `2026-03-13_workflow_overhaul_unified_command_lifecycle_planning.md`
+- `2026-03-12_workflow_overhaul_template_subfeature_progress_checklist.md`
+- `2026-03-12_workflow_overhaul_template_support_draft_plan_alignment.md`
+- `2026-03-12_workflow_overhaul_checklist_draft_plan_removal.md`
+- `2026-03-12_daemon_owned_tmux_session_cleanup_implementation.md`
 - `2026-03-12_workflow_profile_subfeature_plan_breakdown.md`
 - `2026-03-12_workflow_overhaul_full_bundle_draft_setup_and_feature_plans.md`
 - `2026-03-12_workflow_overhaul_checklist_future_flows_and_feature_plans.md`

@@ -78,7 +78,7 @@ def test_exec_codex_fresh_prepares_session_codex_home_and_uses_explicit_cwd(monk
     monkeypatch.setattr(codex_session_bootstrap.os, "execvp", fake_execvp)
 
     try:
-        codex_session_bootstrap._exec_codex_fresh("PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123")
+        codex_session_bootstrap._exec_codex_fresh()
     except SystemExit as exc:
         assert exc.code == 0
 
@@ -94,8 +94,36 @@ def test_exec_codex_fresh_prepares_session_codex_home_and_uses_explicit_cwd(monk
         "-C",
         str(workspace.resolve()),
         "--yolo",
-        "Please read the prompt from `PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123` and run the prompt",
     ]
+
+
+def test_main_fresh_prefers_prompt_log_path_when_bootstrapping_codex(monkeypatch, tmp_path: Path) -> None:
+    prompt_log_path = tmp_path / "prompt.md"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        codex_session_bootstrap,
+        "_run_prompt_cli_command",
+        lambda *, logical_node_id: ("PYTHONPATH=src python3 -m aicoding.cli.main subtask prompt --node node-123", {"prompt_text": "Do the work."}),
+    )
+    monkeypatch.setattr(
+        codex_session_bootstrap,
+        "_write_prompt_log",
+        lambda path_text, prompt_text: prompt_log_path.write_text(prompt_text, encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        codex_session_bootstrap,
+        "_exec_codex_fresh",
+        lambda: captured.setdefault("started", True),
+    )
+
+    result = codex_session_bootstrap.main(
+        ["fresh", "--node", str(uuid4()), "--prompt-log-path", str(prompt_log_path)]
+    )
+
+    assert result == 0
+    assert captured["started"] is True
+    assert prompt_log_path.read_text(encoding="utf-8") == "Do the work."
 
 
 def test_exec_codex_resume_prepares_session_codex_home(monkeypatch, tmp_path: Path) -> None:
@@ -137,4 +165,42 @@ def test_exec_codex_resume_prepares_session_codex_home(monkeypatch, tmp_path: Pa
         "--yolo",
         "resume",
         "--last",
+    ]
+
+
+def test_exec_codex_prompt_file_prepares_session_codex_home(monkeypatch, tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    home = tmp_path / "home"
+    home.mkdir()
+    config_dir = home / ".codex"
+    config_dir.mkdir()
+    (config_dir / "auth.json").write_text('{"auth_mode":"chatgpt"}\n', encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    prompt_file = workspace / "prompt.md"
+    prompt_file.write_text("delegated prompt", encoding="utf-8")
+
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    captured: dict[str, object] = {}
+
+    def fake_execvp(file: str, argv: list[str]) -> None:
+        captured["file"] = file
+        captured["argv"] = argv
+        raise SystemExit(0)
+
+    monkeypatch.setattr(codex_session_bootstrap.os, "execvp", fake_execvp)
+
+    try:
+        codex_session_bootstrap._exec_codex_prompt_file()
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert captured["file"] == "codex"
+    assert captured["argv"] == [
+        "codex",
+        "-C",
+        str(workspace.resolve()),
+        "--yolo",
     ]

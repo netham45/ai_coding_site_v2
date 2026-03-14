@@ -80,7 +80,9 @@ def run_turnkey_quality_chain(
         if current_subtask is None:
             break
         current_type = str(current_subtask.get("subtask_type"))
-        if current_type not in AUTOMATED_QUALITY_SUBTASK_TYPES:
+        stage_type = _current_quality_stage_type(session_factory, progress=progress)
+        is_gate_subtask = current_type in AUTOMATED_QUALITY_SUBTASK_TYPES
+        if stage_type is None:
             if not executed_stage_types:
                 raise DaemonConflictError("quality chain can only start when the current subtask is a built-in quality gate")
             break
@@ -94,17 +96,22 @@ def run_turnkey_quality_chain(
             session_factory,
             logical_node_id=logical_node_id,
             compiled_subtask_id=compiled_subtask_id,
-            output_json=_default_stage_output(
-                session_factory,
-                logical_node_id=logical_node_id,
-                compiled_subtask_id=compiled_subtask_id,
-                subtask_type=current_type,
-                catalog=resource_catalog,
+            output_json=(
+                _default_stage_output(
+                    session_factory,
+                    logical_node_id=logical_node_id,
+                    compiled_subtask_id=compiled_subtask_id,
+                    subtask_type=stage_type,
+                    catalog=resource_catalog,
+                )
+                if is_gate_subtask
+                else {}
             ),
-            summary=_default_stage_summary(current_type),
+            summary=_default_stage_summary(stage_type) if is_gate_subtask else _quality_prelude_summary(stage_type),
         )
         progress = advance_workflow(session_factory, logical_node_id=logical_node_id, catalog=resource_catalog)
-        executed_stage_types.append(current_type)
+        if not executed_stage_types or executed_stage_types[-1] != stage_type:
+            executed_stage_types.append(stage_type)
         if progress.run.run_status in {"FAILED", "PAUSED"}:
             break
 
@@ -160,6 +167,10 @@ def _default_stage_summary(subtask_type: str) -> str:
     if subtask_type == "run_tests":
         return "tests passed"
     return f"{subtask_type} complete"
+
+
+def _quality_prelude_summary(stage_type: str) -> str:
+    return f"{stage_type} preparation complete"
 
 
 def _default_stage_output(
@@ -247,6 +258,29 @@ def _resolve_testing_reference(reference: str, catalog: ResourceCatalog) -> tupl
     if (catalog.yaml_project_dir / normalized).exists():
         return "yaml_project", normalized
     return "yaml_builtin_system", normalized
+
+
+def _current_quality_stage_type(
+    session_factory: sessionmaker[Session],
+    *,
+    progress: RunProgressSnapshot,
+) -> str | None:
+    current_subtask = progress.current_subtask or {}
+    current_type = str(current_subtask.get("subtask_type") or "")
+    if current_type in AUTOMATED_QUALITY_SUBTASK_TYPES:
+        return current_type
+    current_task_id = progress.state.current_task_id
+    if current_task_id is None:
+        return None
+    with query_session_scope(session_factory) as session:
+        task = session.get(CompiledTask, UUID(str(current_task_id)))
+        if task is None:
+            raise DaemonNotFoundError("compiled task not found")
+        return {
+            "validate_node": "validate",
+            "review_node": "review",
+            "test_node": "run_tests",
+        }.get(task.task_key)
 
 
 def _record_final_quality_summary(

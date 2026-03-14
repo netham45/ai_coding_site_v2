@@ -20,6 +20,8 @@ subtasks:
     title: Render Layout Candidate
     description: Produce the child layout draft from the current node context.
     prompt: "prompts/layouts/generate_phase_layout.md"
-    outputs: [{type: file_updated, path: layouts/generated_layout.yaml}]
+    outputs:
+      - type: file_updated
+        path: "layouts/generated/{{node_id}}.yaml"
     retry_policy: {max_attempts: 2, backoff_seconds: 5}
     on_failure: {action: pause_for_user}

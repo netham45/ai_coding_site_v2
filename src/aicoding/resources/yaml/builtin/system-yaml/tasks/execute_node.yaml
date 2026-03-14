@@ -4,6 +4,9 @@ name: Execute Node
 description: Perform the main implementation work for a leaf task node.
 applies_to_kinds:
   - task
+  - plan
+  - phase
+  - epic
 policy:
   max_subtask_retries: 2
   on_failure: fail_to_parent

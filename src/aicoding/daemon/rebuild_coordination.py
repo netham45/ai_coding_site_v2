@@ -621,7 +621,7 @@ def _collect_rebuild_coordination_blockers(
                     active_primary_session_ids=[item.id for item in active_primary_sessions],
                 )
             )
-        elif active_primary_sessions:
+        if active_primary_sessions:
             blockers.append(
                 RebuildCoordinationBlockerSnapshot(
                     blocker_type="active_primary_sessions",

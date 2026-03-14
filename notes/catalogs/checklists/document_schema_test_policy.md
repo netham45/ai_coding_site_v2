@@ -11,7 +11,7 @@ It is the implementation surface for DS-05.
 ### Core document-schema suite
 
 ```bash
-python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_verification_command_docs.py tests/unit/test_flow_e2e_alignment_docs.py tests/unit/test_e2e_execution_policy_docs.py tests/unit/test_notes_quickstart_docs.py tests/unit/test_relevant_user_flow_inventory.py
+python3 -m pytest tests/unit/test_document_schema_docs.py tests/unit/test_feature_plan_docs.py tests/unit/test_task_plan_docs.py tests/unit/test_feature_checklist_docs.py tests/unit/test_verification_command_docs.py tests/unit/test_flow_e2e_alignment_docs.py tests/unit/test_e2e_execution_policy_docs.py tests/unit/test_notes_quickstart_docs.py tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_user_documentation_governance_docs.py
 ```
 
 ### Targeted reruns
@@ -22,6 +22,7 @@ Use the smallest relevant family-level test when a change is tightly scoped:
 - command/policy changes: `tests/unit/test_verification_command_docs.py tests/unit/test_e2e_execution_policy_docs.py`
 - flow/traceability/E2E doc changes: `tests/unit/test_flow_e2e_alignment_docs.py tests/unit/test_notes_quickstart_docs.py tests/unit/test_document_schema_docs.py`
 - structured relevant-flow inventory changes: `tests/unit/test_relevant_user_flow_inventory.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py`
+- documentation-governance changes: `tests/unit/test_user_documentation_governance_docs.py tests/unit/test_document_schema_docs.py tests/unit/test_notes_quickstart_docs.py`
 
 ## Adoption Rules
 
@@ -29,6 +30,7 @@ Use the smallest relevant family-level test when a change is tightly scoped:
 - new schema rules must be added to `document_schema_rulebook.md`
 - new family-level tests must be added to `tests/unit/test_document_schema_docs.py` or another clearly named family-level test file
 - task plans under `plan/tasks/` must follow the standard richer plan schema and include task-specific verification and exit-criteria sections
+- task plans created or materially revised on or after 2026-03-13 must also include documentation-impact and documentation-verification sections
 - plan files under `plan/doc_updates/` and `plan/doc_schemas/` must record current outputs and canonical verification commands once implementation begins
 
 ## Failure Triage

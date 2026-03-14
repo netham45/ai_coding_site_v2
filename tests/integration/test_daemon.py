@@ -25,11 +25,15 @@ from aicoding.daemon.live_git import (
 )
 from aicoding.daemon.manual_tree import create_manual_node
 from aicoding.daemon.run_orchestration import register_summary, start_subtask_attempt
-from aicoding.daemon.session_records import inspect_primary_session_screen_state, nudge_primary_session
+from aicoding.daemon.session_records import (
+    flush_pending_primary_session_stage_prompts,
+    inspect_primary_session_screen_state,
+    nudge_primary_session,
+)
 from aicoding.errors import ConfigurationError
 from aicoding.daemon.versioning import initialize_node_version
 from aicoding.daemon.workflows import compile_node_workflow
-from aicoding.db.models import CompiledSubtask, NodeRun, NodeRunState, Session as DurableSession
+from aicoding.db.models import CompiledSubtask, NodeRun, NodeRunState, Session as DurableSession, SubtaskAttempt
 from aicoding.db.session import create_session_factory, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -56,7 +60,7 @@ def _write_generated_child_layout(
             [
                 f"  - id: {child['id']}",
                 "    kind: phase",
-                "    tier: 2",
+                "    tier: 1",
                 f"    name: {child['name']}",
                 f"    ordinal: {index}",
                 f"    goal: {child['goal']}",
@@ -70,6 +74,47 @@ def _write_generated_child_layout(
             lines.append("    dependencies: []")
     layout_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return layout_path
+
+
+def _write_scoped_parent_overrides(workspace_root: Path, *, node_kinds: tuple[str, ...]) -> None:
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    for node_kind in node_kinds:
+        (overrides_root / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (overrides_root / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
 
 def _create_parent_with_generated_children(
@@ -295,6 +340,385 @@ def test_daemon_startup_creates_token_file_and_reports_auth_context(tmp_path, mo
     assert payload["auth_token_source"] == "settings"
 
 
+def test_review_run_routes_scoped_parent_into_spawn_children(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="scoped_parent_layout",
+        child_specs=[
+            {
+                "id": "runtime_phase",
+                "name": "Runtime Phase",
+                "goal": "Create one runtime child from the approved scoped parent layout.",
+                "rationale": "Prove review routing advances into spawn_children before descendants exist.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Scoped Parent Review Route",
+                prompt="Create exactly one phase child through the scoped parent runtime path.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+            headers = {"Authorization": "Bearer change-me"}
+
+            compile_response = client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            start_run_response = client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+            current_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers)
+            current_subtask_id = current_response.json()["state"]["current_compiled_subtask_id"]
+
+            start_generate_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+            register_response = client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            succeed_generate_response = client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": current_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+            review_response = client.post(
+                f"/api/nodes/{node_id}/review/run",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "status": "pass",
+                    "summary": "Approved the scoped parent layout.",
+                },
+            )
+
+            with session_scope(session_factory) as session:
+                state = session.get(NodeRunState, start_run_response.json()["current_run_id"])
+                assert state is not None
+                assert state.current_compiled_subtask_id is not None
+                current_subtask = session.get(CompiledSubtask, state.current_compiled_subtask_id)
+                assert current_subtask is not None
+                children = client.get(f"/api/nodes/{node_id}/children", headers=headers)
+                session_id = bind_response.json()["session_id"]
+                events = client.get(f"/api/sessions/{session_id}/events", headers=headers).json()["events"]
+                adapter = client.app.state.session_adapter
+                pane_text = adapter._sessions[session_name].pane_text
+
+            adapter._sessions[session_name].pane_text = "OpenAI Codex\n>_\n"
+            flushed = flush_pending_primary_session_stage_prompts(session_factory, adapter=adapter)
+            flushed_events = client.get(f"/api/sessions/{session_id}/events", headers=headers).json()["events"]
+            pane_text = adapter._sessions[session_name].pane_text
+
+            assert compile_response.status_code == 200
+            assert start_run_response.status_code == 200
+            assert bind_response.status_code == 200
+            assert current_response.status_code == 200
+            assert start_generate_response.status_code == 200
+            assert register_response.status_code == 200
+            assert register_response.json()["status"] == "registered"
+            assert succeed_generate_response.status_code == 200
+            assert succeed_generate_response.json()["outcome"] == "next_stage"
+            assert review_response.status_code == 200
+            assert current_subtask.source_subtask_key.endswith("spawn_child_nodes")
+            assert current_subtask.subtask_type == "spawn_child_node"
+            assert current_subtask.command_text == f"python3 -m aicoding.cli.main node materialize-children --node {node_id}"
+            assert any(item["event_type"] == "stage_prompt_queued" for item in events)
+            assert flushed == 1
+            assert "The daemon routed you to the child-materialization stage." in pane_text
+            assert "exec_command` tool call" in pane_text
+            assert "node materialize-children --node" in pane_text
+            assert any(item["event_type"] == "stage_prompt_pushed" for item in flushed_events)
+            assert children.status_code == 200
+            assert children.json() == []
+    finally:
+        get_settings.cache_clear()
+
+
+def test_review_run_rejects_non_review_current_stage(migrated_public_schema) -> None:
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        headers = {"Authorization": "Bearer change-me"}
+        create_response = client.post(
+            "/api/nodes/create",
+            headers=headers,
+            json={"kind": "epic", "title": "Review Guard", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+        client.post("/api/nodes/lifecycle/transition", headers=headers, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+
+        current_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers)
+        current_subtask_id = UUID(current_response.json()["state"]["current_compiled_subtask_id"])
+
+        review_response = client.post(
+            f"/api/nodes/{node_id}/review/run",
+            headers=headers,
+            json={"node_id": node_id, "status": "pass", "summary": "should be rejected"},
+        )
+
+        assert review_response.status_code == 409
+        assert "current compiled subtask is not a review stage" in review_response.json()["detail"]
+
+        with session_scope(session_factory) as session:
+            attempts = (
+                session.query(SubtaskAttempt)
+                .filter(SubtaskAttempt.compiled_subtask_id == current_subtask_id)
+                .all()
+            )
+
+        assert attempts == []
+
+
+def test_review_run_allows_exact_replay_of_just_completed_review_stage(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="review_replay_layout",
+        child_specs=[
+            {
+                "id": "runtime_phase",
+                "name": "Runtime Phase",
+                "goal": "Create one runtime child from the approved scoped parent layout.",
+                "rationale": "Prove exact duplicate review submissions are idempotent after the daemon already advanced.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            headers = {"Authorization": "Bearer change-me"}
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Review Replay",
+                prompt="Create exactly one phase child through the scoped parent runtime path.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            start_run_response = client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            assert start_run_response.status_code == 200
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            assert bind_response.status_code == 200
+
+            current_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers)
+            generate_subtask_id = current_response.json()["state"]["current_compiled_subtask_id"]
+            start_generate_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": generate_subtask_id},
+            )
+            register_response = client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            succeed_generate_response = client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": generate_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+            assert start_generate_response.status_code == 200
+            assert register_response.status_code == 200
+            assert succeed_generate_response.status_code == 200
+
+            review_subtask_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers)
+            review_subtask_id = UUID(review_subtask_response.json()["state"]["current_compiled_subtask_id"])
+            first_review_response = client.post(
+                f"/api/nodes/{node_id}/review/run",
+                headers=headers,
+                json={"node_id": node_id, "status": "pass", "summary": "Approved the scoped parent layout."},
+            )
+            replay_review_response = client.post(
+                f"/api/nodes/{node_id}/review/run",
+                headers=headers,
+                json={"node_id": node_id, "status": "pass", "summary": "Approved the scoped parent layout."},
+            )
+
+            with session_scope(session_factory) as session:
+                attempts = (
+                    session.query(SubtaskAttempt)
+                    .filter(SubtaskAttempt.compiled_subtask_id == review_subtask_id)
+                    .order_by(SubtaskAttempt.created_at, SubtaskAttempt.attempt_number)
+                    .all()
+                )
+
+            assert first_review_response.status_code == 200
+            assert replay_review_response.status_code == 200
+            assert first_review_response.json()["state"]["last_completed_compiled_subtask_id"] == str(review_subtask_id)
+            assert replay_review_response.json()["state"]["last_completed_compiled_subtask_id"] == str(review_subtask_id)
+            assert replay_review_response.json()["state"]["current_compiled_subtask_id"] == first_review_response.json()["state"]["current_compiled_subtask_id"]
+            assert replay_review_response.json()["run"]["id"] == first_review_response.json()["run"]["id"]
+            assert len(attempts) == 1
+            assert attempts[0].status == "COMPLETE"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_materialize_children_endpoint_routes_active_spawn_stage(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="scoped_parent_layout",
+        child_specs=[
+            {
+                "id": "runtime_phase",
+                "name": "Runtime Phase",
+                "goal": "Create one runtime child from the approved scoped parent layout.",
+                "rationale": "Prove child materialization routes the active spawn stage without a separate report-command call.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            headers = {"Authorization": "Bearer change-me"}
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Scoped Parent Materialize Route",
+                prompt="Create exactly one phase child through the scoped parent runtime path.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            start_run_response = client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            current_response = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers)
+            generate_subtask_id = current_response.json()["state"]["current_compiled_subtask_id"]
+
+            start_generate_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": generate_subtask_id},
+            )
+            client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            succeed_generate_response = client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": generate_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+            review_response = client.post(
+                f"/api/nodes/{node_id}/review/run",
+                headers=headers,
+                json={"node_id": node_id, "status": "pass", "summary": "Approved the scoped parent layout."},
+            )
+
+            with session_scope(session_factory) as session:
+                state = session.get(NodeRunState, start_run_response.json()["current_run_id"])
+                assert state is not None
+                assert state.current_compiled_subtask_id is not None
+                spawn_subtask_id = str(state.current_compiled_subtask_id)
+
+            start_spawn_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": spawn_subtask_id},
+            )
+            materialize_response = client.post(
+                f"/api/nodes/{node_id}/children/materialize",
+                headers=headers,
+                json={},
+            )
+            children_response = client.get(f"/api/nodes/{node_id}/children", headers=headers)
+
+            with session_scope(session_factory) as session:
+                run_state = session.get(NodeRunState, start_run_response.json()["current_run_id"])
+                run = session.get(NodeRun, start_run_response.json()["current_run_id"])
+
+            assert bind_response.status_code == 200
+            assert start_generate_response.status_code == 200
+            assert succeed_generate_response.status_code == 200
+            assert review_response.status_code == 200
+            assert start_spawn_response.status_code == 200
+            assert materialize_response.status_code == 200
+            assert children_response.status_code == 200
+            assert len(children_response.json()) == 1
+            assert run is not None
+            assert run.run_status == "COMPLETE"
+            assert run_state is not None
+            assert run_state.current_compiled_subtask_id is None
+
+    finally:
+        get_settings.cache_clear()
+
+
 def test_generated_startup_token_file_can_authenticate_requests(tmp_path, monkeypatch) -> None:
     token_file = tmp_path / ".runtime" / "daemon.token"
     monkeypatch.setenv("AICODING_AUTH_TOKEN_FILE", str(token_file))
@@ -374,7 +798,7 @@ def test_register_layout_endpoint_makes_generated_layout_authoritative(migrated_
                 "children:",
                 "  - id: custom_phase",
                 "    kind: phase",
-                "    tier: 2",
+                "    tier: 1",
                 "    name: Generated Discovery",
                 "    ordinal: 1",
                 "    goal: Build the generated phase first.",
@@ -394,6 +818,7 @@ def test_register_layout_endpoint_makes_generated_layout_authoritative(migrated_
             registry = client.app.state.hierarchy_registry
             sync_hierarchy_definitions(session_factory, registry)
             parent = create_hierarchy_node(session_factory, registry, kind="epic", title="Layout Parent", prompt="boot prompt")
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
             initialize_node_version(session_factory, logical_node_id=parent.node_id)
             node_id = str(parent.node_id)
 
@@ -410,11 +835,69 @@ def test_register_layout_endpoint_makes_generated_layout_authoritative(migrated_
 
             assert register_response.status_code == 200
             assert register_response.json()["status"] == "registered"
-            assert register_response.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert register_response.json()["layout_relative_path"] == f"layouts/generated/{node_id}.yaml"
             assert register_response.json()["child_count"] == 1
             assert materialize_response.status_code == 200
-            assert materialize_response.json()["layout_relative_path"] == "layouts/generated_layout.yaml"
+            assert materialize_response.json()["layout_relative_path"] == f"layouts/generated/{node_id}.yaml"
             assert [item["layout_child_id"] for item in materialize_response.json()["children"]] == ["custom_phase"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_register_layout_endpoint_rejects_child_kind_incompatible_with_parent(migrated_public_schema, tmp_path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    layout_path = workspace_root / "drafts" / "invalid_phase_layout.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path.write_text(
+        "\n".join(
+            [
+                "kind: layout_definition",
+                "id: invalid_phase_layout",
+                "name: Invalid Phase Layout",
+                "description: Invalid child kind for a phase parent.",
+                "children:",
+                "  - id: wrong_phase_child",
+                "    kind: phase",
+                "    tier: 1",
+                "    name: Wrong Child",
+                "    ordinal: 1",
+                "    goal: Invalid nested phase.",
+                "    rationale: Should be rejected during registration.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    from aicoding.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = client.app.state.db_session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+            epic = create_hierarchy_node(session_factory, registry, kind="epic", title="Top Epic", prompt="epic prompt")
+            initialize_node_version(session_factory, logical_node_id=epic.node_id)
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="phase",
+                title="Layout Parent",
+                prompt="phase prompt",
+                parent_node_id=epic.node_id,
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            node_id = str(parent.node_id)
+
+            register_response = client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers={"Authorization": "Bearer change-me"},
+                json={"file_path": str(layout_path)},
+            )
+
+            assert register_response.status_code == 409
+            assert "only allows: plan" in register_response.json()["detail"]
     finally:
         get_settings.cache_clear()
 
@@ -474,7 +957,7 @@ def test_daemon_compile_endpoint_reads_scoped_parent_decomposition_overrides_fro
                     if subtask["inserted_by_hook"] is False
                 )
                 assert "node register-layout" in generate_subtask["prompt_text"]
-                assert "--file layouts/generated_layout.yaml" in generate_subtask["prompt_text"]
+                assert f"--file layouts/generated/{node.node_id}.yaml" in generate_subtask["prompt_text"]
     finally:
         get_settings.cache_clear()
 def test_mutation_endpoint_accepts_valid_payload(app_client, migrated_public_schema) -> None:
@@ -618,6 +1101,112 @@ def test_subtask_succeed_endpoint_records_summary_and_routes_workflow(app_client
         assert summary_history.json()["summaries"][0]["id"] == succeed_response.json()["recorded_summary_id"]
 
 
+def test_subtask_succeed_pushes_next_stage_prompt_into_active_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Composite Success Push", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        succeed_response = client.post(
+            "/api/subtasks/succeed",
+            headers={"Authorization": "Bearer change-me"},
+            json={
+                "node_id": node_id,
+                "compiled_subtask_id": current_subtask_id,
+                "summary_path": "summaries/implementation.md",
+                "content": "# Done\n\nImplemented the current slice.\n",
+            },
+        )
+
+        adapter = client.app.state.session_adapter
+        pane_text = adapter._sessions[session_name].pane_text
+
+        assert succeed_response.status_code == 200
+        assert succeed_response.json()["outcome"] == "next_stage"
+        assert "The daemon routed you to the layout-generation stage." in pane_text
+        assert f"write `layouts/generated/{node_id}.yaml`" in pane_text
+        assert "node register-layout" in pane_text
+        assert "subtask succeed" in pane_text
+
+
+def test_subtask_succeed_queues_next_stage_prompt_until_active_turn_clears(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Composite Success Queue", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_id = bind_response.json()["session_id"]
+        session_name = bind_response.json()["session_name"]
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        adapter = client.app.state.session_adapter
+        adapter.backend_name = "tmux"
+        adapter._sessions[session_name].pane_text = "• Working (28s • esc to interrupt)\n"
+
+        succeed_response = client.post(
+            "/api/subtasks/succeed",
+            headers={"Authorization": "Bearer change-me"},
+            json={
+                "node_id": node_id,
+                "compiled_subtask_id": current_subtask_id,
+                "summary_path": "summaries/implementation.md",
+                "content": "# Done\n\nImplemented the current slice.\n",
+            },
+        )
+        events_response = client.get(f"/api/sessions/{session_id}/events", headers={"Authorization": "Bearer change-me"})
+
+        assert succeed_response.status_code == 200
+        assert succeed_response.json()["outcome"] == "next_stage"
+        assert "The daemon routed you to the layout-generation stage." not in adapter._sessions[session_name].pane_text
+        assert any(item["event_type"] == "stage_prompt_queued" for item in events_response.json()["events"])
+
+        adapter._sessions[session_name].pane_text = "OpenAI Codex\n>_\n"
+        flushed = flush_pending_primary_session_stage_prompts(session_factory, adapter=adapter)
+        flushed_events = client.get(f"/api/sessions/{session_id}/events", headers={"Authorization": "Bearer change-me"})
+        pane_text = adapter._sessions[session_name].pane_text
+
+        assert flushed == 1
+        assert "The daemon routed you to the layout-generation stage." in pane_text
+        assert any(item["event_type"] == "stage_prompt_pushed" for item in flushed_events.json()["events"])
+
+
 def test_subtask_report_command_endpoint_routes_command_stage(app_client, migrated_public_schema) -> None:
     with TestClient(create_app()) as client:
         session_factory = create_session_factory(engine=migrated_public_schema)
@@ -664,6 +1253,239 @@ def test_subtask_report_command_endpoint_routes_command_stage(app_client, migrat
         assert report_response.json()["recorded_summary_path"] == "summaries/command_result.json"
         assert report_response.json()["outcome"] in {"next_stage", "completed", "paused"}
         assert report_response.json()["progress"]["state"]["last_completed_compiled_subtask_id"] == current_subtask_id
+
+
+def test_subtask_report_command_pushes_next_stage_prompt_into_active_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Composite Command Push", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        with session_scope(session_factory) as session:
+            subtask = session.get(CompiledSubtask, UUID(current_subtask_id))
+            assert subtask is not None
+            subtask.command_text = "printf 'ok'"
+            subtask.subtask_type = "build_docs"
+
+        client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        report_response = client.post(
+            "/api/subtasks/report-command",
+            headers={"Authorization": "Bearer change-me"},
+            json={
+                "node_id": node_id,
+                "compiled_subtask_id": current_subtask_id,
+                "execution_result_json": {"exit_code": 0, "stdout": "ok"},
+            },
+        )
+
+        adapter = client.app.state.session_adapter
+        pane_text = adapter._sessions[session_name].pane_text
+
+        assert report_response.status_code == 200
+        assert report_response.json()["outcome"] == "next_stage"
+        assert "The daemon routed you to the layout-generation stage." in pane_text
+        assert f"write `layouts/generated/{node_id}.yaml`" in pane_text
+        assert "node register-layout" in pane_text
+        assert "subtask succeed" in pane_text
+
+
+def test_subtask_start_pushes_review_stage_prompt_into_active_session(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "start_review_push_workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="start_review_push_layout",
+        child_specs=[
+            {
+                "id": "phase_one",
+                "name": "Phase One",
+                "goal": "Create one child after review.",
+                "rationale": "Exercise review-stage prompt push on subtask start.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Review Start Push Parent",
+                prompt="Create one child through review-stage progression.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+            headers = {"Authorization": "Bearer change-me"}
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+            current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+
+            client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+            client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": current_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+
+            review_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+            start_review_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": review_subtask_id},
+            )
+            pane_text = client.app.state.session_adapter._sessions[session_name].pane_text
+
+        assert start_review_response.status_code == 200
+        assert "The daemon routed you to the next workflow stage." in pane_text
+        assert "Review the generated layout against the current request." in pane_text
+        assert "Approved the generated layout." in pane_text
+        assert "review run --node" in pane_text
+    finally:
+        get_settings.cache_clear()
+
+
+def test_subtask_start_pushes_compiled_non_layout_review_prompt_into_active_session(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    with TestClient(create_app()) as client:
+        session_factory = create_session_factory(engine=migrated_public_schema)
+        client.app.state.db_session_factory = session_factory
+        registry = client.app.state.hierarchy_registry
+        sync_hierarchy_definitions(session_factory, registry)
+
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Non-Layout Review Prompt Push", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post("/api/nodes/lifecycle/transition", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id, "target_state": "READY"})
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers={"Authorization": "Bearer change-me"}).json()["state"]["current_compiled_subtask_id"]
+
+        with session_scope(session_factory) as session:
+            subtask = session.get(CompiledSubtask, UUID(current_subtask_id))
+            assert subtask is not None
+            subtask.subtask_type = "review"
+            subtask.prompt_text = (
+                "Review the current node output against its requirements.\n\n"
+                "Record the judgment through the CLI:\n"
+                f"- `python3 -m aicoding.cli.main review run --node {node_id} --status pass --summary \"Approved the current node output.\"`\n"
+            )
+            subtask.source_subtask_key = "review_node.review_current_output"
+
+        start_review_response = client.post(
+            "/api/subtasks/start",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+        )
+        pane_text = client.app.state.session_adapter._sessions[session_name].pane_text
+
+        assert start_review_response.status_code == 200
+        assert "The daemon routed you to the next workflow stage." in pane_text
+        assert "Review the current node output against its requirements." in pane_text
+        assert "Approved the current node output." in pane_text
+        assert "Approved the generated layout." not in pane_text
+
+
+def test_subtask_start_pushes_layout_generation_prompt_into_active_session(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "start_layout_push_workspace"
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Layout Start Push Parent",
+                prompt="Create one child through layout-generation progression.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+            headers = {"Authorization": "Bearer change-me"}
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+            current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+
+            start_response = client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+            pane_text = client.app.state.session_adapter._sessions[session_name].pane_text
+
+        assert start_response.status_code == 200
+        assert "The daemon routed you to the layout-generation stage." in pane_text
+        assert "Do not browse the repo or run broad discovery commands" in pane_text
+        assert "node register-layout --node" in pane_text
+        assert "subtask succeed --node" in pane_text
+    finally:
+        get_settings.cache_clear()
 
 
 def test_subtask_attempt_result_capture_and_reads_work(app_client, migrated_public_schema) -> None:
@@ -1257,6 +2079,7 @@ def test_background_child_auto_run_loop_binds_ready_child_without_starting_block
     assert ready_sessions.json()["sessions"][0]["session_role"] == "primary"
     assert ready_events.status_code == 200
     assert any(item["event_type"] == "auto_child_bound" for item in ready_events.json()["events"])
+    assert any(item["event_type"] == "stage_prompt_pushed" for item in ready_events.json()["events"])
     assert blocked_sessions.status_code == 200
     assert blocked_sessions.json()["sessions"] == []
     assert blocked_runs.status_code == 200
@@ -2238,7 +3061,7 @@ def test_session_nudge_endpoint_does_not_nudge_when_active_work_marker_is_visibl
         session_name = bind_response.json()["session_name"]
         adapter = client.app.state.session_adapter
         adapter._sessions[session_name].pane_text = (
-            "• Working (3s • esc to interrupt) · 1 background terminal running · /ps to view · /clean to close\n"
+            "• Working (3s • esc to interrupt)\n"
             "• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\n"
         )
         adapter.advance_idle(session_name, seconds=30.0)
@@ -2249,6 +3072,360 @@ def test_session_nudge_endpoint_does_not_nudge_when_active_work_marker_is_visibl
     assert nudge_response.json()["status"] == "not_idle"
     assert nudge_response.json()["screen_state"]["classification"] == "active"
     assert nudge_response.json()["screen_state"]["reason"] == "active_work_indicator_present"
+
+
+def test_session_nudge_endpoint_treats_background_terminal_wait_as_idle(monkeypatch, migrated_public_schema) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/nodes/create",
+            headers={"Authorization": "Bearer change-me"},
+            json={"kind": "epic", "title": "Background Wait Node", "prompt": "boot prompt"},
+        )
+        node_id = create_response.json()["node_id"]
+        client.post(f"/api/nodes/{node_id}/workflow/compile", headers={"Authorization": "Bearer change-me"}, json={})
+        client.post(
+            "/api/nodes/lifecycle/transition",
+            headers={"Authorization": "Bearer change-me"},
+            json={"node_id": node_id, "target_state": "READY"},
+        )
+        client.post("/api/node-runs/start", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        bind_response = client.post("/api/sessions/bind", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        session_name = bind_response.json()["session_name"]
+        adapter = client.app.state.session_adapter
+        adapter._sessions[session_name].pane_text = (
+            "• Working (3s • esc to interrupt) · 1 background terminal running · /ps to view · /clean to close\n"
+            "• Waited for background terminal\n"
+        )
+        adapter.advance_idle(session_name, seconds=30.0)
+
+        first = client.post("/api/sessions/nudge", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+        adapter.advance_idle(session_name, seconds=30.0)
+        second = client.post("/api/sessions/nudge", headers={"Authorization": "Bearer change-me"}, json={"node_id": node_id})
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "nudged"
+    assert first.json()["screen_state"]["classification"] == "idle"
+    assert second.status_code == 200
+    assert second.json()["status"] in {"nudged", "escalated_to_pause"}
+
+
+def test_session_nudge_for_review_stage_includes_review_run_guidance(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "review_nudge_workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="review_nudge_layout",
+        child_specs=[
+            {
+                "id": "phase_one",
+                "name": "Phase One",
+                "goal": "Create a single child after review.",
+                "rationale": "Exercise review-stage nudge guidance.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Review Nudge Parent",
+                prompt="Create one child through review-stage progression.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+            headers = {"Authorization": "Bearer change-me"}
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+            current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+
+            client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+            client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": current_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+
+            adapter = client.app.state.session_adapter
+            adapter._sessions[session_name].pane_text += "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            nudge_response = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+            pane_text = adapter._sessions[session_name].pane_text
+
+        assert nudge_response.status_code == 200
+        assert nudge_response.json()["status"] in {"nudged", "not_idle", "escalated_to_pause"}
+        assert "Review the generated layout against the current request." in pane_text
+        assert "Approved the generated layout." in pane_text
+        assert "review run --node" in pane_text
+    finally:
+        get_settings.cache_clear()
+
+
+def test_session_nudge_for_build_context_stage_includes_summary_path_and_next_stage(
+    tmp_path, monkeypatch, migrated_public_schema
+) -> None:
+    workspace_root = tmp_path / "build_context_nudge_workspace"
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    (overrides_root / "phase_entry_task.yaml").write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: phase",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace",
+                "value:",
+                "  entry_task: research_context",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (overrides_root / "phase_available_tasks.yaml").write_text(
+        "\n".join(
+            [
+                "target_family: node_definition",
+                "target_id: phase",
+                "compatibility:",
+                "  min_schema_version: 2",
+                "  built_in_version: builtin-system-v1",
+                "merge_mode: replace_list",
+                "value:",
+                "  available_tasks:",
+                "    - research_context",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            headers = {"Authorization": "Bearer change-me"}
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            epic = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Build Context Parent",
+                prompt="boot",
+            )
+            phase = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="phase",
+                title="Build Context Nudge Node",
+                prompt="Build the bounded dependency context.",
+                parent_node_id=epic.node_id,
+            )
+            initialize_node_version(session_factory, logical_node_id=phase.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(phase.node_id), initial_state="DRAFT")
+            node_id = str(phase.node_id)
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            client.post("/api/nodes/lifecycle/transition", headers=headers, json={"node_id": node_id, "target_state": "READY"})
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+
+            current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+            client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+
+            adapter = client.app.state.session_adapter
+            adapter._sessions[session_name].pane_text += "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            nudge_response = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+            pane_text = adapter._sessions[session_name].pane_text
+
+        assert nudge_response.status_code == 200
+        assert nudge_response.json()["status"] in {"nudged", "not_idle", "escalated_to_pause"}
+        assert (
+            "Current context-building action:" in pane_text
+            or "Context-building completion contract:" in pane_text
+        )
+        assert "summaries/context.md" in pane_text
+        assert "subtask succeed --node" in pane_text
+    finally:
+        get_settings.cache_clear()
+
+
+def test_session_nudge_for_bootstrap_hook_stage_includes_completion_guidance(
+    monkeypatch, migrated_public_schema
+) -> None:
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            headers = {"Authorization": "Bearer change-me"}
+            create_response = client.post(
+                "/api/nodes/create",
+                headers=headers,
+                json={"kind": "epic", "title": "Context Nudge Node", "prompt": "Build the bounded dependency context."},
+            )
+            node_id = create_response.json()["node_id"]
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            client.post("/api/nodes/lifecycle/transition", headers=headers, json={"node_id": node_id, "target_state": "READY"})
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+
+            adapter = client.app.state.session_adapter
+            adapter._sessions[session_name].pane_text += "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            nudge_response = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+            pane_text = adapter._sessions[session_name].pane_text
+
+        assert nudge_response.status_code == 200
+        assert nudge_response.json()["status"] in {"nudged", "not_idle", "escalated_to_pause"}
+        assert "Current hook-stage action:" in pane_text
+        assert "session show-current --node" in pane_text
+        assert "summaries/parent_subtask.md" in pane_text
+        assert "subtask succeed --node" in pane_text
+    finally:
+        get_settings.cache_clear()
+
+
+def test_stage_prompt_push_resets_idle_nudge_debt_across_routed_subtasks(tmp_path, monkeypatch, migrated_public_schema) -> None:
+    workspace_root = tmp_path / "review_nudge_reset_workspace"
+    layout_path = _write_generated_child_layout(
+        workspace_root,
+        layout_id="review_nudge_reset_layout",
+        child_specs=[
+            {
+                "id": "phase_one",
+                "name": "Phase One",
+                "goal": "Create a single child after review.",
+                "rationale": "Exercise review-stage nudge reset behavior.",
+            }
+        ],
+    )
+    _write_scoped_parent_overrides(workspace_root, node_kinds=("epic",))
+    monkeypatch.setenv("AICODING_SESSION_BACKEND", "fake")
+    monkeypatch.setenv("AICODING_SESSION_IDLE_THRESHOLD_SECONDS", "5")
+    monkeypatch.setenv("AICODING_SESSION_MAX_NUDGE_COUNT", "2")
+    monkeypatch.setenv("AICODING_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AICODING_AUTH_TOKEN", "change-me")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            session_factory = create_session_factory(engine=migrated_public_schema)
+            client.app.state.db_session_factory = session_factory
+            registry = client.app.state.hierarchy_registry
+            sync_hierarchy_definitions(session_factory, registry)
+
+            parent = create_hierarchy_node(
+                session_factory,
+                registry,
+                kind="epic",
+                title="Review Nudge Reset Parent",
+                prompt="Create one child through review-stage progression.",
+            )
+            initialize_node_version(session_factory, logical_node_id=parent.node_id)
+            seed_node_lifecycle(session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+            node_id = str(parent.node_id)
+            headers = {"Authorization": "Bearer change-me"}
+
+            client.post(f"/api/nodes/{node_id}/workflow/compile", headers=headers, json={})
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="COMPILED")
+            transition_node_lifecycle(session_factory, node_id=str(parent.node_id), target_state="READY")
+            client.post("/api/node-runs/start", headers=headers, json={"node_id": node_id})
+            bind_response = client.post("/api/sessions/bind", headers=headers, json={"node_id": node_id})
+            session_name = bind_response.json()["session_name"]
+            current_subtask_id = client.get(f"/api/nodes/{node_id}/subtasks/current", headers=headers).json()["state"]["current_compiled_subtask_id"]
+
+            adapter = client.app.state.session_adapter
+            adapter._sessions[session_name].pane_text = "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            first_nudge = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+            adapter._sessions[session_name].pane_text = "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            second_nudge = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+
+            client.post(
+                "/api/subtasks/start",
+                headers=headers,
+                json={"node_id": node_id, "compiled_subtask_id": current_subtask_id},
+            )
+            client.post(
+                f"/api/nodes/{node_id}/children/register-layout",
+                headers=headers,
+                json={"file_path": str(layout_path)},
+            )
+            succeed_response = client.post(
+                "/api/subtasks/succeed",
+                headers=headers,
+                json={
+                    "node_id": node_id,
+                    "compiled_subtask_id": current_subtask_id,
+                    "summary_path": "summaries/layout_generation.md",
+                    "content": "# Generated\n\nRegistered the candidate layout for review.\n",
+                },
+            )
+
+            adapter._sessions[session_name].pane_text = "• Waited for background terminal\n"
+            adapter.advance_idle(session_name, seconds=30.0)
+            review_stage_nudge = client.post("/api/sessions/nudge", headers=headers, json={"node_id": node_id})
+            pane_text = adapter._sessions[session_name].pane_text
+
+        assert first_nudge.status_code == 200
+        assert first_nudge.json()["status"] in {"nudged", "not_idle"}
+        assert second_nudge.status_code == 200
+        assert second_nudge.json()["status"] in {"nudged", "not_idle"}
+        assert succeed_response.status_code == 200
+        assert succeed_response.json()["outcome"] == "next_stage"
+        assert review_stage_nudge.status_code == 200
+        assert review_stage_nudge.json()["status"] in {"nudged", "not_idle"}
+        if review_stage_nudge.json()["status"] == "nudged":
+            assert review_stage_nudge.json()["nudge_count"] == 1
+            assert "Current review-stage action:" in pane_text
+    finally:
+        get_settings.cache_clear()
 
 
 def test_session_nudge_endpoint_can_nudge_idle_alt_screen_session(monkeypatch, migrated_public_schema) -> None:

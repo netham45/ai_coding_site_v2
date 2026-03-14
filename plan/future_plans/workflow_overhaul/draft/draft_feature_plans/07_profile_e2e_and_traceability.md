@@ -7,13 +7,13 @@ Land the workflow-profile proving layer, route coverage, and traceability update
 ## Main Work
 
 - adopt route-level E2E plans
-- map profile-aware features into E2E/checklist/flow traceability
+- map profile-aware and template-interoperable features into E2E/checklist/flow traceability
 - add real-runtime profile ladder and enforcement suites
 
 ## Implementation Subtasks
 
 - convert the route-plan assets into implementation-backed E2E task plans and future test skeletons
-- update feature/checklist/traceability surfaces so workflow-profile slices map to explicit proof targets
+- update feature/checklist/traceability surfaces so workflow-profile slices and template-driven child-generation touchpoints map to explicit proof targets
 - implement the parentless-start, ladder, enforcement, recovery, and inspection E2E narratives for profile-aware runtime
 - update flow and relevant-flow inventory artifacts once the new profile-aware flows become real runtime behavior
 

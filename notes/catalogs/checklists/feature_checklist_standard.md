@@ -31,7 +31,9 @@ Every checklist entry must explicitly track:
 - daemon/runtime status
 - YAML/schema status
 - prompt status
-- notes/documentation status
+- user documentation status
+- documentation surfaces affected
+- notes status
 - bounded test status
 - E2E target
 - E2E status
@@ -95,6 +97,16 @@ The initial backfill is intentionally conservative:
 - `planned` means the target or contract is documented, but the backfill did not find enough evidence to claim implementation safely.
 - `verified` is reserved for checklist claims whose canonical command has been run in the current state of the repo.
 
+## Transitional Adoption Rule
+
+Historical checklist backfill entries created before DU-05 may still use one combined `Notes` field temporarily.
+
+Any checklist entry created or materially revised after 2026-03-13 should record:
+
+- user documentation status
+- documentation surfaces affected
+- notes status
+
 ## Canonical Template
 
 Use this shape for new entries:
@@ -103,8 +115,8 @@ Use this shape for new entries:
 ## FC-XX: Short Feature Family Name
 
 - Included feature plans: `plan/features/...md`, `plan/features/...md`
-- Affected systems: Database, CLI, Daemon, YAML, Prompts, Notes
-- Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `not_applicable`; Prompts `not_applicable`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/...`; E2E status `planned`; Performance/resilience `partial`; Overall `implemented`.
+- Affected systems: Database, CLI, Daemon, YAML, Prompts, User documentation, Notes
+- Status: Database `implemented`; CLI `implemented`; Daemon `implemented`; YAML `not_applicable`; Prompts `not_applicable`; User documentation `partial`; Documentation surfaces `docs/...`, `notes/scenarios/...`; Notes `implemented`; Bounded tests `implemented`; E2E target `tests/e2e/...`; E2E status `planned`; Performance/resilience `partial`; Overall `implemented`.
 - Known limitations: Short, concrete statement of the current proving or scope gap.
 ```
 

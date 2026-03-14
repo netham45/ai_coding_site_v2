@@ -2,12 +2,12 @@
 
 ## Goal
 
-Prepare the schema and built-in asset posture for workflow profiles, profile-aware layouts, prompt references, and checklist-mode assets.
+Prepare the schema and built-in asset posture for workflow profiles, profile-aware layouts, prompt references, and task-sequence template assets.
 
 ## Main Work
 
-- freeze schema-family direction for workflow profiles and checklist mode
-- freeze built-in asset layout for starter profiles, rich layouts, prompt assets, and example checklist assets
+- freeze schema-family direction for workflow profiles and task-sequence templates
+- freeze built-in asset layout for starter profiles, rich layouts, prompt assets, and example task-sequence template assets
 - define validation expectations for cross-references
 
 ## Main Outputs
@@ -18,9 +18,9 @@ Prepare the schema and built-in asset posture for workflow profiles, profile-awa
 
 ## Implementation Subtasks
 
-- freeze the intended schema families for workflow profiles, layouts, prompt refs, checklist templates, and checklist instances
-- define how starter workflow profiles, rich layouts, prompts, and checklist examples will map into real builtin asset directories
-- decide which cross-reference rules must be validated mechanically across kinds, profiles, layouts, and checklist templates
+- freeze the intended schema families for workflow profiles, layouts, prompt refs, task-sequence templates, and generated-task materialization records
+- define how starter workflow profiles, rich layouts, prompts, and task-sequence template examples will map into real builtin asset directories
+- decide which cross-reference rules must be validated mechanically across kinds, profiles, layouts, templates, and task-profile references
 - identify which existing builtin assets can be reused versus which must be replaced when workflow-overhaul lands
 
 ## Main Dependencies
@@ -42,5 +42,5 @@ Prepare the schema and built-in asset posture for workflow profiles, profile-awa
 
 ## Current Gaps
 
-- there is no real `workflow_profile_definition` or checklist schema family in `src/aicoding/yaml_schemas.py`
+- there is no real `workflow_profile_definition` or task-sequence template schema family in `src/aicoding/yaml_schemas.py`
 - builtin node and task assets are still the active source of workflow shape, with no profile-aware asset loading path

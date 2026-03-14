@@ -159,6 +159,37 @@ def collect_child_results(
         return _collection_snapshot(parent_node.node_id, parent_version.id, authority, children)
 
 
+def plan_live_merge_children(
+    session_factory: sessionmaker[Session],
+    *,
+    logical_node_id: UUID,
+) -> list[tuple[UUID, str, int]]:
+    with query_session_scope(session_factory) as session:
+        _, parent_version, _ = _parent_bundle(session, logical_node_id=logical_node_id)
+        child_edges = _load_child_edges(session, parent_version.id)
+        merge_events = _load_merge_events_for_parent(session, parent_node_version_id=parent_version.id)
+        children = _build_child_results(
+            session,
+            child_edges,
+            resolve_authoritative=True,
+            merge_orders_by_child_version_id={event.child_node_version_id: event.merge_order for event in merge_events},
+            merged_child_finals={(event.child_node_version_id, event.child_final_commit_sha) for event in merge_events},
+        )
+        merge_orders = _calculate_live_merge_orders(children)
+        ordered_candidates = sorted(
+            (
+                child
+                for child in children
+                if child.child_node_id in merge_orders and child.final_commit_sha is not None
+            ),
+            key=lambda child: merge_orders[child.child_node_id],
+        )
+        return [
+            (candidate.child_node_version_id, str(candidate.final_commit_sha), merge_orders[candidate.child_node_id])
+            for candidate in ordered_candidates
+        ]
+
+
 def collect_child_results_for_version(
     session_factory: sessionmaker[Session],
     *,
@@ -661,6 +692,54 @@ def _calculate_merge_orders(children: list[dict[str, object]]) -> dict[UUID, int
                 ready.append(follower)
     if len(ordered) != len(eligible):
         raise DaemonConflictError("child dependency graph for reconciliation is cyclic")
+    return {node_id: index + 1 for index, node_id in enumerate(ordered)}
+
+
+def _calculate_live_merge_orders(children: list[ChildResultSnapshot]) -> dict[UUID, int]:
+    eligible: list[dict[str, object]] = []
+    for child in children:
+        blocking = set(child.blocking_reasons)
+        if child.final_commit_sha is None:
+            continue
+        if blocking - {"child not incrementally merged"}:
+            continue
+        eligible.append(
+            {
+                "child_node_id": child.child_node_id,
+                "dependency_child_node_ids": child.dependency_child_node_ids,
+                "ordinal": child.ordinal,
+                "created_at": datetime.fromtimestamp(0, timezone.utc),
+            }
+        )
+    if not eligible:
+        return {}
+    adjacency: dict[UUID, set[UUID]] = {}
+    indegree: dict[UUID, int] = {}
+    by_id: dict[UUID, dict[str, object]] = {}
+    for item in eligible:
+        child_node_id = item["child_node_id"]
+        by_id[child_node_id] = item
+        adjacency[child_node_id] = set()
+        indegree[child_node_id] = 0
+    for item in eligible:
+        child_node_id = item["child_node_id"]
+        for dependency_child_node_id in item["dependency_child_node_ids"]:
+            if dependency_child_node_id not in adjacency:
+                continue
+            adjacency[dependency_child_node_id].add(child_node_id)
+            indegree[child_node_id] += 1
+    ordered: list[UUID] = []
+    ready = [node_id for node_id, degree in indegree.items() if degree == 0]
+    while ready:
+        ready.sort(key=lambda node_id: _merge_order_sort_key(by_id[node_id]))
+        current = ready.pop(0)
+        ordered.append(current)
+        for follower in sorted(adjacency[current], key=lambda node_id: _merge_order_sort_key(by_id[node_id])):
+            indegree[follower] -= 1
+            if indegree[follower] == 0:
+                ready.append(follower)
+    if len(ordered) != len(eligible):
+        raise DaemonConflictError("child dependency graph for live merge is cyclic")
     return {node_id: index + 1 for index, node_id in enumerate(ordered)}
 
 

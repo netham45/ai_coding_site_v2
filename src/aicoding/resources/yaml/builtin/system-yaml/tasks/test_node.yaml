@@ -5,6 +5,8 @@ description: Run the default automated testing gate for the current node.
 applies_to_kinds:
   - task
   - plan
+  - phase
+  - epic
 policy:
   max_subtask_retries: 1
   on_failure: fail_to_parent

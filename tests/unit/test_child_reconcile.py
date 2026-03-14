@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from aicoding.daemon.admission import add_node_dependency, admit_node_run
 from aicoding.daemon.branches import record_final_commit, record_seed_commit
-from aicoding.daemon.child_reconcile import collect_child_results, execute_child_merge_pipeline, inspect_parent_reconcile
+from aicoding.daemon.child_reconcile import collect_child_results, execute_child_merge_pipeline, inspect_parent_reconcile, plan_live_merge_children
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.incremental_parent_merge import process_next_incremental_child_merge, record_completed_child_for_incremental_merge
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
@@ -154,6 +154,51 @@ def test_collect_child_results_blocks_reconcile_until_child_has_been_incremental
     assert "child not incrementally merged" in child_results.children[0].blocking_reasons
     assert reconcile.status == "blocked"
     assert any(reason.endswith("is waiting") for reason in reconcile.blocking_reasons)
+
+
+def test_plan_live_merge_children_orders_finalized_authoritative_children_before_merge_history_exists(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    parent = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Parent", prompt="p")
+    seed_node_lifecycle(db_session_factory, node_id=str(parent.node_id), initial_state="DRAFT")
+    parent_version = initialize_node_version(db_session_factory, logical_node_id=parent.node_id)
+    discovery = create_manual_node(db_session_factory, registry, kind="phase", title="Discovery", prompt="d", parent_node_id=parent.node_id)
+    implementation = create_manual_node(db_session_factory, registry, kind="phase", title="Implementation", prompt="i", parent_node_id=parent.node_id)
+    _transition_to_complete(db_session_factory, node_id=str(discovery.node.node_id))
+    _transition_to_complete(db_session_factory, node_id=str(implementation.node.node_id))
+    add_node_dependency(
+        db_session_factory,
+        node_id=implementation.node.node_id,
+        depends_on_node_id=discovery.node.node_id,
+        required_state="COMPLETE",
+    )
+    bootstrap_live_git_repo(db_session_factory, version_id=parent_version.id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=discovery.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    bootstrap_live_git_repo(db_session_factory, version_id=implementation.node_version_id, files={"shared.txt": "base\n"}, replace_existing=True)
+    discovery_status = stage_live_git_change(
+        db_session_factory,
+        version_id=discovery.node_version_id,
+        files={"shared.txt": "base\ndiscovery\n"},
+        message="Discovery final",
+        record_as_final=True,
+    )
+    implementation_status = stage_live_git_change(
+        db_session_factory,
+        version_id=implementation.node_version_id,
+        files={"shared.txt": "base\nimplementation\n"},
+        message="Implementation final",
+        record_as_final=True,
+    )
+
+    ordered_children = plan_live_merge_children(db_session_factory, logical_node_id=parent.node_id)
+
+    assert ordered_children == [
+        (discovery.node_version_id, discovery_status.final_commit_sha, 1),
+        (implementation.node_version_id, implementation_status.final_commit_sha, 2),
+    ]
 
 
 def test_execute_child_merge_pipeline_reuses_existing_merge_events_and_parent_reconcile_context(

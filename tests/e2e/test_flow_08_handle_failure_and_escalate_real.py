@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -25,10 +26,52 @@ def _first_child(tree_payload: dict[str, object], *, parent_id: str, kind: str) 
     return None
 
 
+def _write_scoped_parent_overrides(workspace_root: Path, *, node_kinds: tuple[str, ...]) -> None:
+    overrides_root = workspace_root / "resources" / "yaml" / "overrides" / "nodes"
+    overrides_root.mkdir(parents=True, exist_ok=True)
+    for node_kind in node_kinds:
+        (overrides_root / f"{node_kind}_entry_task.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace",
+                    "value:",
+                    "  entry_task: generate_child_layout",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (overrides_root / f"{node_kind}_available_tasks.yaml").write_text(
+            "\n".join(
+                [
+                    "target_family: node_definition",
+                    f"target_id: {node_kind}",
+                    "compatibility:",
+                    "  min_schema_version: 2",
+                    "  built_in_version: builtin-system-v1",
+                    "merge_mode: replace_list",
+                    "value:",
+                    "  available_tasks:",
+                    "    - generate_child_layout",
+                    "    - review_child_layout",
+                    "    - spawn_children",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
 @pytest.mark.e2e_real
 @pytest.mark.requires_tmux
 @pytest.mark.requires_ai_provider
 def test_flow_08_handle_failure_and_escalate_runs_against_real_daemon_and_real_cli(real_daemon_harness) -> None:
+    _write_scoped_parent_overrides(real_daemon_harness.workspace_root, node_kinds=("epic",))
     parent_start_result = real_daemon_harness.cli(
         "workflow",
         "start",

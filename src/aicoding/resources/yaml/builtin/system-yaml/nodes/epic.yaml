@@ -4,12 +4,12 @@ node_definition:
   tier: 0
   description: Top-level outcome-oriented planning container.
   main_prompt: prompts/layouts/generate_phase_layout.md
-  entry_task: research_context
+  entry_task: generate_child_layout
   available_tasks:
-    - research_context
-    - execute_node
-    - validate_node
-    - review_node
+    - generate_child_layout
+    - review_child_layout
+    - spawn_children
+    - wait_for_children
   parent_constraints:
     allowed_kinds: []
     allowed_tiers: []

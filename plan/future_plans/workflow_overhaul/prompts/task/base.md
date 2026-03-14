@@ -10,7 +10,7 @@ Objective
 Lifecycle Position
 - This is a leaf execution prompt.
 - It assumes decomposition has already happened and the task owns the current artifact and proof boundary.
-- Successful output unlocks downstream review, merge, or completion according to the compiled workflow.
+- Successful output unlocks downstream review, merge, completion, or deterministic corrective expansion according to the compiled workflow.
 
 Inputs
 - `workflow_profile`
@@ -29,12 +29,14 @@ Allowed Actions
 - Make only the changes needed for this task's declared boundary.
 - Run or attempt the declared verification commands unless blocked legitimately.
 - Record durable success or failure with concrete evidence.
+- When the active task is verification-like and the declared surface is fixable inside the current authority boundary, return a corrective outcome instead of pretending the task is either complete or terminally failed.
 
 Forbidden Actions
 - Do not silently narrow or expand scope.
 - Do not invent new sibling tasks instead of finishing, failing clearly, or escalating.
 - Do not claim completion without evidence.
 - Do not skip required notes, checklist, log, or plan updates that belong to this task.
+- Do not manually invent your own corrective loop; use the daemon-owned remediation and reverification path that the compiled workflow declares.
 
 Expected Result
 - A bounded task result that explains:
@@ -50,13 +52,13 @@ Completion Conditions
 - The result is specific enough for downstream review.
 
 Escalation Or Failure
-- Return `blocked`, `failed`, or `escalate` instead of inventing unsupported closure.
+- Return `blocked`, `needs_remediation`, `failed`, or `escalate` instead of inventing unsupported closure.
 - Fail clearly when required commands cannot run or the scope cannot close honestly.
 
 Response Contract
 - Return a structured task result only.
 - Required fields:
-  - `status`: one of `complete`, `blocked`, `failed`, or `escalate`
+  - `status`: one of `complete`, `blocked`, `needs_remediation`, `failed`, or `escalate`
   - `summary`
   - `artifacts_changed`
   - `verification_results`

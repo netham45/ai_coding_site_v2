@@ -1,3 +1,5 @@
+## Superseded historical example.
+## Use `plan/future_plans/workflow_overhaul/task_sequence_examples/example_e2e_route_template.yaml` for the active direction.
 kind: checklist_instance
 schema_version: 1
 id: checklist.route_05.001

@@ -104,10 +104,18 @@ def test_e2e_live_git_merge_and_finalize_verifies_parent_repo_contents(real_daem
     child_a_id = str(child_a_create.json()["node_id"])
     child_b_id = str(child_b_create.json()["node_id"])
 
+    child_a_compile = real_daemon_harness.cli("workflow", "compile", "--node", child_a_id)
+    child_b_compile = real_daemon_harness.cli("workflow", "compile", "--node", child_b_id)
+    assert child_a_compile.exit_code == 0, child_a_compile.stderr
+    assert child_b_compile.exit_code == 0, child_b_compile.stderr
+    assert child_a_compile.json()["status"] == "compiled", child_a_compile.stdout
+    assert child_b_compile.json()["status"] == "compiled", child_b_compile.stdout
     child_a_start = real_daemon_harness.cli("node", "run", "start", "--node", child_a_id)
     child_b_start = real_daemon_harness.cli("node", "run", "start", "--node", child_b_id)
     assert child_a_start.exit_code == 0, child_a_start.stderr
     assert child_b_start.exit_code == 0, child_b_start.stderr
+    assert child_a_start.json()["status"] == "admitted", child_a_start.stdout
+    assert child_b_start.json()["status"] == "admitted", child_b_start.stdout
     child_a_bind = real_daemon_harness.cli("session", "bind", "--node", child_a_id)
     child_b_bind = real_daemon_harness.cli("session", "bind", "--node", child_b_id)
     assert child_a_bind.exit_code == 0, child_a_bind.stderr

@@ -51,6 +51,7 @@ class RelevantUserFlowScope(AICodingModel):
     website_ui: str
     yaml: str
     prompts: str
+    user_documentation: str
 
     @model_validator(mode="after")
     def validate_scope(self) -> "RelevantUserFlowScope":
@@ -61,6 +62,7 @@ class RelevantUserFlowScope(AICodingModel):
             "website_ui",
             "yaml",
             "prompts",
+            "user_documentation",
         ):
             value = getattr(self, field_name).strip()
             if value not in ALLOWED_SYSTEM_EFFECT_STATUSES:
@@ -75,6 +77,18 @@ class RelevantUserFlowCommands(AICodingModel):
     bounded: list[str] = Field(min_length=1)
     e2e: list[str] = Field(min_length=1)
     docs: list[str] = Field(min_length=1)
+
+
+class RelevantUserFlowDocumentation(AICodingModel):
+    required: bool
+    surfaces: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_documentation(self) -> "RelevantUserFlowDocumentation":
+        self.surfaces = [surface.strip() for surface in self.surfaces]
+        if any(not surface for surface in self.surfaces):
+            raise ValueError("documentation surfaces may not be blank")
+        return self
 
 
 class RelevantUserFlowProof(AICodingModel):
@@ -105,6 +119,7 @@ class RelevantUserFlow(AICodingModel):
     summary: str
     relevance: RelevantUserFlowRelevance
     scope: RelevantUserFlowScope
+    documentation: RelevantUserFlowDocumentation
     invariants: list[str] = Field(min_length=1)
     canonical_commands: RelevantUserFlowCommands
     proof: RelevantUserFlowProof
@@ -175,4 +190,3 @@ def load_relevant_user_flow_inventory(path: Path) -> RelevantUserFlowInventory:
         raise RelevantUserFlowInventoryValidationError(
             f"invalid relevant user flow inventory {path.name}: {exc}"
         ) from exc
-

@@ -4,10 +4,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from subprocess import CompletedProcess, run
+import time
 from typing import Protocol
 
 from aicoding.config import Settings, get_settings
 from aicoding.errors import ConfigurationError
+
+
+CODEX_READY_MARKERS = ("OpenAI Codex", ">_")
+CODEX_READY_TIMEOUT_SECONDS = 20.0
+CODEX_READY_SETTLE_SECONDS = 5.0
+CODEX_ACTIVE_INPUT_BLOCKERS = (
+    "• Working (",
+    "Working (",
+    "Messages to be submitted after next tool call",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +60,7 @@ class SessionAdapter(Protocol):
     def list_sessions(self) -> list[str]: ...
     def latest_snapshot(self) -> SessionSnapshot | None: ...
     def describe(self, session_name: str) -> SessionSnapshot | None: ...
+    def process_command_line(self, session_name: str) -> str | None: ...
 
 
 class TmuxSessionAdapter:
@@ -122,16 +134,23 @@ class TmuxSessionAdapter:
         return result.stdout
 
     def send_input(self, session_name: str, text: str, *, press_enter: bool = True) -> None:
-        args = ["send-keys", "-t", session_name, text]
-        if press_enter:
-            args.append("Enter")
-        result = self._run(*args)
+        result = self._run("send-keys", "-t", session_name, text)
         if result.returncode != 0:
             raise ConfigurationError(
                 message="Failed to send input to tmux session.",
                 code="tmux_send_failed",
                 details={"session_name": session_name, "stderr": result.stderr.strip()},
             )
+        if press_enter:
+            # Send Enter separately so interactive TUIs do not treat it as part of a pasted block.
+            time.sleep(0.15)
+            enter_result = self._run("send-keys", "-t", session_name, "Enter")
+            if enter_result.returncode != 0:
+                raise ConfigurationError(
+                    message="Failed to confirm input in tmux session.",
+                    code="tmux_send_failed",
+                    details={"session_name": session_name, "stderr": enter_result.stderr.strip()},
+                )
 
     def kill_session(self, session_name: str) -> None:
         self._run("kill-session", "-t", session_name)
@@ -147,6 +166,21 @@ class TmuxSessionAdapter:
         if not sessions:
             return None
         return self.describe(sessions[-1])
+
+    def process_command_line(self, session_name: str) -> str | None:
+        if not self.session_exists(session_name):
+            return None
+        result = self._run("display-message", "-p", "-t", session_name, "#{pane_pid}")
+        if result.returncode != 0:
+            return None
+        pid = result.stdout.strip()
+        if not pid:
+            return None
+        ps_result = run(["ps", "-p", pid, "-o", "args="], check=False, text=True, capture_output=True)
+        if ps_result.returncode != 0:
+            return None
+        command_line = ps_result.stdout.strip()
+        return command_line or None
 
     def describe(self, session_name: str) -> SessionSnapshot | None:
         if not self.session_exists(session_name):
@@ -285,6 +319,12 @@ class FakeSessionAdapter:
             return None
         return self._snapshot(state)
 
+    def process_command_line(self, session_name: str) -> str | None:
+        state = self._sessions.get(session_name)
+        if state is None:
+            return None
+        return state.command
+
     def set_alt_screen(self, session_name: str, enabled: bool) -> None:
         self._sessions[session_name].in_alt_screen = enabled
 
@@ -333,6 +373,129 @@ class SessionPoller:
             idle_seconds=idle_seconds,
             is_idle=idle_seconds >= self.idle_threshold_seconds,
         )
+
+
+def wait_for_codex_ready(
+    adapter: SessionAdapter,
+    *,
+    session_name: str,
+    timeout_seconds: float = CODEX_READY_TIMEOUT_SECONDS,
+    settle_seconds: float = CODEX_READY_SETTLE_SECONDS,
+) -> SessionSnapshot:
+    if adapter.backend_name != "tmux":
+        snapshot = adapter.describe(session_name)
+        if snapshot is None:
+            raise ConfigurationError(
+                message="Session does not exist.",
+                code="session_not_found",
+                details={"session_name": session_name},
+            )
+        return snapshot
+
+    deadline = time.time() + timeout_seconds
+    last_pane_text = ""
+    while time.time() < deadline:
+        snapshot = adapter.describe(session_name)
+        if snapshot is None:
+            raise ConfigurationError(
+                message="Session disappeared before Codex became ready.",
+                code="session_not_found",
+                details={"session_name": session_name},
+            )
+        if not snapshot.process_alive:
+            raise ConfigurationError(
+                message="Codex process exited before becoming ready.",
+                code="codex_not_ready",
+                details={
+                    "session_name": session_name,
+                    "exit_status": snapshot.exit_status,
+                    "pane_text": last_pane_text or snapshot.pane_text,
+                },
+            )
+        pane_text = adapter.capture_pane(session_name, include_alt_screen=True)
+        last_pane_text = pane_text
+        banner_visible = all(marker in pane_text for marker in CODEX_READY_MARKERS)
+        if banner_visible:
+            time.sleep(settle_seconds)
+            settled_snapshot = adapter.describe(session_name)
+            if settled_snapshot is None or not settled_snapshot.process_alive:
+                raise ConfigurationError(
+                    message="Codex process exited during readiness settle window.",
+                    code="codex_not_ready",
+                    details={
+                        "session_name": session_name,
+                        "pane_text": pane_text,
+                        "process_command_line": adapter.process_command_line(session_name),
+                    },
+                )
+            return settled_snapshot
+        time.sleep(0.5)
+
+    raise ConfigurationError(
+        message="Timed out waiting for Codex session readiness banner.",
+        code="codex_not_ready",
+        details={
+            "session_name": session_name,
+            "pane_text": last_pane_text,
+            "process_command_line": adapter.process_command_line(session_name),
+        },
+    )
+
+
+def send_input_when_ready(
+    adapter: SessionAdapter,
+    *,
+    session_name: str,
+    text: str,
+    press_enter: bool = True,
+    timeout_seconds: float = 15.0,
+) -> None:
+    if not try_send_input_when_ready(
+        adapter,
+        session_name=session_name,
+        text=text,
+        press_enter=press_enter,
+        timeout_seconds=timeout_seconds,
+    ):
+        raise ConfigurationError(
+            message="Session stayed busy until the input wait budget expired.",
+            code="tmux_send_blocked",
+            details={"session_name": session_name, "timeout_seconds": timeout_seconds},
+        )
+
+
+def try_send_input_when_ready(
+    adapter: SessionAdapter,
+    *,
+    session_name: str,
+    text: str,
+    press_enter: bool = True,
+    timeout_seconds: float = 15.0,
+) -> bool:
+    if adapter.backend_name == "tmux":
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            snapshot = adapter.describe(session_name)
+            if snapshot is None:
+                raise ConfigurationError(
+                    message="Session disappeared before input could be sent.",
+                    code="session_not_found",
+                    details={"session_name": session_name},
+                )
+            if not snapshot.process_alive:
+                raise ConfigurationError(
+                    message="Session process exited before input could be sent.",
+                    code="tmux_send_failed",
+                    details={"session_name": session_name, "exit_status": snapshot.exit_status},
+                )
+            pane_text = adapter.capture_pane(session_name, include_alt_screen=True)
+            if not any(marker in pane_text for marker in CODEX_ACTIVE_INPUT_BLOCKERS):
+                break
+            time.sleep(0.5)
+        else:
+            return False
+    adapter.send_input(session_name, text, press_enter=press_enter)
+    return True
 
 
 def build_session_adapter(settings: Settings | None = None) -> SessionAdapter:

@@ -30,6 +30,9 @@ def test_checklist_standard_defines_allowed_statuses_and_command() -> None:
 
     assert "python3 -m pytest tests/unit/test_feature_checklist_docs.py" in text
     assert "feature_checklist_backfill.md" in text
+    assert "user documentation status" in text
+    assert "documentation surfaces affected" in text
+    assert "notes status" in text
 
 
 def test_feature_checklist_backfill_covers_every_feature_plan() -> None:

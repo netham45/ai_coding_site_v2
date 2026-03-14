@@ -10,6 +10,7 @@ Plan index:
 - `03_flow_traceability_and_e2e_doc_schema_family.md`
 - `04_logs_and_operational_doc_schema_family.md`
 - `05_doc_test_execution_and_adoption_policy.md`
+- `06_user_documentation_and_documentation_impact_schema.md`
 
 Canonical schema docs:
 

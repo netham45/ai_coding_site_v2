@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.daemon.lifecycle import transition_node_lifecycle
 from aicoding.daemon.orchestration import apply_authority_mutation, load_authority_state
 from aicoding.daemon.run_orchestration import ensure_node_run_started
 from aicoding.db.models import (
@@ -289,6 +290,13 @@ def admit_node_run(
     trigger_reason: str = "manual_start",
 ) -> NodeRunAdmissionSnapshot:
     readiness = check_node_dependency_readiness(session_factory, node_id=node_id)
+    if _should_promote_compiled_node_for_admission(readiness):
+        transition_node_lifecycle(
+            session_factory,
+            node_id=str(node_id),
+            target_state="READY",
+        )
+        readiness = check_node_dependency_readiness(session_factory, node_id=node_id)
     with query_session_scope(session_factory) as session:
         node_version = _authoritative_version(session, node_id)
         lifecycle, _ = _matched_lifecycle(session, logical_node_id=node_id, node_version_id=node_version.id)
@@ -343,6 +351,22 @@ def admit_node_run(
         current_run_id=authority.current_run_id,
         blockers=[],
     )
+
+
+def _should_promote_compiled_node_for_admission(readiness: DependencyReadinessSnapshot) -> bool:
+    if readiness.status != "blocked":
+        return False
+    if not readiness.blockers:
+        return False
+    blocker_kinds = {item.blocker_kind for item in readiness.blockers}
+    if blocker_kinds != {"lifecycle_not_ready"}:
+        return False
+    lifecycle_states = {
+        str(item.details_json.get("lifecycle_state"))
+        for item in readiness.blockers
+        if item.blocker_kind == "lifecycle_not_ready" and "lifecycle_state" in item.details_json
+    }
+    return lifecycle_states == {"COMPILED"}
 
 
 def _validate_dependency_graph(session: Session, *, node_id: UUID, persist: bool) -> DependencyGraphValidationSnapshot:

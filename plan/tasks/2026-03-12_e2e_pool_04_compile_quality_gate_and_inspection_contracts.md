@@ -67,6 +67,14 @@ Read these note files before implementing or revising this phase:
 3. Fix quality-gate progression so the runtime actually enters the expected chain.
 4. Once Pool 01 restores child bindability, rerun rebuild-cutover to verify the blocker list includes the primary-session blocker.
 
+## Status
+
+- 2026-03-12 rerun status:
+  - `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py` now passes. The compile guard now rejects authoritative recompiles whenever the authoritative lifecycle or daemon state still indicates an active run, and the E2E proves the rejection plus the surviving inspection surfaces through the real CLI.
+  - `tests/e2e/test_flow_09_run_quality_gates_real.py` now passes. The daemon-owned quality chain now accepts the quality-stage fixture and completes the validate/review/test path with the expected persisted outputs.
+  - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` now passes. Failed compile state remains inspectable through `workflow source-discovery`, and the repaired compile path returns the node to compiled lifecycle state.
+  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q -k blocks_upstream_rectify` now passes. The live run binds successfully and the upstream rebuild-coordination payload now reports both `active_or_paused_run` and `active_primary_sessions`.
+
 ## Verification
 
 ```bash

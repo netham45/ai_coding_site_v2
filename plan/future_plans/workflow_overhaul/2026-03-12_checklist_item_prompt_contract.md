@@ -1,5 +1,13 @@
 # Checklist Item Prompt Contract
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_generated_task_objective_contract.md`
+
+The active direction is to enrich normal generated task prompts with template provenance and step objectives rather than introduce a checklist-item prompt family.
+
 ## Purpose
 
 Define the future prompt contract for active checklist-item execution when a task profile is running in checklist mode.

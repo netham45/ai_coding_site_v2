@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import re
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import yaml
@@ -49,6 +50,7 @@ from aicoding.rendering import (
 )
 from aicoding.resources import ResourceCatalog, load_resource_catalog
 from aicoding.source_lineage import capture_node_version_source_lineage
+from aicoding.source_lineage import load_node_version_source_lineage
 from aicoding.structural_library import ensure_builtin_structural_library
 from aicoding.daemon.environments import normalize_environment_relative_path
 from aicoding.daemon.session_manager import current_stage_prompt_cli_command
@@ -58,6 +60,7 @@ from aicoding.yaml_schemas import (
     HookDefinitionDocument,
     ProjectPolicyDefinitionDocument,
     RuntimePolicyDefinitionDocument,
+    TaskDefinitionDocument,
     identify_yaml_family,
     unwrap_yaml_document_payload,
     wrap_yaml_document_payload,
@@ -564,13 +567,29 @@ def load_workflow_sources_for_version(session_factory: sessionmaker[Session], *,
 
 
 def load_workflow_source_discovery_for_node(session_factory: sessionmaker[Session], *, logical_node_id: UUID) -> dict[str, object]:
-    workflow = load_current_workflow(session_factory, logical_node_id=logical_node_id)
-    return load_workflow_source_discovery(session_factory, workflow_id=workflow.id)
+    with query_session_scope(session_factory) as session:
+        selector = _require_selector(session, logical_node_id)
+        version = session.get(NodeVersion, selector.authoritative_node_version_id)
+        if version is None:
+            raise DaemonNotFoundError("node version not found")
+        if version.compiled_workflow_id is not None:
+            workflow_id = version.compiled_workflow_id
+        else:
+            workflow_id = None
+    if workflow_id is not None:
+        return load_workflow_source_discovery(session_factory, workflow_id=workflow_id)
+    return _failed_compile_source_discovery_snapshot(session_factory, version_id=selector.authoritative_node_version_id)
 
 
 def load_workflow_source_discovery_for_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> dict[str, object]:
-    workflow = load_node_version_workflow(session_factory, version_id=version_id)
-    return load_workflow_source_discovery(session_factory, workflow_id=workflow.id)
+    with query_session_scope(session_factory) as session:
+        version = session.get(NodeVersion, version_id)
+        if version is None:
+            raise DaemonNotFoundError("node version not found")
+        workflow_id = version.compiled_workflow_id
+    if workflow_id is not None:
+        return load_workflow_source_discovery(session_factory, workflow_id=workflow_id)
+    return _failed_compile_source_discovery_snapshot(session_factory, version_id=version_id)
 
 
 def load_workflow_source_discovery(session_factory: sessionmaker[Session], *, workflow_id: UUID) -> dict[str, object]:
@@ -592,6 +611,57 @@ def load_workflow_source_discovery(session_factory: sessionmaker[Session], *, wo
             for index, item in enumerate(source_documents, start=1)
         ],
         "resolved_documents": workflow.resolved_yaml.get("resolved_documents", []),
+    }
+
+
+def _failed_compile_source_discovery_snapshot(
+    session_factory: sessionmaker[Session],
+    *,
+    version_id: UUID,
+) -> dict[str, object]:
+    with query_session_scope(session_factory) as session:
+        version = session.get(NodeVersion, version_id)
+        if version is None:
+            raise DaemonNotFoundError("node version not found")
+        failures = _compile_failures_for_version(session, version_id)
+        if not failures:
+            raise DaemonNotFoundError("compiled workflow not found")
+        latest_failure = failures[0]
+    lineage = load_node_version_source_lineage(session_factory, node_version_id=version_id)
+    discovery_order = [
+        {
+            "ordinal": item.resolution_order,
+            "id": str(item.id),
+            "source_group": item.source_group,
+            "relative_path": item.relative_path,
+            "doc_family": item.doc_family,
+            "source_role": item.source_role,
+            "merge_mode": item.merge_mode,
+            "content_hash": item.content_hash,
+            "resolution_order": item.resolution_order,
+        }
+        for item in lineage.source_documents
+    ]
+    return {
+        "compiled_workflow_id": None,
+        "node_version_id": str(lineage.node_version_id),
+        "logical_node_id": str(lineage.logical_node_id),
+        "compile_context": latest_failure.compile_context,
+        "source_hash": latest_failure.source_hash,
+        "built_in_library_version": BUILTIN_LIBRARY_VERSION,
+        "discovery_order": discovery_order,
+        "resolved_documents": [
+            {
+                "source_group": item.source_group,
+                "relative_path": item.relative_path,
+                "doc_family": item.doc_family,
+                "source_role": item.source_role,
+                "resolution_order": item.resolution_order,
+                "available_after_failed_compile": True,
+            }
+            for item in lineage.source_documents
+        ],
+        "compile_failure": latest_failure.to_payload(),
     }
 
 
@@ -974,6 +1044,11 @@ def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCa
             target_family="node_definition",
             target_id=node_definition.kind,
         )
+    _validate_available_tasks_for_node_kind(
+        node_kind=version.node_kind,
+        available_tasks=node_definition.available_tasks,
+        resolved_documents=resolved_documents,
+    )
 
     base_policy_document = _runtime_policy_document_from_resolution(override_resolution)
     project_policy_documents = _project_policy_documents_from_resolution(override_resolution)
@@ -1011,6 +1086,11 @@ def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCa
         node_definition = NodeDefinitionDocument.model_validate(
             wrap_yaml_document_payload("node_definition", node_document.resolved_document)
         ).node_definition
+        _validate_available_tasks_for_node_kind(
+            node_kind=version.node_kind,
+            available_tasks=node_definition.available_tasks,
+            resolved_documents=resolved_documents,
+        )
         base_policy_document = _runtime_policy_document_from_resolution(override_resolution)
         project_policy_documents = _project_policy_documents_from_resolution(override_resolution)
         effective_policy = resolve_effective_policy(
@@ -1277,7 +1357,7 @@ def _compile_version(session: Session, version: NodeVersion, catalog: ResourceCa
             "canonical_syntax": "{{variable}}",
             "legacy_compatibility_syntax": "<variable>",
             "renderable_fields": ["prompt", "command", "pause_summary_prompt"],
-            "non_renderable_fields": ["args", "env", "checks", "outputs", "retry_policy"],
+            "non_renderable_fields": ["args", "env", "checks", "retry_policy"],
             "compiled_subtasks": rendering_payloads,
         }
         resolved_yaml = {**resolved_yaml, "hook_expansion": hook_expansion_payload, "rendering": rendering}
@@ -1532,6 +1612,34 @@ def _runtime_policy_document_from_resolution(override_resolution) -> RuntimePoli
             target_id="default_runtime_policy",
         )
     return RuntimePolicyDefinitionDocument.model_validate(item.resolved_document)
+
+
+def _validate_available_tasks_for_node_kind(
+    *,
+    node_kind: str,
+    available_tasks: list[str],
+    resolved_documents: dict[tuple[str, str], object],
+) -> None:
+    for task_key in available_tasks:
+        task_document = resolved_documents.get(("task_definition", task_key))
+        if task_document is None:
+            continue
+        task_definition = TaskDefinitionDocument.model_validate(task_document.resolved_document)
+        if node_kind not in task_definition.applies_to_kinds:
+            raise WorkflowCompileError(
+                failure_stage="workflow_compilation",
+                failure_class="compiled_workflow_structure_failure",
+                summary=(
+                    f"Task definition '{task_key}' does not apply to node kind '{node_kind}' but is listed in available_tasks."
+                ),
+                details_json={
+                    "node_kind": node_kind,
+                    "task_key": task_key,
+                    "applies_to_kinds": task_definition.applies_to_kinds,
+                },
+                target_family="task_definition",
+                target_id=task_key,
+            )
 
 
 def _override_documents_from_source_rows(
@@ -2105,8 +2213,40 @@ def _compiled_subtask_definition_from_base(
         context=render_context,
         field_name=f"{task_key}.{base_subtask.get('id', 'main')}.pause_summary_prompt",
     )
+    rendered_outputs = _render_subtask_outputs(
+        outputs=list(base_subtask.get("outputs", [])),
+        context=render_context,
+        task_key=task_key,
+        source_subtask_key=str(base_subtask.get("id", "main")),
+    )
     prompt_text = prompt_info["prompt_text"]
     command_text = None if command_render is None else command_render.rendered_text
+    summary_output_path = next(
+        (
+            str(output.get("path"))
+            for output in rendered_outputs
+            if isinstance(output, dict)
+            and output.get("type") == "summary_written"
+            and isinstance(output.get("path"), str)
+            and str(output.get("path")).strip()
+        ),
+        None,
+    )
+    next_stage_hint = None
+    subtask_list = list(task_doc.get("subtasks", []))
+    base_subtask_id = str(base_subtask.get("id", "main"))
+    for index, task_subtask in enumerate(subtask_list):
+        if str(task_subtask.get("id", "main")) != base_subtask_id:
+            continue
+        if index + 1 < len(subtask_list):
+            next_subtask = subtask_list[index + 1]
+            next_stage_hint = str(
+                next_subtask.get(
+                    "title",
+                    f"{task_key}.{next_subtask.get('id', 'main')}",
+                )
+            )
+        break
     if version.node_kind in {"epic", "phase", "plan"}:
         prompt_text = _wrap_parent_workflow_subtask_prompt(
             version=version,
@@ -2116,6 +2256,8 @@ def _compiled_subtask_definition_from_base(
             subtask_type=str(base_subtask.get("type", "run_prompt")),
             prompt_text=prompt_text,
             command_text=command_text,
+            summary_output_path=summary_output_path,
+            next_stage_hint=next_stage_hint,
         )
     return {
         "source_subtask_key": f"{task_key}.{base_subtask.get('id', 'main')}",
@@ -2128,7 +2270,7 @@ def _compiled_subtask_definition_from_base(
         "retry_policy_json": {
             "max_retries": int(base_subtask.get("retry_policy", {}).get("max_attempts", default_retry_limit)),
             "checks": list(base_subtask.get("checks", [])),
-            "outputs": list(base_subtask.get("outputs", [])),
+            "outputs": rendered_outputs,
             "on_failure": base_subtask.get("on_failure"),
         },
         "block_on_user_flag": None if base_subtask.get("block_on_user_flag") is None else str(base_subtask.get("block_on_user_flag")),
@@ -2601,6 +2743,8 @@ def _require_selector(session: Session, logical_node_id: UUID) -> LogicalNodeCur
 
 
 def _ensure_no_live_run(session: Session, logical_node_id: UUID) -> None:
+    active_run_statuses = {"PENDING", "RUNNING", "PAUSED"}
+    active_lifecycle_states = {"RUNNING", "PAUSED_FOR_USER"}
     lifecycle = session.get(NodeLifecycleState, str(logical_node_id))
     daemon_state = session.get(DaemonNodeState, str(logical_node_id))
     selector = session.get(LogicalNodeCurrentVersion, logical_node_id)
@@ -2609,9 +2753,15 @@ def _ensure_no_live_run(session: Session, logical_node_id: UUID) -> None:
         lifecycle = None
     if daemon_state is not None and target_version_id is not None and daemon_state.node_version_id not in {None, target_version_id}:
         daemon_state = None
-    if lifecycle is not None and lifecycle.current_run_id is not None:
+    if lifecycle is not None and (
+        lifecycle.current_run_id is not None
+        or lifecycle.run_status in active_run_statuses
+        or lifecycle.lifecycle_state in active_lifecycle_states
+    ):
         raise DaemonConflictError("cannot compile a node with an active lifecycle run")
-    if daemon_state is not None and daemon_state.current_run_id is not None:
+    if daemon_state is not None and (
+        daemon_state.current_run_id is not None or daemon_state.lifecycle_state in active_lifecycle_states
+    ):
         raise DaemonConflictError("cannot compile a node with an active daemon run")
 
 
@@ -2638,6 +2788,28 @@ def _humanize(value: str) -> str:
     return value.replace("_", " ").strip().title()
 
 
+_INHERITED_REQUEST_SECTION_RE = re.compile(
+    r"(?m)^\s*(Parent [A-Za-z]+ Request:|Child Acceptance Criteria:)\s*$"
+)
+
+
+def _effective_node_prompt_text(
+    *,
+    version: NodeVersion,
+    task_key: str,
+    source_subtask_key: str | None = None,
+) -> str:
+    prompt_text = version.prompt.strip()
+    if (
+        task_key == "generate_child_layout"
+        and version.node_kind in {"phase", "plan"}
+    ):
+        match = _INHERITED_REQUEST_SECTION_RE.search(prompt_text)
+        if match is not None:
+            return prompt_text[: match.start()].rstrip()
+    return prompt_text
+
+
 def _render_prompt(
     *,
     render_result,
@@ -2646,6 +2818,7 @@ def _render_prompt(
     task_doc: dict[str, object],
     prompt_relative_path: str,
     prompt_pack: str,
+    source_subtask_key: str | None = None,
 ) -> str:
     return (
         f"Template Path: prompts/{prompt_relative_path}\n"
@@ -2655,7 +2828,7 @@ def _render_prompt(
         f"Node Kind: {version.node_kind}\n"
         f"Node Version: {version.version_number}\n"
         f"Task Key: {task_key}\n\n"
-        f"Node Prompt:\n{version.prompt.strip()}\n\n"
+        f"Node Prompt:\n{_effective_node_prompt_text(version=version, task_key=task_key, source_subtask_key=source_subtask_key)}\n\n"
         f"Task Definition:\n{yaml.safe_dump(task_doc, sort_keys=False).strip()}\n"
     )
 
@@ -2669,9 +2842,22 @@ def _wrap_parent_workflow_subtask_prompt(
     subtask_type: str,
     prompt_text: str | None,
     command_text: str | None,
+    summary_output_path: str | None = None,
+    next_stage_hint: str | None = None,
 ) -> str:
     prompt_command = current_stage_prompt_cli_command(logical_node_id=version.logical_node_id)
     body = "" if prompt_text is None else prompt_text.strip()
+    summary_path = summary_output_path or "summaries/parent_subtask.md"
+    if summary_output_path is None and subtask_type == "build_context":
+        summary_path = "summaries/context.md"
+    if summary_output_path is None and subtask_type == "wait_for_children":
+        summary_path = "summaries/child_rollup.md"
+    next_stage_line = ""
+    if isinstance(next_stage_hint, str) and next_stage_hint.strip():
+        next_stage_line = (
+            "   - after success, expect the daemon to route this run into the next stage: "
+            f"`{next_stage_hint.strip()}`\n"
+        )
     if command_text is not None:
         command_block = (
             "Execute this command for the current subtask after starting the attempt and inspecting context:\n"
@@ -2680,43 +2866,132 @@ def _wrap_parent_workflow_subtask_prompt(
         body = f"{body}\n\n{command_block}".strip() if body else command_block
     success_block = (
         "5. On success:\n"
-        "   - write a concise summary to `summaries/parent_subtask.md`\n"
-        f"   - record success and let the daemon route the workflow with `python3 -m aicoding.cli.main subtask succeed --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/summaries/parent_subtask.md`\n"
+        f"   - write a concise summary to `{summary_path}`\n"
+        "   - after writing the summary, your next response must be an `exec_command` tool call for the exact `subtask succeed` shell command rather than prose\n"
+        f"   - record success and let the daemon route the workflow with `python3 -m aicoding.cli.main subtask succeed --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/{summary_path}`\n"
     )
     continuation_block = (
         "7. After a successful completion, do not stop while the parent node still has pending workflow stages.\n"
         "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
-        f"   - if the routed outcome is `next_stage`, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
+        f"{next_stage_line}"
+        "   - if the routed outcome is `next_stage`, continue from the daemon-injected next-stage prompt in this same session\n"
+        f"   - only fall back to `{prompt_command}` if the injected next-stage prompt is missing and you need to recover the current stage manually\n"
         "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
     )
+    if subtask_type == "build_context":
+        body = (
+            f"{body}\n\n"
+            "Context-building completion contract:\n"
+            "- gather only the minimum repository and workflow context needed for this stage, then stop exploring\n"
+            f"- write the durable context summary to `{summary_path}` before trying to move on\n"
+            "- after that summary exists, submit `subtask succeed` immediately instead of re-reading `subtask prompt`\n"
+        ).strip()
+    if source_subtask_key == "wait_for_children.collect_child_summaries":
+        body = (
+            f"{body}\n\n"
+            "Child-summary rollup contract:\n"
+            f"- inspect `python3 -m aicoding.cli.main tree show --node {version.logical_node_id} --full` once to gather the final direct-child states and summary paths\n"
+            "- do not poll with `sleep`, repeated waits, or repeated tree reads unless the daemon has routed you back into the earlier child-wait stage\n"
+            "- do not wait for another child-materialization event here; this stage exists after child completion routing has already advanced\n"
+            f"- write the child rollup summary to `{summary_path}` using the completed child outputs that already exist\n"
+            f"- after `{summary_path}` exists, submit `subtask succeed` immediately\n"
+        ).strip()
+    if subtask_type == "write_summary":
+        body = (
+            f"{body}\n\n"
+            "Summary completion contract:\n"
+            f"- create the exact missing output file required for this stage at `{summary_path}`\n"
+            "- after the required summary exists, submit `subtask succeed` immediately instead of reloading prompt/context again\n"
+        ).strip()
+    if subtask_type == "wait_for_children":
+        body = (
+            f"{body}\n\n"
+            "Child-completion contract:\n"
+            f"- use `python3 -m aicoding.cli.main tree show --node {version.logical_node_id} --full` to inspect the current child states\n"
+            "- do not submit `subtask succeed` until every direct child shows `lifecycle_state: COMPLETE`\n"
+            "- if any child is still `READY`, `RUNNING`, `WAITING_ON_CHILDREN`, `WAITING_ON_SIBLING_DEPENDENCY`, `RECTIFYING_SELF`, `RECTIFYING_UPSTREAM`, `REVIEW_PENDING`, `VALIDATION_PENDING`, or `TESTING_PENDING`, keep waiting and re-check instead of finishing this stage\n"
+            "- if any direct child is `PAUSED_FOR_USER`, `FAILED`, `FAILED_TO_PARENT`, `CANCELLED`, or otherwise terminal without being `COMPLETE`, write `summaries/parent_subtask_failure.md` and fail this stage instead of waiting forever\n"
+            f"- once every direct child is complete, write the child rollup summary to `{summary_path}` and only then submit `subtask succeed`\n"
+        ).strip()
+        success_block = (
+            "5. On success:\n"
+            f"   - first verify with `python3 -m aicoding.cli.main tree show --node {version.logical_node_id} --full` that every direct child is `COMPLETE`\n"
+            f"   - write a concise child rollup summary to `{summary_path}`\n"
+            "   - after writing that summary, your next response must be an `exec_command` tool call for the exact `subtask succeed` shell command rather than prose\n"
+            f"   - record success with `python3 -m aicoding.cli.main subtask succeed --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/{summary_path}`\n"
+            "6. If any direct child finished terminally without reaching `COMPLETE`:\n"
+            "   - write a bounded failure summary to `summaries/parent_subtask_failure.md`\n"
+            "   - after writing that failure summary, your next response must be an `exec_command` tool call for the exact `subtask fail` shell command rather than prose\n"
+            f"   - fail this stage with `python3 -m aicoding.cli.main subtask fail --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --summary-file $(pwd)/summaries/parent_subtask_failure.md`\n"
+        )
+        continuation_block = (
+            "7. After child completion is confirmed, do not stop while the parent node still has pending workflow stages.\n"
+            "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
+            f"{next_stage_line}"
+            "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
+        )
     if command_text is not None:
         success_block = (
             "5. On command completion:\n"
             "   - write `summaries/command_result.json` containing at least the real exit code\n"
             "   - if the command failed, write a bounded failure summary to `summaries/parent_subtask_failure.md`\n"
+            "   - after writing the command result, your next response must be an `exec_command` tool call for the exact `subtask report-command` shell command rather than prose\n"
             f"   - report the command result and let the daemon route the workflow with `python3 -m aicoding.cli.main subtask report-command --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID --result-file $(pwd)/summaries/command_result.json --failure-summary-file $(pwd)/summaries/parent_subtask_failure.md`\n"
         )
         continuation_block = (
             "7. After reporting the command result, do not stop while the parent node still has pending workflow stages.\n"
             "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
-            f"   - if the routed outcome is `next_stage`, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
+            f"{next_stage_line}"
+            "   - if the routed outcome is `next_stage`, continue from the daemon-injected next-stage prompt in this same session\n"
+            f"   - only fall back to `{prompt_command}` if the injected next-stage prompt is missing and you need to recover the current stage manually\n"
             "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
         )
     if subtask_type == "review":
         success_block = (
             "5. On success:\n"
+            f"   - inspect `layouts/generated/{version.logical_node_id}.yaml` directly and keep the review bounded to that file plus the current subtask context unless a concrete defect forces broader checking\n"
+            "   - do not branch into unrelated repo exploration, broad codebase summaries, or documentation work during this review stage\n"
+            "   - if the generated layout is coherent and no concrete defect is found, default to the pass command below immediately\n"
             "   - decide whether the layout passes, needs revision, or fails\n"
             "   - optionally write structured findings to `reviews/findings.json`\n"
             "   - optionally write structured criteria results to `reviews/criteria.json`\n"
+            "   - when you submit the review command, your next response must be an `exec_command` tool call for that exact shell command rather than prose\n"
+            "   - do not ask the operator to run `/review` or any other interactive slash command for you\n"
+            "   - do not stop at prose feedback alone; you must submit the review through the daemon-backed CLI command yourself\n"
             f"   - submit the review with `python3 -m aicoding.cli.main review run --node {version.logical_node_id} --status pass --summary \"Approved the parent layout review.\"`\n"
             "   - if the review should revise or fail, change `--status pass` to `--status revise` or `--status fail` and use a bounded summary instead\n"
             "   - do not call `subtask complete` or `workflow advance` after `review run`; that command records and routes the review outcome itself\n"
         )
         continuation_block = (
             "7. After a successful review submission, do not stop while the parent node still has pending workflow stages.\n"
-            f"   - run `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}`\n"
-            f"   - if the node still has a current compiled subtask, fetch the next prompt with `{prompt_command}` and continue in the same session\n"
+            "   - do not idle after `review run`; the next stage is expected to continue in the same tmux session when the run stays active\n"
+            f"{next_stage_line}"
+            "   - if the routed outcome is `next_stage`, continue from the daemon-injected next-stage prompt in this same session\n"
+            f"   - only fall back to `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}` and `{prompt_command}` if the injected next-stage prompt is missing and you need to recover the current stage manually\n"
             f"   - repeat until `python3 -m aicoding.cli.main node child-materialization --node {version.logical_node_id}` shows created or materialized children, or the node run is no longer active\n\n"
+        )
+    if subtask_type == "spawn_child_node":
+        body = (
+            f"{body}\n\n"
+            "This stage does not complete from inspection alone.\n"
+            "- when you run the materialization step, your next response must be an `exec_command` tool call for the exact shell command rather than prose\n"
+            f"- you must actually run `python3 -m aicoding.cli.main node materialize-children --node {version.logical_node_id}` in the shell\n"
+            f"- after the command exits, immediately verify the result with `python3 -m aicoding.cli.main node child-materialization --node {version.logical_node_id}`\n"
+            "- do not stop after reading the prompt, checking the tree, or restating intent; the runtime-created descendants do not exist until the materialization command succeeds\n"
+            "- `node materialize-children` records the materialization result and routes this workflow stage itself when the active subtask is `spawn_child_node`"
+        ).strip()
+        success_block = (
+            "5. On command completion:\n"
+            f"   - verify the result with `python3 -m aicoding.cli.main node child-materialization --node {version.logical_node_id}`\n"
+            "   - `node materialize-children` writes the command result and routes this stage for you; do not follow it with a separate `subtask report-command`\n"
+        )
+        continuation_block = (
+            "7. After child materialization succeeds, do not stop while the parent node still has pending workflow stages.\n"
+            "   - follow the routed daemon outcome instead of manually chaining low-level commands\n"
+            f"{next_stage_line}"
+            "   - if the routed outcome is `next_stage`, continue from the daemon-injected next-stage prompt in this same session\n"
+            f"   - only fall back to `{prompt_command}` if the injected next-stage prompt is missing and you need to recover the current stage manually\n"
+            "   - if the routed outcome is `completed`, stop and do not probe the closed run with additional low-level workflow commands\n\n"
         )
     return (
         f"You are executing parent workflow node `{version.logical_node_id}`.\n"
@@ -2725,9 +3000,14 @@ def _wrap_parent_workflow_subtask_prompt(
         f"Current subtask title: `{title}`\n"
         f"Current subtask type: `{subtask_type}`\n\n"
         "Required CLI workflow:\n"
-        f"1. Resolve the live compiled subtask UUID with `python3 -m aicoding.cli.main subtask current --node {version.logical_node_id}`.\n"
+        "0. Run the daemon CLI commands below directly in the foreground, one at a time.\n"
+        "   - do not leave `subtask start`, `subtask context`, `node register-layout`, `review run`, or `node materialize-children` running in a background terminal job\n"
+        "   - do not chain daemon CLI commands with `&&`, `;`, `||`, pipes, subshells, or multi-command shell snippets; each daemon CLI command must be its own standalone `exec_command` tool call\n"
+        "   - these commands are expected to finish promptly and the workflow must continue immediately after each result\n"
+        "1. Use the current compiled subtask UUID from this prompt: `CURRENT_COMPILED_SUBTASK_ID`.\n"
         f"2. Start the attempt with `python3 -m aicoding.cli.main subtask start --node {version.logical_node_id} --compiled-subtask CURRENT_COMPILED_SUBTASK_ID`.\n"
-        f"3. Inspect the current context with `python3 -m aicoding.cli.main subtask context --node {version.logical_node_id}`.\n"
+        f"3. If you still need more current stage data, inspect it once with `python3 -m aicoding.cli.main subtask context --node {version.logical_node_id}`.\n"
+        "   - if that extra context read is unavailable or times out, continue with the prompt and compiled context already in this session instead of blocking the workflow\n"
         "4. Execute the current subtask instructions below.\n"
         f"{success_block}"
         "6. If blocked:\n"
@@ -2761,7 +3041,7 @@ def _render_hook_prompt(
         f"Node Version: {version.version_number}\n"
         f"Task Key: {task_key}\n"
         f"Hook Subtask Key: {hook_step.source_subtask_key}\n\n"
-        f"Node Prompt:\n{version.prompt.strip()}\n\n"
+        f"Node Prompt:\n{_effective_node_prompt_text(version=version, task_key=task_key, source_subtask_key=hook_step.source_subtask_key)}\n\n"
         f"Task Definition:\n{yaml.safe_dump(task_doc, sort_keys=False).strip()}\n"
     )
 
@@ -2811,6 +3091,11 @@ def _build_subtask_render_context(
     hook_step: HookExpansionStep | None = None,
 ) -> RenderContext:
     task_yaml = yaml.safe_dump(task_doc, sort_keys=False).strip()
+    effective_prompt = _effective_node_prompt_text(
+        version=version,
+        task_key=task_key,
+        source_subtask_key=source_subtask_key,
+    )
     scopes: dict[str, dict[str, object]] = {
         "node": {
             "id": str(version.logical_node_id),
@@ -2819,7 +3104,7 @@ def _build_subtask_render_context(
             "kind": version.node_kind,
             "tier": version.tier,
             "title": version.title,
-            "prompt": version.prompt.strip(),
+            "prompt": effective_prompt,
             "version_number": version.version_number,
         },
         "task": {
@@ -2846,8 +3131,8 @@ def _build_subtask_render_context(
             "node_kind": version.node_kind,
             "node_tier": version.tier,
             "node_title": version.title,
-            "node_prompt": version.prompt.strip(),
-            "user_request": version.prompt.strip(),
+            "node_prompt": effective_prompt,
+            "user_request": effective_prompt,
             "acceptance_criteria": "" if version.description is None else version.description.strip(),
             "node_version": version.version_number,
             "task_key": task_key,
@@ -2955,7 +3240,6 @@ def _ensure_no_illegal_render_targets(
         "args": subtask_definition.get("args"),
         "env": subtask_definition.get("env"),
         "checks": subtask_definition.get("checks"),
-        "outputs": subtask_definition.get("outputs"),
         "retry_policy": subtask_definition.get("retry_policy"),
     }
     for field_name, value in illegal_fields.items():
@@ -2965,7 +3249,7 @@ def _ensure_no_illegal_render_targets(
                 failure_class="illegal_render_target",
                 summary=(
                     f"render variables are not supported in {task_key}.{source_subtask_key}.{field_name}; "
-                    "only prompt, command, and pause_summary_prompt are renderable in this phase"
+                    "only prompt, command, pause_summary_prompt, and outputs are renderable in this phase"
                 ),
                 details_json={
                     "task_key": task_key,
@@ -2975,3 +3259,35 @@ def _ensure_no_illegal_render_targets(
                 target_family="subtask_definition",
                 target_id=f"{task_key}.{source_subtask_key}.{field_name}",
             )
+
+
+def _render_subtask_outputs(
+    *,
+    outputs: list[object],
+    context: dict[str, object],
+    task_key: str,
+    source_subtask_key: str,
+) -> list[dict[str, object]]:
+    rendered: list[dict[str, object]] = []
+    for index, item in enumerate(outputs):
+        if not isinstance(item, dict):
+            continue
+        output = dict(item)
+        if isinstance(output.get("path"), str):
+            path_render = _render_optional_text(
+                value=output.get("path"),
+                context=context,
+                field_name=f"{task_key}.{source_subtask_key}.outputs[{index}].path",
+            )
+            if path_render is not None:
+                output["path"] = path_render.rendered_text
+        if isinstance(output.get("value"), str):
+            value_render = _render_optional_text(
+                value=output.get("value"),
+                context=context,
+                field_name=f"{task_key}.{source_subtask_key}.outputs[{index}].value",
+            )
+            if value_render is not None:
+                output["value"] = value_render.rendered_text
+        rendered.append(output)
+    return rendered

@@ -59,6 +59,7 @@ Implementation staging note:
 - current node creation and supersede flows capture source lineage immediately
 - immutable workflow creation now occurs on the explicit compile path rather than automatically at node/version creation time
 - the current top-level startup surface now bridges those steps explicitly: `workflow start` creates the node at `DRAFT`, compiles it, transitions it to `READY`, and optionally admits the first run immediately
+- the current daemon-owned admission path also bridges `COMPILED -> READY` for an already compiled node when `node run start` is requested and `lifecycle_not_ready` is the only remaining admission blocker
 
 ### Node version
 
@@ -324,6 +325,7 @@ Recommended high-level transitions:
 - some of these may be represented as current-state fields and not separate workflow engine states, but the lifecycle model must still support the semantics
 - `VALIDATION_PENDING`, `REVIEW_PENDING`, and `TESTING_PENDING` may be entered explicitly or treated as visible subtask-owned phases depending on implementation
 - dependency-invalidated sibling restart is an explicit reason a node may move back into `WAITING_ON_SIBLING_DEPENDENCY` after it had already reached `READY`, `COMPLETE`, or `FAILED_TO_PARENT`; that reset must not make the fresh dependent version runnable again until prerequisite sibling merge, refresh, and rematerialization conditions clear
+- `node run start` must not require a separate synthetic lifecycle mutation when a node is already compiled and otherwise runnable; the daemon should bridge `COMPILED -> READY` itself before admission in that narrow case
 
 ---
 

@@ -149,6 +149,31 @@ def test_start_complete_and_advance_workflow(db_session_factory, migrated_public
     assert advanced.run.run_status in {"RUNNING", "COMPLETE"}
 
 
+def test_advance_workflow_clears_idle_nudge_pause_after_success(db_session_factory, migrated_public_schema) -> None:
+    node, admission, progress = _create_started_run(db_session_factory)
+    current_subtask_id = progress.state.current_compiled_subtask_id
+
+    start_subtask_attempt(db_session_factory, logical_node_id=node.node_id, compiled_subtask_id=current_subtask_id)
+    complete_current_subtask(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        summary="done",
+    )
+    sync_paused_run(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        pause_flag_name="idle_nudge_limit_exceeded",
+    )
+
+    advanced = advance_workflow(db_session_factory, logical_node_id=node.node_id)
+
+    assert admission.status == "admitted"
+    assert advanced.run.run_status in {"RUNNING", "COMPLETE"}
+    assert advanced.state.pause_flag_name is None
+    assert advanced.state.lifecycle_state in {"RUNNING", "COMPLETE"}
+
+
 def test_subtask_succeed_registers_summary_and_routes_ordinary_execution_stage(monkeypatch) -> None:
     node_id = uuid4()
     run_id = uuid4()
@@ -246,6 +271,89 @@ def test_subtask_succeed_rejects_command_stages(monkeypatch) -> None:
             compiled_subtask_id=compiled_subtask_id,
             summary_path="summaries/implementation.md",
             content="done",
+            catalog=load_resource_catalog(),
+        )
+
+
+def test_subtask_succeed_allows_exact_replay_of_just_completed_stage_without_duplicate_summary(
+    db_session_factory, migrated_public_schema
+) -> None:
+    node, _, progress = _create_started_run(db_session_factory)
+    current_subtask_id = progress.state.current_compiled_subtask_id
+    assert current_subtask_id is not None
+
+    start_subtask_attempt(db_session_factory, logical_node_id=node.node_id, compiled_subtask_id=current_subtask_id)
+    first = succeed_current_subtask(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        summary_path="summaries/layout_generation.md",
+        content="Generated and registered the layout.",
+        catalog=load_resource_catalog(),
+    )
+    summaries_after_first = list_summary_history(db_session_factory, logical_node_id=node.node_id)
+
+    replay = succeed_current_subtask(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        summary_path="summaries/layout_generation.md",
+        content="Generated and registered the layout.",
+        catalog=load_resource_catalog(),
+    )
+    summaries_after_replay = list_summary_history(db_session_factory, logical_node_id=node.node_id)
+
+    assert first.outcome == "next_stage"
+    assert replay.outcome == "next_stage"
+    assert replay.accepted_compiled_subtask_id == current_subtask_id
+    assert len(summaries_after_first.summaries) == 1
+    assert len(summaries_after_replay.summaries) == 1
+    assert summaries_after_replay.summaries[0].id == summaries_after_first.summaries[0].id
+
+
+def test_subtask_succeed_rejects_wait_for_children_until_all_children_are_complete(monkeypatch) -> None:
+    node_id = uuid4()
+    compiled_subtask_id = uuid4()
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text=None, subtask_type="wait_for_children")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=uuid4()),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._wait_for_children_incomplete_states",
+        lambda session, logical_node_id: [
+            {
+                "node_id": str(uuid4()),
+                "title": "Child Plan",
+                "kind": "plan",
+                "lifecycle_state": "RUNNING",
+                "run_status": "RUNNING",
+            }
+        ],
+    )
+
+    with pytest.raises(DaemonConflictError, match="wait_for_children cannot complete before all materialized children are COMPLETE"):
+        succeed_current_subtask(
+            object(),
+            logical_node_id=node_id,
+            compiled_subtask_id=compiled_subtask_id,
+            summary_path="summaries/child_rollup.md",
+            content="waiting",
             catalog=load_resource_catalog(),
         )
 
@@ -362,6 +470,60 @@ def test_report_command_subtask_fails_ordinary_command_on_nonzero_exit(monkeypat
     assert outcome.outcome == "failed"
     assert captured["fail_kwargs"]["summary"] == "command failed"
     assert captured["fail_kwargs"]["execution_result_json"] == {"exit_code": 17, "stderr": "boom"}
+
+
+def test_report_command_subtask_fails_ordinary_command_on_zero_exit_when_failure_summary_present(monkeypatch) -> None:
+    node_id = uuid4()
+    run_id = uuid4()
+    compiled_subtask_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def get(self, model, object_id):
+            if object_id == compiled_subtask_id:
+                return SimpleNamespace(command_text="python3 -m aicoding.cli.main node materialize-children --node fake", subtask_type="spawn_child_node")
+            return None
+
+    @contextmanager
+    def _fake_query_scope(_factory):
+        yield _FakeSession()
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.query_session_scope", _fake_query_scope)
+    monkeypatch.setattr(
+        "aicoding.daemon.run_orchestration._load_active_run_bundle",
+        lambda session, logical_node_id: (
+            SimpleNamespace(id=run_id),
+            SimpleNamespace(current_compiled_subtask_id=compiled_subtask_id),
+            SimpleNamespace(logical_node_id=node_id),
+        ),
+    )
+
+    def _fake_fail(*args, **kwargs):
+        captured["fail_kwargs"] = kwargs
+        return SimpleNamespace(
+            run=SimpleNamespace(run_status="FAILED"),
+            state=SimpleNamespace(lifecycle_state="FAILED_TO_PARENT"),
+            latest_attempt=SimpleNamespace(status="FAILED", summary=kwargs["summary"]),
+        )
+
+    monkeypatch.setattr("aicoding.daemon.run_orchestration.fail_current_subtask", _fake_fail)
+
+    outcome = report_command_subtask(
+        object(),
+        logical_node_id=node_id,
+        compiled_subtask_id=compiled_subtask_id,
+        execution_result_json={"exit_code": 0, "status": "already_materialized"},
+        failure_summary="Materialization verified the wrong already-materialized children.",
+        catalog=load_resource_catalog(),
+    )
+
+    assert outcome.node_id == node_id
+    assert outcome.node_run_id == run_id
+    assert outcome.accepted_compiled_subtask_id == compiled_subtask_id
+    assert outcome.accepted_subtask_type == "spawn_child_node"
+    assert outcome.outcome == "failed"
+    assert captured["fail_kwargs"]["summary"] == "Materialization verified the wrong already-materialized children."
+    assert captured["fail_kwargs"]["execution_result_json"] == {"exit_code": 0, "status": "already_materialized"}
 
 
 def test_report_command_subtask_routes_validation_stage_even_on_nonzero_exit(monkeypatch) -> None:
@@ -598,6 +760,20 @@ def test_cancel_active_run_marks_run_cancelled(db_session_factory, migrated_publ
     assert cancelled.state.execution_cursor_json["cancellation"]["summary"] == "Run cancelled by operator request."
 
 
+def test_cancel_active_run_cleans_up_primary_session_when_adapter_is_provided(db_session_factory, migrated_public_schema) -> None:
+    node, _, _ = _create_started_run(db_session_factory)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=lambda: adapter.now())
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    session_name = bound.tmux_session_name
+    assert session_name is not None
+
+    cancelled = cancel_active_run(db_session_factory, logical_node_id=node.node_id, adapter=adapter)
+
+    assert cancelled.run.run_status == "CANCELLED"
+    assert adapter.session_exists(session_name) is False
+
+
 def test_list_node_runs_returns_started_run(db_session_factory, migrated_public_schema) -> None:
     node, admission, progress = _create_started_run(db_session_factory)
 
@@ -636,6 +812,9 @@ def test_subtask_prompt_context_heartbeat_and_summary_registration(db_session_fa
     assert prompt_before.stage_context_json["startup"]["node_id"] == str(node.node_id)
     assert prompt_before.stage_context_json["startup"]["trigger_reason"] == "manual_start"
     assert prompt_before.stage_context_json["stage"]["compiled_subtask_id"] == str(current_subtask_id)
+    prompt_content = prompt_before.prompt_text or prompt_before.command_text or ""
+    assert "CURRENT_COMPILED_SUBTASK_ID" not in prompt_content
+    assert f"--compiled-subtask {current_subtask_id}" in prompt_content
     assert context_before.compiled_subtask_id == current_subtask_id
     assert context_before.input_context_json["compiled_subtask_id"] == str(current_subtask_id)
     assert context_before.stage_context_json["startup"]["node_prompt"] == "boot prompt"
@@ -660,6 +839,86 @@ def test_subtask_prompt_context_heartbeat_and_summary_registration(db_session_fa
     assert summary_record.summary_scope == "subtask_attempt"
     assert summary_record.summary_path == str(tmp_path / "summary.md")
     assert summary_record.content == "summary body"
+
+
+def test_succeed_current_subtask_routes_next_stage_with_resolved_compiled_subtask_id(
+    db_session_factory,
+    migrated_public_schema,
+    tmp_path,
+) -> None:
+    node, _, progress = _create_started_run(db_session_factory)
+    current_subtask_id = progress.state.current_compiled_subtask_id
+    assert current_subtask_id is not None
+
+    start_subtask_attempt(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+    )
+    result = succeed_current_subtask(
+        db_session_factory,
+        logical_node_id=node.node_id,
+        compiled_subtask_id=current_subtask_id,
+        summary_path=str(tmp_path / "layout_generation.md"),
+        content="Registered the generated layout.",
+    )
+
+    next_stage = result.progress.current_subtask
+    assert next_stage is not None
+    next_prompt = next_stage.get("prompt_text") or next_stage.get("command_text") or ""
+    assert "CURRENT_COMPILED_SUBTASK_ID" not in next_prompt
+    assert f"--compiled-subtask {next_stage['id']}" in next_prompt
+
+
+def test_subtask_context_sanitizes_inherited_request_sections_for_descendant_layout_generation(
+    db_session_factory,
+    migrated_public_schema,
+) -> None:
+    catalog = load_resource_catalog()
+    registry = load_hierarchy_registry(catalog)
+    sync_hierarchy_definitions(db_session_factory, registry)
+    epic = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="epic",
+        title="Parent Epic",
+        prompt="Create exactly two real phase siblings with a blocked second lane.",
+    )
+    seed_node_lifecycle(db_session_factory, node_id=str(epic.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=epic.node_id)
+    phase = create_hierarchy_node(
+        db_session_factory,
+        registry,
+        kind="phase",
+        title="Fix Cat Clone Test Failures",
+        prompt="\n".join(
+            [
+                "Update src/cat_clone.py so python3 -m pytest -q tests/test_cat_clone.py passes in the existing cat_clone workspace.",
+                "",
+                "Parent Epic Request:",
+                "Create exactly two real phase siblings with a blocked second lane.",
+                "",
+                "Child Acceptance Criteria:",
+                "- Running python3 -m pytest -q tests/test_cat_clone.py completes successfully.",
+            ]
+        ),
+        parent_node_id=epic.node_id,
+    )
+    seed_node_lifecycle(db_session_factory, node_id=str(phase.node_id), initial_state="DRAFT")
+    initialize_node_version(db_session_factory, logical_node_id=phase.node_id)
+    compile_node_workflow(db_session_factory, logical_node_id=phase.node_id, catalog=catalog)
+    transition_node_lifecycle(db_session_factory, node_id=str(phase.node_id), target_state="READY")
+
+    from aicoding.daemon.admission import admit_node_run
+
+    admit_node_run(db_session_factory, node_id=phase.node_id)
+
+    context = load_current_subtask_context(db_session_factory, logical_node_id=phase.node_id)
+
+    assert context.stage_context_json["stage"]["source_subtask_key"].startswith("generate_child_layout.")
+    assert context.stage_context_json["startup"]["node_prompt"] == (
+        "Update src/cat_clone.py so python3 -m pytest -q tests/test_cat_clone.py passes in the existing cat_clone workspace."
+    )
 
 
 def test_subtask_context_includes_dependency_and_child_summary_context(db_session_factory, migrated_public_schema) -> None:

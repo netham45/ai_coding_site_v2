@@ -85,8 +85,12 @@ def test_flow_11_finalize_and_merge_runs_against_real_daemon_real_cli_and_real_g
     assert child_create.exit_code == 0, child_create.stderr
     child_id = str(child_create.json()["node_id"])
 
+    child_compile = real_daemon_harness.cli("workflow", "compile", "--node", child_id)
+    assert child_compile.exit_code == 0, child_compile.stderr
+    assert child_compile.json()["status"] == "compiled", child_compile.stdout
     child_start = real_daemon_harness.cli("node", "run", "start", "--node", child_id)
     assert child_start.exit_code == 0, child_start.stderr
+    assert child_start.json()["status"] == "admitted", child_start.stdout
     child_bind = real_daemon_harness.cli("session", "bind", "--node", child_id)
     assert child_bind.exit_code == 0, child_bind.stderr
     child_session_name = str(child_bind.json()["session_name"])
@@ -196,7 +200,9 @@ def test_flow_11_finalize_and_merge_runs_against_real_daemon_real_cli_and_real_g
     assert child_results_payload["children"]
     assert child_results_payload["children"][0]["child_node_id"] == child_id
     assert child_results_payload["children"][0]["final_commit_sha"] == child_final_payload["final_commit_sha"]
-    assert reconcile_payload["status"] == "ready_for_reconcile"
+    assert reconcile_payload["status"] == "blocked"
+    assert "child not incrementally merged" in reconcile_payload["child_results"]["children"][0]["blocking_reasons"]
+    assert any(reason.endswith("is waiting") for reason in reconcile_payload["blocking_reasons"])
     assert merge_payload["status"] == "merged"
     assert merge_payload["merge_events"]
     assert merge_payload["merge_events"][0]["child_final_commit_sha"] == child_final_payload["final_commit_sha"]

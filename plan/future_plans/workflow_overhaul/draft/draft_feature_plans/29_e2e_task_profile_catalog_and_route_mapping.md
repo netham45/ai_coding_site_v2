@@ -14,7 +14,7 @@ Turn the E2E task-profile catalog into explicit executable work for task-profile
 
 - define the authoritative catalog shape for E2E-oriented task profiles and their intended role in the workflow-profile family
 - map each E2E task-profile family member to the route plans and proving slices that are expected to cover it
-- align startup, inspection, and prompt expectations for E2E task profiles with the broader workflow-profile runtime contract
+- align startup, inspection, prompt, and template-generation expectations for E2E task profiles with the broader workflow-profile runtime contract
 - document residual open questions for E2E profile granularity so later implementation does not improvise the catalog
 
 ## Main Dependencies

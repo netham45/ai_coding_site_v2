@@ -8,6 +8,7 @@ Turn source YAML, overrides, hooks, and policy into an immutable compiled workfl
 
 - workflow compilation during creation
 - recompile after layout, policy, or override changes
+- inspect and reject recompile attempts while an authoritative run is still active
 - compile-failure inspection and retry
 
 ## Entry conditions
@@ -64,6 +65,12 @@ Turn source YAML, overrides, hooks, and policy into an immutable compiled workfl
 - hook insertion conflicts
 - missing referenced task or subtask definitions
 - unresolved source role ambiguity
+- recompile requested while the node still has an active authoritative run
+
+## Active-run legality
+
+- authoritative recompile must be rejected whenever the authoritative lifecycle or daemon state still indicates an active run
+- the rejection must not erase or hide the currently inspectable workflow and source-discovery surfaces for that authoritative version
 
 ## Completion rule
 

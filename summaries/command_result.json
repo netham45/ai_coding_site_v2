@@ -1,0 +1,8 @@
+{
+  "exit_code": 0,
+  "status": "created",
+  "created_count": 2,
+  "ready_child_count": 1,
+  "blocked_child_count": 1,
+  "verified_command": "python3 -m aicoding.cli.main node child-materialization --node f8ce2021-f899-413c-9c74-7ac7b256ae91"
+}

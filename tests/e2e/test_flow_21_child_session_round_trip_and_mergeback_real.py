@@ -74,8 +74,9 @@ def test_flow_21_child_session_round_trip_and_mergeback_requires_live_child_code
         pane_text = _tmux_capture(child_session_name)
 
         result_show_result = None
-        deadline = time.time() + 20.0
+        deadline = time.time() + 180.0
         while time.time() < deadline:
+            pane_text = _tmux_capture(child_session_name)
             candidate = harness.cli("session", "result", "show", "--session", child_session_id)
             if candidate.exit_code == 0:
                 result_show_result = candidate

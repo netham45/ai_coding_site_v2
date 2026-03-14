@@ -20,11 +20,13 @@ Prove the planning-oriented decomposition ladder from `epic.planning` down to pl
 - planning roles exist at each tier
 - planning-oriented child-profile mapping is preserved in compiled state
 - recommended planning descendants are runtime-visible
+- planning verification findings can materialize bounded corrective task or plan descendants and schedule follow-up reverification without silently broadening scope
 
 ## Adversarial Checks
 
 - block completion before required planning children exist
 - block merge before planning descendants finish where required
+- escalate instead of silently materializing broader corrective work when a planning finding exceeds the current node's authority boundary
 
 ## Affected Systems
 
@@ -36,4 +38,4 @@ Prove the planning-oriented decomposition ladder from `epic.planning` down to pl
 
 ## Proof Target
 
-Profile-aware planning decomposition that does not collapse into implementation-first defaults.
+Profile-aware planning decomposition that does not collapse into implementation-first defaults and supports bounded verification-driven corrective expansion.

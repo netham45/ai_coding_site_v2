@@ -4,8 +4,8 @@
 
 This repository is being built as a spec-driven orchestration system.
 
-Work in this repo must stay aligned with the design notes and authoritative note assets in `notes/`.
-Implementation is not allowed to drift away from the notes silently.
+Work in this repo must stay aligned with the design notes, authoritative note assets in `notes/`, and authoritative user-documentation assets in `docs/` when those surfaces exist.
+Implementation is not allowed to drift away from those artifacts silently.
 
 If coding reveals a limitation, contradiction, missing behavior, needed elaboration, verification gap, runtime mismatch, command inconsistency, or checklist/status mismatch, the relevant note or authoritative note asset in `notes/` must be updated as part of the same change or in an immediately adjacent follow-up change.
 
@@ -15,9 +15,9 @@ This repository does not permit undocumented behavior, undocumented verification
 
 ## Core Implementation Model
 
-Every feature must be considered across six required systems.
+Every feature must be considered across seven required systems.
 
-No feature is complete until its effect on all six systems has been considered explicitly.
+No feature is complete until its effect on all seven systems has been considered explicitly.
 
 ### 1. Database
 
@@ -141,6 +141,25 @@ Required technology:
 - React
 - Playwright
 
+### 7. User Documentation
+
+User documentation is the user-facing and operator-facing guidance surface for setup, usage, commands, troubleshooting, and supported workflows.
+
+Responsibilities include:
+
+- onboarding and setup guidance
+- user and operator workflow guides
+- reference documentation for supported commands, configuration, and interfaces
+- runbooks that real operators are expected to follow
+- published documentation routes or static documentation artifacts where applicable
+
+Boundary rules:
+
+- `notes/` are governance, planning, specification, and traceability artifacts
+- `docs/` are consumer-facing user and operator documentation artifacts
+- `notes/scenarios/` is a historical scenario-analysis and migration-pointer source unless a specific file is explicitly re-promoted into the active documentation surface
+- YAML `docs` assets define machine-readable documentation outputs; they are not the whole user-documentation system by themselves
+
 ---
 
 ## System Coverage Rule
@@ -149,7 +168,7 @@ Tests must cover all applicable systems touched by a feature, flow, or contract.
 
 It is not acceptable to test only the most convenient or fastest surface when the described behavior spans multiple systems.
 
-If the design says a behavior involves the database, CLI, daemon, website UI, YAML, or prompts, the test strategy must explicitly account for each affected system.
+If the design says a behavior involves the database, CLI, daemon, website UI, YAML, prompts, or user documentation, the test strategy must explicitly account for each affected system.
 
 Examples of invalid shortcuts include:
 
@@ -160,7 +179,7 @@ Examples of invalid shortcuts include:
 - testing only compiled structures when YAML loading or schema behavior is part of the feature
 - testing only prompt file existence when prompt/runtime contract behavior is part of the feature
 
-If one of the six systems is truly not affected, that must be a deliberate conclusion stated in the plan, checklist, note, or review context.
+If one of the seven systems is truly not affected, that must be a deliberate conclusion stated in the plan, checklist, note, or review context.
 
 A feature is not considered verified if the tests only prove the convenient fast route while leaving the real described system boundary untested.
 
@@ -496,7 +515,9 @@ Each feature checklist must track:
 - website/frontend status
 - YAML/schema status
 - prompt status
-- notes/documentation status
+- user documentation status
+- documentation surfaces affected
+- notes status
 - bounded test status
 - E2E test status
 - performance/resilience status where applicable
@@ -719,6 +740,25 @@ They must be updated whenever coding reveals:
 - a development-log process mismatch
 
 Do not leave discovered design limitations undocumented.
+
+### User Documentation Maintenance Rule
+
+The authoritative user-documentation assets in `docs/` and any explicitly transitional user/operator documentation surfaces must be updated whenever work changes:
+
+- user-visible behavior
+- operator-visible behavior
+- setup or onboarding steps
+- supported commands, flags, or examples
+- configuration or environment requirements presented to users
+- troubleshooting or runbook procedures
+- recovery behavior that operators are expected to follow
+- supported workflows, prerequisites, or limitations
+
+Task plans, feature checklists, and review context must record one of:
+
+- documentation update required
+- documentation reviewed with no change required
+- documentation not applicable
 
 If the program needs to change or the design needs to be elaborated because of implementation reality, update the relevant note or authoritative note asset or add a new one.
 
@@ -1095,18 +1135,20 @@ For every feature, implementation work should explicitly account for:
 4. website UI changes
 5. YAML changes
 6. prompt changes
-7. note updates
-8. invariants
-9. affected systems
-10. canonical verification commands
-11. bounded tests
-12. E2E tests
-13. checklist updates
-14. development log updates
-15. document consistency tests
-16. performance impact
-17. observability and auditability impact
-18. recovery and concurrency impact
+7. user-documentation changes
+8. note updates
+9. invariants
+10. affected systems
+11. canonical verification commands
+12. documentation verification commands
+13. bounded tests
+14. E2E tests
+15. checklist updates
+16. development log updates
+17. document consistency tests
+18. performance impact
+19. observability and auditability impact
+20. recovery and concurrency impact
 
 If one of those categories is truly not affected, that should be a deliberate conclusion, not an assumption.
 
@@ -1161,13 +1203,15 @@ When implementing or revising a feature, ask:
 4. What changes in the website UI?
 5. What YAML definitions or policies change?
 6. What prompts change?
-7. What notes must be updated?
-8. What invariants are being introduced, changed, or defended?
-9. Which of the six systems are actually affected?
-10. What are the canonical verification commands for this work?
-11. What bounded tests prove the behavior during implementation?
-12. What real E2E test proves the intended runtime behavior?
-13. What checklist entries and statuses must be updated?
+7. What user documentation must change?
+8. What notes must be updated?
+9. What invariants are being introduced, changed, or defended?
+10. Which of the seven systems are actually affected?
+11. What are the canonical verification commands for this work?
+12. What documentation verification commands apply?
+13. What bounded tests prove the behavior during implementation?
+14. What real E2E test proves the intended runtime behavior?
+15. What checklist entries and statuses must be updated?
 14. What development log entries must be written?
 15. What authoritative document families changed, and which document consistency tests must run?
 16. What performance risks must be measured or guarded?

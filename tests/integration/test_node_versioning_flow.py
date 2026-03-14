@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from aicoding.daemon.admission import add_node_dependency
+from aicoding.daemon.admission import add_node_dependency, admit_node_run
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.materialization import materialize_layout_children
 from aicoding.daemon.orchestration import apply_authority_mutation
 from aicoding.daemon.regeneration import _record_rebuild_event
 from aicoding.daemon.versioning import create_superseding_node_version, initialize_node_version
-from aicoding.db.models import LogicalNodeCurrentVersion, NodeChild, NodeLifecycleState, NodeVersion, ParentChildAuthority
+from aicoding.daemon.workflows import compile_node_workflow
+from aicoding.db.models import LogicalNodeCurrentVersion, NodeChild, NodeLifecycleState, NodeVersion, ParentChildAuthority, Session as DurableSession
 from aicoding.db.session import query_session_scope, session_scope
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.resources import load_resource_catalog
@@ -336,10 +337,31 @@ def test_rebuild_coordination_endpoint_reports_live_blockers_and_blocked_regener
     )
     child_id = child_response.json()["node_id"]
 
+    compile_node_workflow(db_session_factory, logical_node_id=UUID(child_id), catalog=load_resource_catalog())
     seed_node_lifecycle(db_session_factory, node_id=child_id, initial_state="DRAFT")
     transition_node_lifecycle(db_session_factory, node_id=child_id, target_state="COMPILED")
     transition_node_lifecycle(db_session_factory, node_id=child_id, target_state="READY")
-    apply_authority_mutation(db_session_factory, node_id=child_id, command="node.run.start")
+    admit_node_run(db_session_factory, node_id=UUID(child_id))
+    with session_scope(db_session_factory) as session:
+        lifecycle = session.get(NodeLifecycleState, child_id)
+        selector = session.get(LogicalNodeCurrentVersion, UUID(child_id))
+        assert lifecycle is not None
+        assert lifecycle.current_run_id is not None
+        assert selector is not None
+        session.add(
+            DurableSession(
+                id=uuid4(),
+                node_version_id=selector.authoritative_node_version_id,
+                node_run_id=lifecycle.current_run_id,
+                session_role="primary",
+                provider="tmux",
+                provider_session_id="tmux-child",
+                tmux_session_name="tmux-child",
+                cwd="/tmp",
+                status="BOUND",
+            )
+        )
+        session.flush()
 
     coordination_response = app_client.get(
         f"/api/nodes/{child_id}/rebuild-coordination?scope=upstream",
@@ -358,6 +380,7 @@ def test_rebuild_coordination_endpoint_reports_live_blockers_and_blocked_regener
     assert coordination_response.status_code == 200
     assert coordination_response.json()["status"] == "blocked"
     assert any(item["blocker_type"] == "active_or_paused_run" for item in coordination_response.json()["blockers"])
+    assert any(item["blocker_type"] == "active_primary_sessions" for item in coordination_response.json()["blockers"])
     assert blocked_rectify.status_code == 409
     assert "live runtime state blocks upstream rectification" in blocked_rectify.json()["detail"]
     assert any(event["event_kind"] == "live_conflict_blocked" and event["scope"] == "upstream" for event in history_response.json()["events"])

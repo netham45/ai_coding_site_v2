@@ -13,6 +13,7 @@ from aicoding.daemon.live_git import _git, _git_output, _git_try, _repo_path, _r
 from aicoding.db.models import (
     IncrementalChildMergeState,
     LogicalNodeCurrentVersion,
+    NodeChild,
     NodeLifecycleState,
     NodeRun,
     NodeRunState,
@@ -20,6 +21,7 @@ from aicoding.db.models import (
     ParentIncrementalMergeLane,
 )
 from aicoding.db.session import query_session_scope, session_scope
+from aicoding.resources import ResourceCatalog
 
 RECONCILE_PROMPT_PATH = "execution/reconcile_parent_after_merge.md"
 
@@ -104,6 +106,71 @@ def record_completed_child_for_incremental_merge(
         )
         session.flush()
         return snapshot
+
+
+def finalize_completed_child_for_incremental_merge(
+    session_factory: sessionmaker[Session],
+    resources: ResourceCatalog,
+    *,
+    child_node_version_id: UUID,
+) -> IncrementalChildMergeStateSnapshot | None:
+    with query_session_scope(session_factory) as session:
+        child_version = session.get(NodeVersion, child_node_version_id)
+        if child_version is None:
+            return None
+        if child_version.parent_node_version_id is None:
+            return None
+        if child_version.final_commit_sha is not None:
+            return record_completed_child_for_incremental_merge(
+                session_factory,
+                child_node_version_id=child_node_version_id,
+            )
+        child_count = session.execute(
+            select(func.count())
+            .select_from(NodeChild)
+            .where(NodeChild.parent_node_version_id == child_node_version_id)
+        ).scalar_one()
+
+    from aicoding.daemon.child_reconcile import inspect_parent_reconcile_for_version
+    from aicoding.daemon.live_git import (
+        execute_live_merge_children_for_version,
+        finalize_live_git_state_for_version,
+        show_live_git_status,
+    )
+
+    status = show_live_git_status(session_factory, version_id=child_node_version_id)
+    if child_count > 0:
+        reconcile = inspect_parent_reconcile_for_version(
+            session_factory,
+            resources,
+            node_version_id=child_node_version_id,
+        )
+        if reconcile.status != "ready_for_reconcile":
+            reasons = reconcile.blocking_reasons or ["completed child is not ready for reconcile"]
+            raise DaemonConflictError("; ".join(reasons))
+        ordered_children = [
+            (child.child_node_version_id, str(child.final_commit_sha), int(child.merge_order))
+            for child in reconcile.child_results.children
+            if child.final_commit_sha is not None and child.merge_order is not None
+        ]
+        if not ordered_children:
+            raise DaemonConflictError("completed child has no mergeable finalized descendants")
+        if status.head_commit_sha == status.seed_commit_sha:
+            merge_result = execute_live_merge_children_for_version(
+                session_factory,
+                node_version_id=child_node_version_id,
+                ordered_child_versions=ordered_children,
+            )
+            if merge_result.status != "merged":
+                raise DaemonConflictError("completed child live merge did not reach merged state")
+    finalize_live_git_state_for_version(
+        session_factory,
+        node_version_id=child_node_version_id,
+    )
+    return record_completed_child_for_incremental_merge(
+        session_factory,
+        child_node_version_id=child_node_version_id,
+    )
 
 
 def record_completed_child_for_incremental_merge_in_session(

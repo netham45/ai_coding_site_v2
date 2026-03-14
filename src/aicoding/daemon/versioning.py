@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aicoding.daemon.branches import build_canonical_branch_name, inherited_seed_commit
 from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError
+from aicoding.daemon.session_harness import SessionAdapter
 from aicoding.daemon.rebuild_coordination import (
     cancel_rebuild_coordination_blockers,
     enumerate_required_cutover_scope,
@@ -255,7 +256,12 @@ def create_superseding_node_version_in_session(
     return version
 
 
-def cutover_candidate_version(session_factory: sessionmaker[Session], *, version_id: UUID) -> NodeLineageSnapshot:
+def cutover_candidate_version(
+    session_factory: sessionmaker[Session],
+    *,
+    version_id: UUID,
+    adapter: SessionAdapter | None = None,
+) -> NodeLineageSnapshot:
     readiness = inspect_cutover_readiness(session_factory, version_id=version_id)
     scope = enumerate_required_cutover_scope(session_factory, version_id=version_id)
     if readiness.status not in {"ready", "ready_with_follow_on_replay"}:
@@ -272,6 +278,7 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
                 "required_cutover_scope": scope.to_payload(),
             },
         )
+    superseded_version_ids: list[UUID] = []
     with session_scope(session_factory) as session:
         version = session.get(NodeVersion, version_id)
         if version is None:
@@ -292,6 +299,7 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
 
             if old_authoritative.id != scoped_version.id:
                 old_authoritative.status = "superseded"
+                superseded_version_ids.append(old_authoritative.id)
             scoped_version.status = "authoritative"
             selector.authoritative_node_version_id = scoped_version.id
             selector.latest_created_node_version_id = scoped_version.id
@@ -317,6 +325,17 @@ def cutover_candidate_version(session_factory: sessionmaker[Session], *, version
 
         session.flush()
         lineage = _lineage_snapshot(session, version.logical_node_id)
+    if adapter is not None:
+        from aicoding.daemon.session_records import cleanup_sessions_for_node_version
+
+        for superseded_version_id in superseded_version_ids:
+            cleanup_sessions_for_node_version(
+                session_factory,
+                node_version_id=superseded_version_id,
+                adapter=adapter,
+                cleanup_reason="node_version_cutover_superseded",
+                status="SUPERSEDED",
+            )
     record_rebuild_coordination_event(
         session_factory,
         logical_node_id=lineage.logical_node_id,

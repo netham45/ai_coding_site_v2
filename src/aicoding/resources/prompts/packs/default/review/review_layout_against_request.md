@@ -5,6 +5,12 @@ Check:
 - overlap or duplication between children
 - dependency correctness
 - whether the child set is smaller than necessary without becoming vague
+- whether the layout introduced diagnosis, discovery, reproduction, or verification-only children even though the current request already names the concrete file/module target and exact validation command
+- whether the layout preserved an ancestor dependency/count narrative that the current direct request no longer requires
+
+Revise the layout instead of passing it when:
+- a concrete file-plus-test request was split into separate diagnosis/discovery and implementation children without an explicit request for that split
+- the child count or dependency shape is larger than necessary for the current direct request
 
 Return a bounded pass, revise, or fail judgment with concrete fixes.
 

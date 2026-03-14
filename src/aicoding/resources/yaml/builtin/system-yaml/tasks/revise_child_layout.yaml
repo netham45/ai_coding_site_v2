@@ -14,6 +14,8 @@ subtasks:
     title: Revise Layout
     description: Update the layout from review feedback.
     prompt: "prompts/review/review_layout_against_request.md"
-    outputs: [{type: file_updated, path: layouts/generated_layout.yaml}]
+    outputs:
+      - type: file_updated
+        path: "layouts/generated/{{node_id}}.yaml"
     retry_policy: {max_attempts: 1, backoff_seconds: 0}
     on_failure: {action: pause_for_user}

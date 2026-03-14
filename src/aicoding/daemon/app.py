@@ -30,7 +30,7 @@ from aicoding.daemon.branches import (
     record_final_commit,
     record_seed_commit,
 )
-from aicoding.daemon.child_reconcile import collect_child_results, inspect_parent_reconcile
+from aicoding.daemon.child_reconcile import collect_child_results, inspect_parent_reconcile, plan_live_merge_children
 from aicoding.daemon.child_sessions import load_child_session_result, pop_child_session, push_child_session
 from aicoding.daemon.history import get_prompt_record, get_summary_record, list_prompt_history, list_summary_history
 from aicoding.daemon.interventions import apply_node_intervention, list_node_interventions
@@ -63,7 +63,7 @@ from aicoding.daemon.dependencies import (
     get_session_poller,
     get_settings_dependency,
 )
-from aicoding.daemon.errors import DaemonConflictError, DaemonUnavailableError
+from aicoding.daemon.errors import DaemonConflictError, DaemonNotFoundError, DaemonUnavailableError
 from aicoding.daemon.frontend_runtime import serve_frontend_asset, serve_frontend_index
 from aicoding.daemon.regeneration import (
     list_rebuild_events_for_node,
@@ -98,7 +98,9 @@ from aicoding.daemon.validation_runtime import (
     load_validation_summary_for_run,
 )
 from aicoding.daemon.session_records import auto_nudge_idle_primary_sessions
+from aicoding.daemon.session_records import _stage_prompt_message
 from aicoding.daemon.session_records import auto_supervise_primary_sessions
+from aicoding.daemon.session_records import flush_pending_primary_session_stage_prompts
 from aicoding.daemon.models import (
     ApiErrorResponse,
     AuthContextResponse,
@@ -309,6 +311,7 @@ from aicoding.daemon.session_records import (
     load_provider_recovery_status,
     load_recovery_status,
     nudge_primary_session,
+    push_or_queue_primary_session_stage_prompt,
     recover_primary_session_provider_specific,
     recover_primary_session,
     resume_primary_session,
@@ -361,8 +364,10 @@ from aicoding.daemon.workflows import (
     load_workflow_rendering_for_version,
 )
 from aicoding.db.bootstrap import database_status
+from aicoding.db.models import CompiledSubtask, SubtaskAttempt
 from aicoding.db.migrations import migration_status
-from aicoding.db.session import create_engine_from_settings, create_session_factory
+from aicoding.db.session import create_engine_from_settings, create_session_factory, query_session_scope
+from aicoding.errors import ConfigurationError
 from aicoding.hierarchy import load_hierarchy_registry
 from aicoding.logging import configure_logging
 from aicoding.resources import load_resource_catalog
@@ -370,6 +375,48 @@ from aicoding.source_lineage import capture_node_version_source_lineage, load_no
 from aicoding.yaml_schemas import persist_yaml_validation_report, schema_family_descriptors, validate_yaml_document
 
 logger = logging.getLogger(__name__)
+
+
+def _review_payload_matches_attempt(*, attempt: SubtaskAttempt, payload: ReviewRunRequest) -> bool:
+    output_json = dict(attempt.output_json or {})
+    recorded_status = str(output_json.get("status") or "").strip()
+    recorded_summary = str(output_json.get("summary") or attempt.summary or "").strip()
+    recorded_findings = output_json.get("findings")
+    recorded_criteria = output_json.get("criteria_results")
+    return (
+        recorded_status == payload.status
+        and recorded_summary == payload.summary
+        and recorded_findings == payload.findings_json
+        and recorded_criteria == payload.criteria_json
+    )
+
+
+def _is_exact_review_replay(
+    *,
+    session_factory,
+    logical_node_id: UUID,
+    progress,
+    payload: ReviewRunRequest,
+) -> bool:
+    last_completed_subtask_id = progress.state.last_completed_compiled_subtask_id
+    if last_completed_subtask_id is None:
+        return False
+    with query_session_scope(session_factory) as session:
+        review_subtask = session.get(CompiledSubtask, UUID(str(last_completed_subtask_id)))
+        if review_subtask is None or review_subtask.subtask_type != "review":
+            return False
+        attempt = (
+            session.query(SubtaskAttempt)
+            .filter(
+                SubtaskAttempt.node_run_id == UUID(str(progress.run.id)),
+                SubtaskAttempt.compiled_subtask_id == review_subtask.id,
+            )
+            .order_by(SubtaskAttempt.ended_at.desc(), SubtaskAttempt.created_at.desc())
+            .first()
+        )
+        if attempt is None or attempt.status != "COMPLETE":
+            return False
+        return _review_payload_matches_attempt(attempt=attempt, payload=payload)
 
 
 def _session_state_response(snapshot) -> SessionStateResponse:
@@ -404,6 +451,88 @@ def _session_state_response(snapshot) -> SessionStateResponse:
             "recommended_action": snapshot.recommended_action,
             "terminal_failure": snapshot.terminal_failure,
         }
+    )
+
+
+def _push_next_stage_prompt_to_active_session(
+    *,
+    session_factory,
+    logical_node_id: UUID,
+    adapter,
+    poller,
+    queue_only: bool = False,
+) -> None:
+    try:
+        session_snapshot = get_session_for_node(session_factory, logical_node_id=logical_node_id, adapter=adapter, poller=poller)
+        if session_snapshot is None or not session_snapshot.tmux_session_name:
+            return
+        prompt_snapshot = load_current_subtask_prompt(session_factory, logical_node_id=logical_node_id)
+        start_subtask_attempt(
+            session_factory,
+            logical_node_id=logical_node_id,
+            compiled_subtask_id=prompt_snapshot.compiled_subtask_id,
+        )
+    except (ConfigurationError, DaemonConflictError):
+        return
+    _push_loaded_stage_prompt_to_session(
+        session_factory=session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        tmux_session_name=session_snapshot.tmux_session_name,
+        prompt_snapshot=prompt_snapshot,
+        queue_only=queue_only,
+    )
+
+
+def _push_loaded_stage_prompt_to_session(
+    *,
+    session_factory,
+    logical_node_id: UUID,
+    adapter,
+    tmux_session_name: str,
+    prompt_snapshot,
+    queue_only: bool = False,
+) -> None:
+    prompt_text = prompt_snapshot.prompt_text or prompt_snapshot.command_text
+    if not prompt_text or not prompt_text.strip():
+        return
+    message = _stage_prompt_message(
+        logical_node_id=logical_node_id,
+        prompt_snapshot=prompt_snapshot,
+    )
+    push_or_queue_primary_session_stage_prompt(
+        session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        prompt_text=message,
+        compiled_subtask_id=prompt_snapshot.compiled_subtask_id,
+        prompt_source=prompt_snapshot.subtask_type or "next_stage",
+        source_subtask_key=prompt_snapshot.source_subtask_key,
+        subtask_type=prompt_snapshot.subtask_type,
+        queue_only=queue_only,
+    )
+
+
+def _push_current_stage_prompt_to_active_session(
+    *,
+    session_factory,
+    logical_node_id: UUID,
+    adapter,
+    poller,
+) -> None:
+    try:
+        session_snapshot = get_session_for_node(session_factory, logical_node_id=logical_node_id, adapter=adapter, poller=poller)
+        if session_snapshot is None or not session_snapshot.tmux_session_name:
+            return
+        prompt_snapshot = load_current_subtask_prompt(session_factory, logical_node_id=logical_node_id)
+    except (ConfigurationError, DaemonConflictError):
+        return
+    _push_loaded_stage_prompt_to_session(
+        session_factory=session_factory,
+        logical_node_id=logical_node_id,
+        adapter=adapter,
+        tmux_session_name=session_snapshot.tmux_session_name,
+        prompt_snapshot=prompt_snapshot,
     )
 
 
@@ -443,6 +572,10 @@ async def _run_session_supervision_background_loop(app: FastAPI) -> None:
                     app.state.db_session_factory,
                     adapter=app.state.session_adapter,
                     poller=app.state.session_poller,
+                )
+                flush_pending_primary_session_stage_prompts(
+                    app.state.db_session_factory,
+                    adapter=app.state.session_adapter,
                 )
         except Exception:
             logger.exception("Session supervision background loop iteration failed.")
@@ -881,8 +1014,14 @@ def create_app() -> FastAPI:
     def pop_session(
         payload: ChildSessionPopRequest,
         session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
     ) -> ChildSessionResultResponse:
-        snapshot = pop_child_session(session_factory, child_session_id=UUID(payload.session_id), result_payload=payload.model_dump())
+        snapshot = pop_child_session(
+            session_factory,
+            child_session_id=UUID(payload.session_id),
+            result_payload=payload.model_dump(),
+            adapter=adapter,
+        )
         return ChildSessionResultResponse.model_validate(snapshot.to_payload())
 
     @app.get(
@@ -1220,14 +1359,36 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=RunProgressResponse,
     )
-    def start_subtask(payload: SubtaskMutationRequest, session_factory=Depends(get_db_session_factory)) -> RunProgressResponse:
-        return RunProgressResponse.model_validate(
-            start_subtask_attempt(
-                session_factory,
-                logical_node_id=UUID(payload.node_id),
-                compiled_subtask_id=UUID(payload.compiled_subtask_id),
-            ).to_payload()
+    def start_subtask(
+        payload: SubtaskMutationRequest,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
+    ) -> RunProgressResponse:
+        progress = start_subtask_attempt(
+            session_factory,
+            logical_node_id=UUID(payload.node_id),
+            compiled_subtask_id=UUID(payload.compiled_subtask_id),
+            adapter=adapter,
         )
+        progress_payload = progress.to_payload()
+        run_payload = progress_payload.get("run", {}) if isinstance(progress_payload, dict) else {}
+        current_subtask_payload = progress_payload.get("current_subtask", {}) if isinstance(progress_payload, dict) else {}
+        current_subtask_type = (
+            current_subtask_payload.get("subtask_type") if isinstance(current_subtask_payload, dict) else None
+        )
+        current_source_subtask_key = (
+            current_subtask_payload.get("source_subtask_key") if isinstance(current_subtask_payload, dict) else None
+        )
+        should_push_stage_prompt = current_subtask_type in {"review", "spawn_child_node"} or current_source_subtask_key == "generate_child_layout.render_layout_prompt"
+        if run_payload.get("run_status") == "RUNNING" and should_push_stage_prompt:
+            _push_current_stage_prompt_to_active_session(
+                session_factory=session_factory,
+                logical_node_id=UUID(payload.node_id),
+                adapter=adapter,
+                poller=poller,
+            )
+        return RunProgressResponse.model_validate(progress_payload)
 
     @app.post(
         "/api/subtasks/heartbeat",
@@ -1290,17 +1451,26 @@ def create_app() -> FastAPI:
         payload: SubtaskSucceedRequest,
         session_factory=Depends(get_db_session_factory),
         resource_catalog=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
     ) -> CompositeStageOutcomeResponse:
-        return CompositeStageOutcomeResponse.model_validate(
-            succeed_current_subtask(
-                session_factory,
-                logical_node_id=UUID(payload.node_id),
-                compiled_subtask_id=UUID(payload.compiled_subtask_id),
-                summary_path=payload.summary_path,
-                content=payload.content,
-                catalog=resource_catalog,
-            ).to_payload()
+        outcome = succeed_current_subtask(
+            session_factory,
+            logical_node_id=UUID(payload.node_id),
+            compiled_subtask_id=UUID(payload.compiled_subtask_id),
+            summary_path=payload.summary_path,
+            content=payload.content,
+            catalog=resource_catalog,
+            adapter=adapter,
         )
+        if outcome.outcome == "next_stage":
+            _push_next_stage_prompt_to_active_session(
+                session_factory=session_factory,
+                logical_node_id=UUID(payload.node_id),
+                adapter=adapter,
+                poller=poller,
+            )
+        return CompositeStageOutcomeResponse.model_validate(outcome.to_payload())
 
     @app.post(
         "/api/subtasks/report-command",
@@ -1311,24 +1481,37 @@ def create_app() -> FastAPI:
         payload: SubtaskReportCommandRequest,
         session_factory=Depends(get_db_session_factory),
         resource_catalog=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
     ) -> CompositeStageOutcomeResponse:
-        return CompositeStageOutcomeResponse.model_validate(
-            report_command_subtask(
-                session_factory,
-                logical_node_id=UUID(payload.node_id),
-                compiled_subtask_id=UUID(payload.compiled_subtask_id),
-                execution_result_json=payload.execution_result_json,
-                failure_summary=payload.failure_summary,
-                catalog=resource_catalog,
-            ).to_payload()
+        outcome = report_command_subtask(
+            session_factory,
+            logical_node_id=UUID(payload.node_id),
+            compiled_subtask_id=UUID(payload.compiled_subtask_id),
+            execution_result_json=payload.execution_result_json,
+            failure_summary=payload.failure_summary,
+            catalog=resource_catalog,
+            adapter=adapter,
         )
+        if outcome.outcome == "next_stage":
+            _push_next_stage_prompt_to_active_session(
+                session_factory=session_factory,
+                logical_node_id=UUID(payload.node_id),
+                adapter=adapter,
+                poller=poller,
+            )
+        return CompositeStageOutcomeResponse.model_validate(outcome.to_payload())
 
     @app.post(
         "/api/subtasks/fail",
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=RunProgressResponse,
     )
-    def fail_subtask(payload: SubtaskMutationRequest, session_factory=Depends(get_db_session_factory)) -> RunProgressResponse:
+    def fail_subtask(
+        payload: SubtaskMutationRequest,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+    ) -> RunProgressResponse:
         return RunProgressResponse.model_validate(
             fail_current_subtask(
                 session_factory,
@@ -1336,6 +1519,7 @@ def create_app() -> FastAPI:
                 compiled_subtask_id=UUID(payload.compiled_subtask_id),
                 summary=payload.summary or "subtask failed",
                 execution_result_json=payload.execution_result_json,
+                adapter=adapter,
             ).to_payload()
         )
 
@@ -1635,14 +1819,38 @@ def create_app() -> FastAPI:
         payload: ReviewRunRequest,
         session_factory=Depends(get_db_session_factory),
         resource_catalog=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
     ) -> RunProgressResponse:
         if payload.node_id != node_id:
             raise DaemonConflictError("review request node id does not match route node id")
         progress = load_current_run_progress(session_factory, logical_node_id=UUID(node_id))
         compiled_subtask_id = progress.state.current_compiled_subtask_id
         if compiled_subtask_id is None:
+            if _is_exact_review_replay(
+                session_factory=session_factory,
+                logical_node_id=UUID(node_id),
+                progress=progress,
+                payload=payload,
+            ):
+                return RunProgressResponse.model_validate(progress.to_payload())
+            raise DaemonConflictError("active review subtask not found")
+        if _is_exact_review_replay(
+            session_factory=session_factory,
+            logical_node_id=UUID(node_id),
+            progress=progress,
+            payload=payload,
+        ):
+            return RunProgressResponse.model_validate(progress.to_payload())
+        if compiled_subtask_id is None:
             raise DaemonConflictError("active review subtask not found")
         review_subtask_id = compiled_subtask_id if isinstance(compiled_subtask_id, UUID) else UUID(compiled_subtask_id)
+        with query_session_scope(session_factory) as session:
+            review_subtask = session.get(CompiledSubtask, review_subtask_id)
+            if review_subtask is None:
+                raise DaemonConflictError("active review subtask not found")
+            if review_subtask.subtask_type != "review":
+                raise DaemonConflictError("current compiled subtask is not a review stage")
         start_subtask_attempt(
             session_factory,
             logical_node_id=UUID(node_id),
@@ -1660,9 +1868,16 @@ def create_app() -> FastAPI:
             },
             summary=payload.summary,
         )
-        return RunProgressResponse.model_validate(
-            advance_workflow(session_factory, logical_node_id=UUID(node_id), catalog=resource_catalog).to_payload()
-        )
+        progress = advance_workflow(session_factory, logical_node_id=UUID(node_id), catalog=resource_catalog)
+        if progress.run.run_status == "RUNNING" and progress.state.current_compiled_subtask_id is not None:
+            _push_next_stage_prompt_to_active_session(
+                session_factory=session_factory,
+                logical_node_id=UUID(node_id),
+                adapter=adapter,
+                poller=poller,
+                queue_only=True,
+            )
+        return RunProgressResponse.model_validate(progress.to_payload())
 
     @app.get(
         "/api/nodes/{node_id}/testing",
@@ -2314,8 +2529,14 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=NodeLineageResponse,
     )
-    def cutover_node_version(version_id: str, session_factory=Depends(get_db_session_factory)) -> NodeLineageResponse:
-        return NodeLineageResponse.model_validate(cutover_candidate_version(session_factory, version_id=UUID(version_id)).to_payload())
+    def cutover_node_version(
+        version_id: str,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+    ) -> NodeLineageResponse:
+        return NodeLineageResponse.model_validate(
+            cutover_candidate_version(session_factory, version_id=UUID(version_id), adapter=adapter).to_payload()
+        )
 
     @app.post(
         "/api/nodes/{node_id}/regenerate",
@@ -2436,6 +2657,8 @@ def create_app() -> FastAPI:
         session_factory=Depends(get_db_session_factory),
         hierarchy_registry=Depends(get_hierarchy_registry),
         resources=Depends(get_resource_catalog),
+        adapter=Depends(get_session_adapter),
+        poller=Depends(get_session_poller),
     ) -> MaterializationResponse:
         snapshot = materialize_layout_children(
             session_factory,
@@ -2443,6 +2666,36 @@ def create_app() -> FastAPI:
             resources,
             logical_node_id=UUID(node_id),
         )
+        try:
+            progress = load_current_run_progress(session_factory, logical_node_id=UUID(node_id))
+            compiled_subtask_id = progress.state.current_compiled_subtask_id
+            if compiled_subtask_id is not None:
+                current_subtask_id = compiled_subtask_id if isinstance(compiled_subtask_id, UUID) else UUID(compiled_subtask_id)
+                with query_session_scope(session_factory) as session:
+                    current_subtask = session.get(CompiledSubtask, current_subtask_id)
+                if current_subtask is not None and current_subtask.subtask_type == "spawn_child_node":
+                    complete_current_subtask(
+                        session_factory,
+                        logical_node_id=UUID(node_id),
+                        compiled_subtask_id=current_subtask_id,
+                        execution_result_json={
+                            "exit_code": 0,
+                            "status": "success",
+                            "command": f"python3 -m aicoding.cli.main node materialize-children --node {node_id}",
+                            "materialization": snapshot.to_payload(),
+                        },
+                        summary="Materialized child nodes.",
+                    )
+                    progressed = advance_workflow(session_factory, logical_node_id=UUID(node_id), catalog=resources)
+                    if progressed.run.run_status == "RUNNING" and progressed.state.current_compiled_subtask_id is not None:
+                        _push_next_stage_prompt_to_active_session(
+                            session_factory=session_factory,
+                            logical_node_id=UUID(node_id),
+                            adapter=adapter,
+                            poller=poller,
+                        )
+        except (DaemonConflictError, DaemonNotFoundError, DaemonUnavailableError):
+            pass
         return MaterializationResponse.model_validate(snapshot.to_payload())
 
     @app.get(
@@ -2535,11 +2788,7 @@ def create_app() -> FastAPI:
         resources=Depends(get_resource_catalog),
     ) -> ParentReconcileResponse:
         reconcile = inspect_parent_reconcile(session_factory, resources, logical_node_id=UUID(node_id))
-        ordered_children = [
-            (UUID(item["child_node_version_id"]), str(item["final_commit_sha"]), int(item["merge_order"]))
-            for item in reconcile.child_results.to_payload()["children"]
-            if item["merge_order"] is not None and item["final_commit_sha"] is not None
-        ]
+        ordered_children = plan_live_merge_children(session_factory, logical_node_id=UUID(node_id))
         live_result = execute_live_merge_children(session_factory, logical_node_id=UUID(node_id), ordered_child_versions=ordered_children)
         if live_result.status == "conflicted":
             raise DaemonConflictError("live child merge encountered conflicts; inspect merge-conflicts and abort or resolve before retrying")
@@ -2796,8 +3045,12 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_bearer_token), Depends(ensure_database_available)],
         response_model=MutationAcceptedResponse,
     )
-    def cancel_node(payload: MutationEnvelope, session_factory=Depends(get_db_session_factory)) -> MutationAcceptedResponse:
-        cancel_active_run(session_factory, logical_node_id=UUID(payload.node_id))
+    def cancel_node(
+        payload: MutationEnvelope,
+        session_factory=Depends(get_db_session_factory),
+        adapter=Depends(get_session_adapter),
+    ) -> MutationAcceptedResponse:
+        cancel_active_run(session_factory, logical_node_id=UUID(payload.node_id), adapter=adapter)
         snapshot = apply_authority_mutation(session_factory, node_id=payload.node_id, command="node.cancel")
         return MutationAcceptedResponse(
             status="accepted",

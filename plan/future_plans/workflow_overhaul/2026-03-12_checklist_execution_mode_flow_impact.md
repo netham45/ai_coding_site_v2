@@ -1,5 +1,13 @@
 # Checklist Execution Mode Flow Impact
 
+## Status
+
+Superseded by:
+
+- `2026-03-12_templated_task_generation_flow_impact.md`
+
+The active flow-impact direction now covers template-driven child generation and generated-task provenance rather than checklist-specific runtime flows.
+
 ## Purpose
 
 Identify which existing canonical flows checklist execution mode would touch and what new flow surfaces it would likely add.

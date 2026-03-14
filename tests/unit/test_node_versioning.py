@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from aicoding.daemon.session_harness import FakeSessionAdapter, SessionPoller
+from aicoding.daemon.admission import admit_node_run
 from aicoding.daemon.errors import DaemonConflictError
 from aicoding.daemon.hierarchy import create_hierarchy_node
 from aicoding.daemon.lifecycle import seed_node_lifecycle, transition_node_lifecycle
 from aicoding.daemon.orchestration import apply_authority_mutation
+from aicoding.daemon.run_orchestration import cancel_active_run
+from aicoding.daemon.session_records import bind_primary_session
+from aicoding.daemon.workflows import compile_node_workflow
 from aicoding.daemon.versioning import (
     create_superseding_node_version,
     cutover_candidate_version,
@@ -51,6 +56,29 @@ def test_create_superseding_version_and_cutover(db_session_factory, migrated_pub
     versions = {item.version_number: item for item in lineage.versions}
     assert versions[1].status == "superseded"
     assert versions[2].status == "authoritative"
+
+
+def test_cutover_cleans_up_tmux_sessions_for_superseded_version(db_session_factory, migrated_public_schema) -> None:
+    registry = load_hierarchy_registry(load_resource_catalog())
+    node = create_hierarchy_node(db_session_factory, registry, kind="epic", title="Epic", prompt="top prompt")
+    first = initialize_node_version(db_session_factory, logical_node_id=node.node_id)
+    seed_node_lifecycle(db_session_factory, node_id=str(node.node_id), initial_state="DRAFT")
+    compile_node_workflow(db_session_factory, logical_node_id=node.node_id, catalog=load_resource_catalog())
+    transition_node_lifecycle(db_session_factory, node_id=str(node.node_id), target_state="READY")
+    admit_node_run(db_session_factory, node_id=node.node_id)
+    adapter = FakeSessionAdapter()
+    poller = SessionPoller(adapter=adapter, idle_threshold_seconds=10.0, now=lambda: adapter.now())
+    bound = bind_primary_session(db_session_factory, logical_node_id=node.node_id, adapter=adapter, poller=poller)
+    session_name = bound.tmux_session_name
+    assert session_name is not None
+    cancel_active_run(db_session_factory, logical_node_id=node.node_id)
+    candidate = create_superseding_node_version(db_session_factory, logical_node_id=node.node_id, title="Epic v2", prompt="new prompt")
+
+    lineage = cutover_candidate_version(db_session_factory, version_id=candidate.id, adapter=adapter)
+
+    assert lineage.authoritative_node_version_id == candidate.id
+    assert first.id != candidate.id
+    assert adapter.session_exists(session_name) is False
 
 
 def test_superseding_rejects_live_candidate_and_active_run(db_session_factory, migrated_public_schema) -> None:

@@ -133,14 +133,14 @@ class RealDaemonHarness:
             )
 
     def terminate(self) -> None:
-        if self.process.poll() is not None:
-            return
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5.0)
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5.0)
+        self.cleanup_tmux_sessions()
 
     def restart(self, *, extra_env: dict[str, str] | None = None) -> None:
         self.terminate()
@@ -165,6 +165,38 @@ class RealDaemonHarness:
         self.stdout_log = next_stdout_log
         self.stderr_log = next_stderr_log
         self.wait_until_ready()
+
+    def cleanup_tmux_sessions(self) -> None:
+        for session_name in self._recorded_tmux_session_names():
+            subprocess.run(
+                ["tmux", "kill-session", "-t", session_name],
+                cwd=REPO_ROOT,
+                env=self.env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    def _recorded_tmux_session_names(self) -> list[str]:
+        engine = create_engine(self.database_url, future=True)
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(
+                    text(
+                        """
+                        select distinct tmux_session_name
+                        from sessions
+                        where tmux_session_name is not null
+                          and trim(tmux_session_name) <> ''
+                        order by tmux_session_name
+                        """
+                    )
+                )
+                return [str(row[0]) for row in result if row[0]]
+        except Exception:
+            return []
+        finally:
+            engine.dispose()
 
 
 def build_real_daemon_env(

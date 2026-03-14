@@ -51,8 +51,8 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
   - `tests/e2e/test_flow_11_finalize_and_merge_real.py` rewritten to reach finalize and merge through real git/runtime progression instead of lifecycle forcing
   - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` rewritten to use real parent workflow start plus child materialization instead of forcing sibling readiness
 - Open:
-  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` no longer contains the shortcut patterns being removed in this cleanup pass; it is still blocked, but now only by real `node run start` / `session bind` runtime failures and the older blocker-surface mismatch
-  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` no longer contains the shortcut patterns being removed in this cleanup pass; it is still blocked, but now only by real `node run start` loss before `subtask prompt` and the earlier live prompt-surface mismatch
+  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` now passes both live blocker-surface narratives after the admission bridge fix; the authoritative run binds for real and the rebuild-coordination payload now reports the expected active-run and active-primary-session blockers without lifecycle forcing
+  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` now passes in the current Pool 03 rerun set (`3 passed in 201.52s`) after the idle recovery prompt was upgraded to carry the live `subtask prompt` command, the test waited for durable active run state before prompt fetch, and paused runs were removed from repeated idle-nudge escalation
   - `tests/e2e/test_e2e_incremental_parent_merge_real.py` no longer contains the shortcut patterns being removed in this cleanup pass; it is still blocked, but now only by real runtime behavior including `session bind --node <id>` returning `active durable run not found` and phase-level runs failing to create descendants
   - `tests/e2e/test_e2e_full_epic_tree_runtime_real.py` no longer contains the shortcut patterns being removed in this cleanup pass; it is still blocked, but now only by real runtime behavior, specifically the epic session failing to create the descendant git hierarchy at all
   - `tests/e2e/test_e2e_incremental_parent_merge_real.py` no longer uses test-side `/api/subtasks/complete` or `workflow advance`, but its first real rerun now exposes a workflow-contract bug: a `phase` child completes `research_context`, routes into `execute_node.run_leaf_prompt`, and then pauses with `idle_nudge_limit_exceeded` instead of completing through a real descendant execution path
@@ -70,32 +70,34 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
     - those node definitions advertise `execute_node` in `available_tasks`
     - `src/aicoding/resources/yaml/builtin/system-yaml/tasks/execute_node.yaml` applies only to `task`
     - result: parent nodes can be sent into the leaf-task implementation prompt during live E2E runs
-  - `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py` now exposes a real runtime gap: the primary tmux/Codex session can disappear without durable attempt, summary, or completed-subtask state being recorded
-  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` now exposes two real runtime gaps as the test is tightened: first, when the test relied on manual child materialization, the live child tmux/Codex session stayed `RUNNING`, emitted unsupported CLI `--json` flags, and never recorded a durable failed child run; after removing the manual `node materialize-children` step, the parent tmux/Codex session still fails to create the first phase child through the runtime command loop within the polling window
-  - `tests/e2e/test_flow_09_run_quality_gates_real.py` now exposes a real runtime gap: the live runtime does not advance the node into a built-in quality gate, so `node quality-chain` remains blocked with a state conflict
-  - `tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py` no longer uses `node materialize-children` to seed the dependent sibling's child tree in its dependency-invalidated fresh-restart narrative; after conversion to a real started/bound phase session, the dependent phase still never creates the expected `plan` child and instead runs straight through leaf execution and validation before failing on `pytest -q` with no tests collected
-  - the same rectification narrative also no longer creates the left/right phase siblings directly; after conversion to a real epic session and runtime-created sibling wait, the epic itself still never creates the two phase children and instead fails to parent during `execute_node.run_leaf_prompt`
-  - `tests/e2e/test_flow_10_regenerate_and_rectify_real.py` now exposes the same stricter live-runtime gap in its broader dependency-invalidated fresh-restart narrative after removing `node materialize-children` from the dependent sibling setup: the phase still never creates the expected `plan` child and instead executes leaf stages and fails validation on `pytest -q` with no tests collected
-  - the same Flow 10 narrative also no longer creates the left/right phase siblings directly; after conversion to a real epic session and runtime-created sibling wait, the epic itself still never creates the two phase children and instead fails during `execute_node.run_leaf_prompt`
-  - `tests/e2e/test_flow_13_human_gate_and_intervention_real.py` now exposes a real runtime gap: the primary tmux/Codex session can disappear before the run reaches the explicit `pause_for_user` gate
-  - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` now exposes a real runtime/contract gap: after a failed compile, `workflow source-discovery` returns `compiled workflow not found` instead of remaining inspectable through the CLI
-  - `tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py` now exposes a real runtime gap: the delegated child tmux session receives raw prompt text with an unresolved `{{node_id}}` placeholder and never produces a durable merge-back result
-  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` now exposes two real runtime gaps as the test is tightened: first, the dependency-blocked sibling was still admitted by `node run start` before the prerequisite sibling completed; after removing the manual sibling-materialization step, the parent tmux/Codex session still fails to create the sibling phases at all and instead falls into `execute_node.run_leaf_prompt` with a durable failure summary
-  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` now exposes a stricter live-runtime gap after conversion: when the test binds a real authoritative primary tmux session, the upstream rebuild-coordination surface still reports only `active_or_paused_run` and does not surface a dedicated active-primary-session blocker
-  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` conversion now uses the real routed `subtask succeed --summary-file ...` path instead of `summary register` plus `subtask complete`, and the live rerun exposes a prompt-surface mismatch: the pane no longer contains the old exact idle reminder text and is already showing the repeated missed-step reminder / Codex response by the time the assertion inspects it
-  - `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py` no longer uses `workflow start --no-run`; after conversion to a real started-run path with a bound tmux/provider session, the live rerun exposes a daemon contract gap: `workflow compile --node <id>` now returns `cannot compile a node with an active lifecycle run`
-  - `tests/e2e/test_flow_19_hook_expansion_compile_stage_real.py` no longer proves hook expansion through explicit compile only; after conversion to a real started task run, `node run start` succeeds but `session bind --node <task>` immediately fails with daemon conflict `active durable run not found`
-  - `tests/e2e/test_flow_15_to_18_default_blueprints_real.py` no longer proves blueprint selection through compile/current/chain inspection only; after conversion to real started runs, all four blueprint kinds (`epic`, `phase`, `plan`, `task`) hit the same run/session contract gap where `node run start` succeeds but `session bind --node <id>` returns `active durable run not found`
-  - `tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py` now exposes the same run/session contract gap after conversion to a real started-run path: `node run start` succeeds, but `session bind --node <id>` returns `active durable run not found`
-  - `tests/e2e/test_e2e_compile_variants_and_diagnostics.py` no longer proves authoritative/candidate/rebuild compile variants through compile-only inspection; after conversion to a real started-run path, `node run start` succeeds, but `session bind --node <id>` returns the same daemon conflict `active durable run not found`
-  - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` no longer stops at repaired compile inspection; after conversion to a real started-run path following the repaired compile, `node run start` succeeds, but `session bind --node <id>` returns the same daemon conflict `active durable run not found`
-  - `tests/e2e/test_e2e_prompt_and_summary_history_real.py` no longer relies on `workflow start` state alone; after conversion to a real started-run path with a bound tmux/provider session, the old history assertion fails because the live bound session records an earlier prompt entry before the later operator-fetched prompt is delivered
-  - `tests/e2e/test_flow_11_finalize_and_merge_real.py` no longer finalizes and merges from cold created nodes only; after conversion to a live started/bound parent plus a real started child run, the parent bind succeeds but `session bind --node <child>` fails with daemon conflict `active durable run not found`
-  - `tests/e2e/test_flow_07_pause_resume_and_recover_real.py` now requires the provider-backed durable-run boundary before recovery assertions; the resume path still passes, but the supervision-restart path now fails because `session show` continues to report the original lost session name instead of a replacement resumed session
-  - `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py` no longer proves the first merge/finalize narrative from cold created nodes only; after conversion to a live started/bound parent plus real started child runs, the parent bind succeeds but `session bind --node <child>` fails with daemon conflict `active durable run not found`
-  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` no longer relies on a direct lifecycle transition to force `READY`; after removing that shortcut, the upstream-rectify narrative now fails earlier because the admitted child run still cannot survive `session bind --node <child>` and returns daemon conflict `active durable run not found`
-  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` no longer relies on a direct lifecycle transition to force `READY` in its manual task helper; after removing that shortcut, the idle-nudge narrative now fails earlier because `subtask prompt --node <task>` returns `active node run not found`
-  - `tests/e2e/test_e2e_incremental_parent_merge_real.py` no longer carries the direct `READY` transitions in `_setup_parent_and_children(...)` or `_setup_parent_with_conflict_chain(...)`; after removing those last helper-level lifecycle pushes, both helper families now collapse into the same real `session bind --node <child_a>` / `active durable run not found` failure during `_complete_node_run(...)`
+  - `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py` passed in the current Pool 03 verification sweep (`1 passed in 50.69s`), so the earlier missing-durable-progress gap is not currently reproducing on this checkout
+  - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py` still exposes a real runtime gap after the scoped parent-decomposition and routed-stage fixes: the parent now creates the first runtime phase child for real, but the child tmux/Codex session still remains `RUNNING` instead of recording the durable failed child run that Flow 08 expects later in the narrative
+  - `tests/e2e/test_flow_09_run_quality_gates_real.py` now passes in the Pool 04 rerun set: the real daemon-owned `node quality-chain` path enters the quality stages and completes with persisted validation, review, testing, docs, summary, rationale, and audit outputs
+  - `tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py` no longer uses `node materialize-children` to seed the dependent sibling's child tree in its dependency-invalidated fresh-restart narrative; after restoring the required scoped epic and phase decomposition path, the epic now creates the sibling phases for real, but the dependent phase still cannot be rebound after `node run start` because `session bind --node <phase>` returns daemon conflict `active durable run not found` before the runtime-created `plan` child can be proven
+  - `tests/e2e/test_flow_10_regenerate_and_rectify_real.py` now exposes the same stricter live-runtime gap in its broader dependency-invalidated fresh-restart narrative after removing `node materialize-children` from the dependent sibling setup and then restoring the scoped epic and phase decomposition path: the epic now creates the sibling phases for real, but the dependent phase still cannot survive `session bind --node <phase>` after `node run start`, so the runtime-created `plan` child remains unproven behind the same daemon conflict `active durable run not found`
+  - `tests/e2e/test_flow_13_human_gate_and_intervention_real.py` now passes in the current Pool 03 rerun (`1 passed in 92.41s`) after moving the explicit pause gate ahead of long `execute_node` work in the scoped override used by this E2E
+  - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` now passes in the Pool 04 rerun set: after a failed compile, `workflow source-discovery` remains inspectable and the repaired compile path returns the node to compiled lifecycle state
+  - `tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py` now passes in the current Pool 03 rerun (`1 passed in 62.21s`) after the prompt-file child bootstrap repair and the larger real-provider completion budget
+  - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py` still exposes the remaining Pool 2 parent-decomposition gap after the latest daemon/session fixes: the parent tmux/Codex session no longer falls into `execute_node.run_leaf_prompt`, no longer pauses immediately from stale idle-nudge debt after layout success, and now reaches the routed `review_child_layout` stage for real, but it still stalls after `subtask start` plus `subtask context` and never submits `review run`, so the sibling phases still do not appear
+  - `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` now passes its upstream blocker-surface branch in the Pool 04 rerun set: the live authoritative run binds successfully and the upstream rebuild-coordination payload reports both `active_or_paused_run` and `active_primary_sessions`
+  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` now passes in the current Pool 03 rerun set after the test-side prompt-addressability fix, the recovery-prompt contract update, and the runtime change that skips further idle nudges once the run is already paused
+  - primary and delegated child tmux/Codex launches no longer bootstrap the first instruction on the Codex argv; the live runtime now starts an empty interactive Codex session, waits for the visible Codex readiness banner, then injects the first instruction through tmux. This startup contract now has bounded proof plus a real tmux/provider proof:
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_codex_session_bootstrap.py tests/unit/test_session_harness.py tests/unit/test_session_manager.py -q`: passed (`27 passed`)
+    - `PYTHONPATH=src python3 -m pytest tests/integration/test_session_cli_and_daemon.py -q -k 'session_bind_and_show_current_round_trip or session_attach_and_resume_commands_round_trip'`: passed (`2 passed, 46 deselected`)
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q -k 'test_tmux_primary_session_launches_codex_not_shell or test_tmux_primary_session_exports_prompt_log_for_live_codex_bootstrap'`: passed (`2 passed, 1 deselected`)
+  - `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py` now passes in the Pool 04 rerun set: a real started/admitted run now blocks authoritative recompile, and the inspection surfaces remain readable after the rejected compile attempt
+  - Pool 01 admission/runtime correction: `node run start` now auto-promotes a node from `COMPILED` to `READY` when `lifecycle_not_ready` is the only admission blocker. The earlier repeated “admitted but unbindable” signature in several Pool 01 files was a misclassified pre-bind runtime gap, not a durable-run visibility failure.
+  - `tests/e2e/test_flow_19_hook_expansion_compile_stage_real.py` now passes after the admission bridge fix; the task can be compiled, admitted, bound, and observed through a real tmux/provider session without a synthetic `READY` transition.
+  - `tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py` now passes after the same admission bridge fix; the top-level epic can be compiled, admitted, bound, and inspected through the real tmux/provider boundary.
+  - `tests/e2e/test_e2e_compile_variants_and_diagnostics.py` now passes after the admission bridge fix plus a real `workflow cancel` handoff; the test binds a live tmux/provider session, records durable run state, cancels the authoritative run through the operator surface, and then continues through supersede/regenerate compile diagnostics without synthetic lifecycle mutation
+  - `tests/e2e/test_flow_15_to_18_default_blueprints_real.py` now passes after the admission bridge fix; all four blueprint kinds (`epic`, `phase`, `plan`, `task`) can be compiled, admitted, bound, and observed through the real tmux/provider boundary without a synthetic `READY` transition.
+  - `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py` now passes after the same admission bridge fix; the repaired compile narrative reaches a real bound session instead of collapsing at a false bind error.
+  - `tests/e2e/test_e2e_prompt_and_summary_history_real.py` now passes after the real-session conversion because the history assertions were corrected to match the durable prompt/summary history contract instead of assuming the operator-fetched prompt or summary must be the newest entry
+  - `tests/e2e/test_flow_11_finalize_and_merge_real.py` now passes after the admission bridge fix and live merge planner work; the parent and child both bind through the real tmux/provider boundary, the child finalizes for real, `node reconcile` truthfully stays blocked until the first merge, and `git merge-children` then performs the live merge successfully
+  - `tests/e2e/test_flow_07_pause_resume_and_recover_real.py` now passes after `PAUSED_FOR_USER` was restored as supervision-restartable unfinished work, so the resume path and the lost-tmux-session replacement path both survive the real provider-backed durable-run boundary
+  - `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py` now passes its first live merge/finalize narrative after the admission bridge fix and live merge planner work; the parent and both children bind through the real tmux/provider boundary, both children finalize for real, and `git merge-children` performs the first live merge without requiring prior merge history
+  - `tests/e2e/test_tmux_codex_idle_nudge_real.py` no longer relies on a direct lifecycle transition to force `READY` in its manual task helper; after waiting for durable active run state before prompt fetch and stopping repeated idle nudges against already-paused runs, the full real tmux/provider idle-recovery narrative now passes
+  - `tests/e2e/test_e2e_incremental_parent_merge_real.py` no longer carries the direct `READY` transitions in `_setup_parent_and_children(...)` or `_setup_parent_with_conflict_chain(...)`; after the admission bridge fix, the grouped-cutover branch again reaches the deeper runtime failure where the phase never creates the expected `plan` child, while the dependency-blocked helper branches now fail earlier and more honestly because `node run start` is blocked by real `blocked_on_dependency` state instead of being falsely admitted
   - provider-backed tmux flows still need targeted reruns beyond Flow 22 to confirm they pass without any remaining runtime-surface shortcuts
 
 ## Failure Inventory
@@ -104,9 +106,9 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
   - canonical failing command:
     - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k grouped_cutover_rematerializes_authoritative_child`
   - current live failure:
-    - after removing the helper-level forced `READY` transition, the blocked sibling is still compiled and admitted through `node run start`
-    - `session bind --node <right_id>` then immediately returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version now fails before it can even wait for runtime-created `plan` children under that phase
+    - after the Pool 01 bind fixes, the blocked sibling is compiled, admitted, and bound through a real tmux/provider session
+    - the phase still never creates the expected runtime `plan` child
+    - `node children --node <right_id> --versions` remains empty while the pane shows the live spawn/materialization prompt loop still active
   - relevant runtime evidence:
     - `notes/logs/e2e/2026-03-12_incremental_parent_merge_real_repair.md`
   - additional canonical failing command:
@@ -124,15 +126,13 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
   - additional canonical failing command:
     - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k unblocks_dependent_child_only_after_merge_and_refresh`
   - additional live failure:
-    - after removing the direct `READY` transition from `_setup_parent_and_children(...)`, the prerequisite child reaches real `git finalize-node`
-    - `_complete_node_run(...)` then tries to bind the real session for `child_a`
-    - `session bind --node <child_a>` returns daemon conflict `active durable run not found`
+    - after the Pool 01 bind fixes, the dependent sibling is no longer falsely admitted
+    - `node run start --node <child_b>` now returns `status=blocked` with real `blocked_on_dependency` plus `lifecycle_not_ready` blockers until the prerequisite child is actually complete
   - additional canonical failing command:
     - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_incremental_parent_merge_real.py -q -k conflict_resolution_unblocks_dependent_child_real`
   - additional live failure:
-    - after removing the direct `READY` transition from `_setup_parent_with_conflict_chain(...)`, the conflict-precursor child also reaches real `git finalize-node`
-    - `_complete_node_run(...)` then tries to bind the real session for `child_a`
-    - `session bind --node <child_a>` returns the same daemon conflict `active durable run not found`
+    - after the Pool 01 bind fixes, the conflict-chain dependent sibling is no longer falsely admitted either
+    - `node run start --node <child_c>` now returns `status=blocked` with the real prerequisite dependency blocker instead of collapsing later at session bind
   - conversion status:
     - `rg -n '"transition"|"materialize-children"|"workflow", "advance"|"summary", "register"|"subtask", "start"|"subtask", "complete"|"subtask", "fail"|"/api/subtasks/complete"|"--no-run"' tests/e2e/test_e2e_incremental_parent_merge_real.py` now returns no matches
     - the file is no longer carrying the shortcut classes being removed in this pass and should now be treated as a fully converted E2E file that is blocked only by real runtime behavior
@@ -164,21 +164,25 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
     - the file is no longer carrying the shortcut classes being removed in this pass and should now be treated as a fully converted E2E file that is blocked only by real runtime behavior
 
 - `tests/e2e/test_flow_05_admit_and_execute_node_run_real.py`
-  - current live failure:
-    - the primary tmux/Codex session can disappear before durable attempt, summary, or completed-subtask state is recorded
+  - current live status:
+    - passed in the current Pool 03 verification sweep (`1 passed in 50.69s`)
+    - the earlier missing-durable-progress signature is not currently reproducing on this checkout
 
 - `tests/e2e/test_flow_08_handle_failure_and_escalate_real.py`
   - current live failure:
     - after removing the manual child-materialization shortcut, the parent tmux/Codex session still does not create the first phase child within the polling window
-    - the captured pane shows the model inspecting `node kinds` and `node children` but never issuing the runtime action that actually creates the child
+    - the latest rerun no longer stalls on the old review route; the daemon-backed parent review handoff is now boundedly proven separately in `tests/integration/test_daemon.py -q -k review_run_routes_scoped_parent_into_spawn_children`
+    - the latest rerun gets farther again: the daemon now injects the review-stage prompt and the idle monitor later injects the repeated-missed-step recovery prompt, but the live session still does not submit `review run` or create the first phase child
     - the earlier stricter rerun also showed the child tmux/Codex session remaining `RUNNING`, emitting unsupported CLI `--json` flags, and never recording a durable failed child-run record once a manually materialized child was bound
   - relevant runtime evidence:
     - `notes/logs/e2e/2026-03-10_real_e2e_failure_flow08_child_failure_progress.md`
+    - `notes/logs/e2e/2026-03-12_pool_02_parent_decomposition_runtime_children.md`
 
 - `tests/e2e/test_flow_09_run_quality_gates_real.py`
-  - current live failure:
-    - the live runtime does not enter the expected built-in quality stages
-    - `node quality-chain` remains blocked with a state conflict instead of reaching `COMPLETE`
+  - canonical rerun command:
+    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_09_run_quality_gates_real.py -q`
+  - current status:
+    - passes in the Pool 04 rerun set
 
 - `tests/e2e/test_e2e_regeneration_and_upstream_rectification_real.py`
   - canonical failing command:
@@ -201,156 +205,154 @@ Track the remaining gaps that still prevent the `tests/e2e/` family from being u
     - `notes/logs/e2e/2026-03-11_dependency_invalidated_fresh_restart_real_e2e.md`
 
 - `tests/e2e/test_flow_13_human_gate_and_intervention_real.py`
-  - current live failure:
-    - the primary tmux/Codex session can disappear before the explicit human-pause gate is reached
-
-- `tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_20_compile_failure_and_reattempt_real.py -q`
-  - current live failure:
-    - the stricter version still confirms the failed-compile CLI gap: after a failed compile, `workflow source-discovery` returns `compiled workflow not found`
-    - after repairing the project policy and recompiling, the epic run is admitted through `node run start`
-    - `session bind --node <id>` then returns daemon conflict `active durable run not found`
-    - the repaired compile-reattempt narrative therefore cannot yet prove its runtime continuation against a real bound session
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_e2e_prompt_and_summary_history_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_prompt_and_summary_history_real.py -q`
-  - current live failure:
-    - after binding a real tmux/provider session before the history assertions, the test still reaches durable run state
-    - but `prompts history --node <id>` is no longer headed by the later operator-fetched prompt id from `subtask prompt --node <id>`
-    - the live bound session records an earlier prompt delivery first, so the old `prompts[0]["id"] == prompt_id` assertion no longer matches real runtime ordering
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_flow_11_finalize_and_merge_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_11_finalize_and_merge_real.py -q`
-  - current live failure:
-    - after starting and binding the parent workflow for real, the test creates the child and starts its run through `node run start`
-    - `session bind --node <child>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version therefore cannot yet prove finalize/merge behavior against a live bound child session
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_flow_07_pause_resume_and_recover_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_07_pause_resume_and_recover_real.py -q`
-  - current live failure:
-    - after adding the provider-backed durable-run wait, `test_flow_07_pause_resume_and_recover_runs_against_real_daemon_real_cli_and_tmux` still passes
-    - but `test_flow_07_background_supervision_restarts_killed_tmux_session_automatically` now exposes that the lost session is recorded in `session list` while `session show --node <id>` continues to report the original session name instead of a replacement resumed session
-    - the stricter live-run-equivalent version therefore no longer proves automatic supervision restart as a real replaced-session flow
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_e2e_live_git_merge_and_finalize_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_live_git_merge_and_finalize_real.py -q -k verifies_parent_repo_contents`
-  - current live failure:
-    - after starting and binding the parent workflow for real, the test creates both child phases and admits each child through `node run start`
-    - `session bind --node <child_a>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version therefore cannot yet prove the first live git merge/finalize narrative against real bound child sessions
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q -k blocks_upstream_rectify`
-  - current live failure:
-    - after removing the direct `node lifecycle transition --state READY` shortcut, the child run is compiled and admitted through `node run start`
-    - `session bind --node <child>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version therefore fails before it can even re-check the upstream-rectify blocker surface
-  - additional canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q -k blocks_candidate_cutover`
-  - additional live failure:
-    - after removing the direct `node lifecycle transition --state READY` shortcut, the authoritative node is compiled and admitted through `node run start`
-    - `session bind --node <authoritative>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version therefore fails before it can re-check the candidate cutover blocker surface too
-  - conversion status:
-    - `rg -n "lifecycle transition|materialize-children|workflow advance|summary register|subtask start|subtask complete|--no-run|/api/subtasks/complete" tests/e2e/test_e2e_rebuild_cutover_coordination_real.py` now returns no matches
-    - the file is no longer carrying the shortcut classes being removed in this pass and should now be treated as a fully converted E2E file that is blocked only by real runtime behavior
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
+  - current live status:
+    - passed in the current Pool 03 rerun (`1 passed in 92.41s`)
+    - the scoped pause-gate override now drives the real provider-backed session to `pause_for_user` before long `execute_node` drift
 
 - `tests/e2e/test_flow_21_child_session_round_trip_and_mergeback_real.py`
-  - current live failure:
-    - the delegated child tmux session receives raw prompt text with unresolved `{{node_id}}`
-    - no durable child-session merge-back result is recorded
+  - current live status:
+    - passed in the current Pool 03 rerun (`1 passed in 62.21s`)
+    - the delegated child session now launches through prompt-file bootstrap and records a durable `session pop` merge-back result through the real provider path
 
 - `tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py`
   - current live failure:
-    - after removing the manual sibling-materialization shortcut, the parent tmux/Codex session still does not create the sibling phases through the runtime command loop
-    - the captured pane shows a durable failure summary from `execute_node.run_leaf_prompt` instead of a created sibling set
-    - the earlier stricter rerun also showed `node run start` admitting the dependency-blocked sibling before the prerequisite sibling completed once the children had been materialized manually
+    - after removing the manual sibling-materialization shortcut, the parent tmux/Codex session now creates the sibling phases through the live runtime path
+    - the dependency-blocked sibling gate now fails through the real CLI contract instead of returning a false-success exit code
+    - the real built-in parent workflow now includes `wait_for_children`, and the daemon now rejects premature `wait_for_children` completion unless every direct child is actually `COMPLETE`
+    - after that fix, the prerequisite sibling no longer closes early; instead it now remains non-terminal for the full 900-second live-runtime budget and the bound tmux session disappears before the phase reaches `COMPLETE` or `FAILED`
+    - seeding a real `cat_clone` workspace fixture plus a concrete prerequisite-lane prompt did not change the failure shape; the prerequisite sibling still never reached a terminal lifecycle state before timeout
+    - after gating all remaining daemon/delegated prompt injections on Codex readiness and raising the parent sibling-creation wait to 900 seconds, the parent now completes real `review/run` and `children/materialize`, but the prerequisite phase still does not become terminal even though its plan child performs real descendant fail/succeed/review/materialize mutations
+    - after fixing review-stage prompt routing, the latest real rerun moved again: the prerequisite phase now gets past review and child materialization, but then reaches `wait_for_children.collect_child_summaries` and the live tmux session starts polling with `sleep 5 && tree show --full` and `sleep 10 && tree show --full` instead of writing `summaries/child_rollup.md` and completing the phase
+    - after fixing child-rollup guidance, the deepest visible descendant no longer polls in `collect_child_summaries`, but the next-stage prompt handoff can still be lost if the daemon sends it while Codex is already in an active turn; bounded coverage now proves queued stage-prompt delivery and delayed flush after the turn clears, and Flow 22 needs a fresh live rerun on top of that transport fix
+    - after the queued stage-prompt delivery fix, the fresh real rerun still fails (`1 failed in 1000.59s`): the parent and first descendant now get past the old repeated-review handoff, but a deeper descendant (`be828581-f60d-440f-a5af-5b70989b6a4d`) fetches `subtask prompt` exactly once and then stops with a bounded failure summary that no usable prompt text was produced, while the left prerequisite sibling still remains non-terminal and its pane shows the wait path repeating `tree show --full`
+    - bounded follow-up hardened delegated prompt-file bootstrap so child sessions treat the prepared prompt artifact as authoritative instead of immediately re-fetching `subtask prompt`; the next real rerun removed the old prompt-text failure but still failed (`1 failed in 1005.06s`) because an intermediate waiting plan lost its live Codex process and was not recovered while its task child later completed
+    - bounded follow-up hardened primary-session supervision so a `codex_ready` session that falls back to a live shell is treated as lost and recovered; the next real rerun still failed (`1 failed in 998.01s`) but exposed a more precise command-routing bug
+    - latest concrete bug: a spawn-child command stage wrote a real failure summary explaining that `node materialize-children` verified the wrong already-materialized children even though the command itself exited `0`, and `subtask report-command` still routed that stage as success
+    - bounded follow-up now fixes `subtask report-command` to fail any non-quality command stage when a non-empty failure summary is supplied, even if `exit_code == 0`
+    - bounded follow-up now also fixes generated child-layout registration to use node-specific paths plus node-specific materialization resolution, eliminating cross-node `layouts/generated_layout.yaml` overwrite collisions
+    - bounded follow-up now also fixes `/api/nodes/{node}/review/run` to reject non-review current cursors, closing a real route that could otherwise force-complete later non-review stages such as `wait_for_children`
+    - bounded follow-up now also makes `/api/nodes/{node}/children/materialize` route the active `spawn_child_node` stage itself, removing the fragile extra `subtask report-command` hop from live child creation
+    - bounded follow-up now also removes the hard dependency on extra `subtask current` / mandatory `subtask context` reads before live subtask completion, because the latest real leaf task had already finished the code/test work and only failed on those extra CLI lookups
+    - latest real rerun on top of that prompt-contract fix still failed (`1 failed in 960.06s`), but the failure moved downstream: the deep task now reaches review, and the remaining blocker is the review/completion handoff
+    - bounded follow-up now queues routed next-stage prompts from `review run` instead of injecting them synchronously into the same active session mid-turn
+    - bounded follow-up now also makes idle-nudge recovery yield to any newer queued stage prompt, because the latest descendant task `92503f82-0b6a-46b4-b870-090e4739b20d` had a valid prompt-log artifact but still received recovery text before its initial prompt-file bootstrap instruction flushed
+    - bounded follow-up now also gives plain layout-generation recovery the exact write/register/succeed sequence, because the latest prerequisite phase child `78238724-ed5c-4c81-b10f-f3132f98a67e` received prompt-file bootstrap but still drifted into `subtask prompt`, never wrote `layouts/generated/<node>.yaml`, and later paused for user when review could not find that layout file
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_materialization.py tests/unit/test_workflows.py tests/unit/test_prompt_pack.py -q -k 'prefers_generated_workspace_layout or is_idempotent_for_generated_workspace_layout or uses_node_specific_registered_layouts or ignores_unregistered_generated_workspace_layout or compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links or compile_phase_layout_prompt_uses_real_stage_contract or layout_generation_prompts_require_explicit_layout_registration'`: passed (`7 passed, 37 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py tests/integration/test_session_cli_and_daemon.py -q -k 'register_layout or child_materialization_reports_dependency_blocked_children or subtask_succeed_pushes_next_stage_prompt_into_active_session or subtask_report_command_pushes_next_stage_prompt_into_active_session or subtask_start_pushes_layout_generation_prompt_into_active_session'`: passed (`7 passed, 111 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_rejects_non_review_current_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`2 passed, 69 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'materialize_children_endpoint_routes_active_spawn_stage or review_run_rejects_non_review_current_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`3 passed, 69 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_workflows.py -q -k 'compile_parent_workflows_with_scoped_overrides_avoids_duplicate_source_lineage_links or compile_phase_layout_prompt_uses_real_stage_contract'`: passed (`2 passed, 20 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_prompt_pack.py tests/unit/test_run_orchestration.py -q -k 'execution_prompt_includes_original_node_request or layout_generation_prompts_require_explicit_layout_registration or runtime_cli_bootstrap_prompt_requires_foreground_subtask_startup_sequence or synthesized_command_subtask_prompt_reports_validation_command_result or synthesized_non_quality_command_subtask_prompt_reports_result_with_optional_failure_summary or subtask_prompt_context_heartbeat_and_summary_registration'`: passed (`6 passed, 28 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_routes_scoped_parent_into_spawn_children or review_run_rejects_non_review_current_stage'`: passed (`2 passed, 70 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_repeated_prompt_then_escalates or nudge_primary_session_does_not_pause_wait_for_children_while_child_is_running'`: passed (`3 passed, 28 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_compiled_task_review_prompt'`: passed (`3 passed, 29 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+    - latest real rerun result before the new layout-recovery guidance loaded:
+      - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 977.75s`)
+      - the prerequisite phase child `78238724-ed5c-4c81-b10f-f3132f98a67e` reached `PAUSED_FOR_USER` because the generated layout file was still missing when review tried to proceed
+    - latest real rerun result on top of the layout-generation recovery fix:
+      - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 971.85s`)
+      - the prerequisite phase child now gets through layout generation, review, and child materialization
+      - the remaining blocker moved into its direct plan child `c4bda25f-7cf3-49b7-8f6e-3bcb70df5dfe`, which stayed non-terminal while the enclosing phase waited in `wait_for_children`
+    - bounded follow-up now makes an exact replay of the just-completed `subtask succeed` command idempotent instead of failing with `409 Conflict`, because that exact duplicate-success pattern was observed in the live plan-child session
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_run_orchestration.py -q -k 'subtask_succeed_allows_exact_replay_of_just_completed_stage_without_duplicate_summary or subtask_succeed_rejects_wait_for_children_until_all_children_are_complete or subtask_succeed_rejects_command_stages'`: passed (`3 passed, 23 deselected`)
+    - bounded follow-up now serializes duplicate descendant `children/materialize` replays with a transaction-scoped PostgreSQL advisory lock keyed to the authoritative parent version
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_materialization.py -q -k 'materialize_layout_children_uses_advisory_lock_during_materialization or materialize_layout_children_creates_child_nodes_and_dependency_state or materialize_layout_children_is_idempotent_when_layout_matches or materialize_layout_children_is_idempotent_for_generated_workspace_layout'`: passed (`4 passed, 11 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_allows_exact_replay_of_just_completed_review_stage or subtask_start_pushes_layout_generation_prompt_into_active_session'`: passed (`2 passed, 72 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: failed on the same unrelated pre-existing doc-schema issue outside Pool 2 scope (`2026-03-13_ai_project_skeleton_milestone_gate_hardening.md should cite its governing task plan`)
+    - concrete runtime evidence addressed:
+      - live rerun `pytest-1779` logged `psycopg.errors.UniqueViolation: duplicate key value violates unique constraint "pk_parent_child_authority"` during descendant `children/materialize`
+      - the duplicate replay was trying to create `ParentChildAuthority` for the same authoritative parent version after another materialization request had already inserted it
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+    - bounded follow-up now combines authoritative prompt-file bootstrap with exact first-stage action guidance on initial bind, because runtime-created descendants still re-fetched `subtask prompt` when the generic prompt-file bootstrap text was used alone
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'bind_primary_session_uses_stage_specific_layout_prompt_on_initial_bind or nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_uses_compiled_task_review_prompt'`: passed (`4 passed, 29 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'subtask_start_pushes_layout_generation_prompt_into_active_session or subtask_succeed_pushes_next_stage_prompt_into_active_session or session_nudge_for_build_context_stage_includes_summary_path_and_next_stage or session_nudge_for_review_stage_includes_review_run_guidance'`: passed (`4 passed, 68 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: passed (`13 passed`)
+    - latest real rerun result on that corrected initial-bind contract:
+      - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q`: failed (`1 failed in 1018.06s`)
+      - the prerequisite phase now creates real phase -> plan -> task descendants and the deepest visible leaf reaches `subtasks/report-command`
+      - the remaining blocker is post-leaf completion propagation: the prerequisite phase still stays non-terminal in `wait_for_children.wait_for_child_completion` until timeout
+    - bounded follow-up now also fixes descendant review-stage recovery so the injected compiled review prompt no longer leaks `CURRENT_COMPILED_SUBTASK_ID` into live child recovery text
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_uses_compiled_task_review_prompt or nudge_primary_session_review_prompt_resolves_current_compiled_subtask_token'`: passed (`2 passed, 34 deselected`)
+    - latest real rerun status:
+      - a fresh `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_22_dependency_blocked_sibling_wait_real.py -q` rerun is in progress on top of that descendant review-recovery fix
+    - bounded follow-up now also makes exact duplicate `review run` submissions idempotent after the daemon already advanced away from that completed review stage
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_daemon.py -q -k 'review_run_rejects_non_review_current_stage or review_run_allows_exact_replay_of_just_completed_review_stage or review_run_routes_scoped_parent_into_spawn_children'`: passed (`3 passed, 71 deselected`)
+    - latest document consistency rerun:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: failed on the same unrelated pre-existing doc-schema issue outside Pool 2 scope (`2026-03-13_ai_project_skeleton_milestone_gate_hardening.md should cite its governing task plan`)
+    - bounded follow-up now also removes the false-positive child-session readiness fallback that accepted a bare `codex` process command line before the real Codex banner/prompt appeared
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_harness.py tests/unit/test_codex_session_bootstrap.py tests/unit/test_session_manager.py -q`: passed (`31 passed`)
+      - `PYTHONPATH=src python3 -m pytest tests/integration/test_session_cli_and_daemon.py -q -k 'session_bind_and_show_current_round_trip or session_attach_and_resume_commands_round_trip'`: passed (`2 passed, 46 deselected`)
+    - concrete runtime cause addressed:
+      - deepest descendant `db5d0c38-7d82-40d3-9886-62cb24f96897` had a prompt-log artifact on disk but its Codex history contained only idle nudges, indicating the first prompt had been injected before the interactive Codex session was actually receptive
+    - bounded follow-up now also reseeds the current stage prompt when a primary session has `codex_ready` but no later `stage_prompt_pushed` or `stage_prompt_queued` event
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready or nudge_primary_session_uses_layout_generation_action_guidance or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued'`: passed (`3 passed, 34 deselected`)
+    - concrete runtime cause addressed:
+      - fresh rerun `pytest-1778` got two descendant levels deeper than before, but newest descendant node `be35b85e-700a-4409-b70c-de91bfb75894` still reached a live Codex session with only idle-nudge text and one blocked `subtask prompt --node ...` fetch attempt
+      - that stale rerun was stopped after the bounded prompt-reseed fix because it was already running on the old code path
+    - bounded follow-up now removes contradictory `wait_for_children` failure guidance that told the live plan to both fail and succeed the same stage after a direct child ended `PAUSED_FOR_USER`
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_does_not_pause_wait_for_children_while_child_is_running or nudge_primary_session_uses_compiled_task_review_prompt'`: passed (`2 passed, 35 deselected`)
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_task_plan_docs.py tests/unit/test_document_schema_docs.py -q`: failed on the same unrelated pre-existing doc-schema issue outside Pool 2 scope (`2026-03-13_ai_project_skeleton_milestone_gate_hardening.md should cite its governing task plan`)
+    - concrete runtime cause addressed:
+      - stale rerun `pytest-1786` progressed all the way to leaf task `157f0e17-fa30-4277-93da-eafefb4310ec`, which implemented `src/cat_clone.py`, ran `tests/test_cat_clone.py` successfully, and then ended `PAUSED_FOR_USER` during `review_node`
+      - enclosing plan `d51a7be2-a98d-4d22-b0c9-9bde1ff85b36` correctly wrote `summaries/parent_subtask_failure.md` naming that direct child as terminally non-complete
+      - the live plan pane still printed contradictory action text instructing it to run `subtask fail ... parent_subtask_failure.md` and then still run `subtask succeed ... child_rollup.md`
+      - the wait-stage recovery guidance now stops after the fail path and explicitly forbids `subtask succeed` when any direct child is terminally non-complete
+    - bounded follow-up now prevents idle recovery from nudging a freshly bound primary session before any `codex_ready` event has been recorded
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_skips_idle_recovery_when_stage_prompt_is_still_queued or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready'`: passed (`3 passed, 35 deselected`)
+    - concrete runtime cause addressed:
+      - fresh rerun `pytest-1790` reached leaf task `67a2c7aa-d2cb-4cbf-a343-25ab5918fe7f`
+      - the leaf prompt-log artifact existed on disk and contained the exact `Implement Leaf Task` instructions, but the live pane showed generic idle-nudge text before the Codex banner instead of that initial task-stage instruction
+      - the leaf then fell back to `subtask prompt --node 67a2c7aa-d2cb-4cbf-a343-25ab5918fe7f`, where the first fetch hung and later bounded retries still failed to provide a reliable first-turn path
+      - `nudge_primary_session(...)` now skips idle recovery entirely until the session has recorded a real `codex_ready` event, so fresh descendants cannot be preempted by generic idle nudges before the first stage prompt is delivered
+    - bounded follow-up now also recovers missing `codex_ready` state once a real Codex banner is visible in the pane
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_recovers_missing_codex_ready_from_visible_banner or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready'`: passed (`3 passed, 36 deselected`)
+    - concrete runtime cause addressed:
+      - fresh rerun `pytest-1791` reached child `46eeb2e9-b752-4418-a1d6-2fd8daab9446`
+      - that child had a real prompt-log artifact and a live Codex banner in tmux, but daemon stderr still logged `wait_for_codex_ready(...)` `ConfigurationError` during child auto-bind
+      - after that failed bind attempt, the session could no longer progress because no `codex_ready` event existed for later prompt recovery
+      - `nudge_primary_session(...)` now promotes a visible real Codex banner into a recovered `codex_ready` event so the session is not stranded forever in the pre-ready branch
+    - bounded follow-up now also restarts the missing current subtask attempt before the daemon reseeds a recovered stage prompt
+    - latest bounded verification:
+      - `PYTHONPATH=src python3 -m pytest tests/unit/test_session_records.py -q -k 'nudge_primary_session_waits_for_codex_ready_before_idle_recovery or nudge_primary_session_recovers_missing_codex_ready_from_visible_banner or nudge_primary_session_reseeds_missing_stage_prompt_after_codex_ready or nudge_primary_session_reseeds_missing_stage_prompt_and_restarts_missing_attempt'`: passed (`4 passed, 36 deselected`)
+    - concrete runtime cause addressed:
+      - fresh rerun `pytest-1801` reached child `de0df5d4-8023-4992-a368-86ad57a31e9c`
+      - that child successfully registered `layouts/generated/de0df5d4-8023-4992-a368-86ad57a31e9c.yaml`
+      - after registration, repeated `subtask succeed --node de0df5d4-... --compiled-subtask 7c4b6567-... --summary-file summaries/layout_generation.md` returned `409 Conflict`
+      - the child pane showed the exact daemon conflict: `current compiled subtask has no running attempt`
+      - `_seed_missing_stage_prompt_after_codex_ready(...)` now starts the current compiled subtask attempt before reseeding the stage prompt, so recovered child sessions are not told to succeed a subtask that never had a durable running attempt
   - relevant runtime evidence:
     - `notes/logs/e2e/2026-03-10_real_e2e_failure_flow22_dependency_gate.md`
-
-- `tests/e2e/test_e2e_rebuild_cutover_coordination_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_rebuild_cutover_coordination_real.py -q -k blocks_upstream_rectify`
-  - current live failure:
-    - after binding a real primary tmux session, `node rebuild-coordination --scope upstream` still reports `active_or_paused_run`
-    - the blocker list does not include a dedicated `active_primary_sessions` entry for the same authoritative runtime state
+    - `notes/logs/e2e/2026-03-12_pool_02_parent_decomposition_runtime_children.md`
 
 - `tests/e2e/test_tmux_codex_idle_nudge_real.py`
   - canonical failing command:
     - `PYTHONPATH=src python3 -m pytest tests/e2e/test_tmux_codex_idle_nudge_real.py -q -k stays_quiet_until_daemon_nudges_then_reports_completion`
-  - current live failure:
-    - after removing the direct `node lifecycle transition --state READY` shortcut from the manual task helper, the task is compiled and admitted through `node run start`
-    - but `subtask prompt --node <task>` then returns `active node run not found`
-    - the stricter live-run-equivalent version therefore now fails before it can even reach the daemon-originated nudge/reminder assertions
+  - current live status:
+    - passes in the current Pool 03 rerun set (`3 passed in 201.52s`)
+    - the earlier `active node run not found` prompt-addressability failure is fixed by waiting for durable active run state before prompt fetch
+    - the idle recovery prompt now carries the real `subtask prompt --node <task>` command and explicitly states that the nudge gate has fired
+    - the daemon no longer re-nudges or re-escalates already-paused runs, so the post-nudge recovery narrative remains durably inspectable through later paused stages
   - conversion status:
     - `rg -n "lifecycle transition|materialize-children|workflow advance|summary register|subtask start|subtask complete|--no-run|/api/subtasks/complete" tests/e2e/test_tmux_codex_idle_nudge_real.py` now returns no matches
-    - the file is no longer carrying the shortcut classes being removed in this pass and should now be treated as a fully converted E2E file that is blocked only by real runtime behavior
+    - the file is no longer carrying the shortcut classes being removed in this pass and now passes as a fully converted real-runtime E2E file
 
 - `tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py`
   - canonical failing command:
     - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_02_compile_or_recompile_workflow_real.py -q`
-  - current live failure:
-    - after removing `workflow start --no-run`, the test starts a real run and binds a real tmux/provider session
-    - `workflow compile --node <id>` then returns daemon conflict `cannot compile a node with an active lifecycle run`
-    - the stricter live-run-equivalent version therefore no longer proves recompile behavior through an actual running workflow
+  - current status:
+    - passes in the Pool 04 rerun set
+    - the compile guard now rejects recompile whenever the authoritative lifecycle or daemon state still reflects an active run, and the workflow inspection surfaces remain available after the rejected compile attempt
   - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_flow_19_hook_expansion_compile_stage_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_19_hook_expansion_compile_stage_real.py -q`
-  - current live failure:
-    - after replacing explicit compile with `node run start`, the task run is admitted
-    - `session bind --node <task>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version cannot yet prove hook expansion against a real bound run because the run/session contract is inconsistent at bind time
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_flow_15_to_18_default_blueprints_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_15_to_18_default_blueprints_real.py -q`
-  - current live failure:
-    - after replacing compile-only proof with `node run start` plus `session bind`, all four blueprint cases hit the same daemon conflict
-    - `session bind --node <id>` returns `active durable run not found` immediately after a successful `node run start`
-    - the stricter live-run-equivalent version therefore cannot yet prove default blueprint behavior against a real bound run
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_flow_14_project_bootstrap_and_yaml_onboarding_real.py -q`
-  - current live failure:
-    - after replacing compile-only proof with `node run start` plus `session bind`, the epic run is admitted
-    - `session bind --node <id>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version cannot yet prove project/YAML onboarding behavior against a real bound session
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
-
-- `tests/e2e/test_e2e_compile_variants_and_diagnostics.py`
-  - canonical failing command:
-    - `PYTHONPATH=src python3 -m pytest tests/e2e/test_e2e_compile_variants_and_diagnostics.py -q`
-  - current live failure:
-    - after replacing compile-only proof with `node run start` plus `session bind`, the authoritative epic run is admitted
-    - `session bind --node <id>` then returns daemon conflict `active durable run not found`
-    - the stricter live-run-equivalent version therefore cannot yet prove authoritative compile diagnostics against a real bound session before supersede/regenerate candidate checks continue
-  - relevant runtime evidence:
-    - `notes/logs/e2e/2026-03-12_workflow_start_and_compile_real_runtime_conversion.md`
+    - `notes/logs/e2e/2026-03-12_pool_04_compile_quality_gate_and_inspection_contracts.md`
